@@ -39,6 +39,8 @@ data class DouyinListPage(
     val nextCursor: Long,
     val statusCode: Int,
     val statusMessage: String? = null,
+    /** 喜欢列表等接口翻页时与 [nextCursor]（max_cursor）成对使用，见接口返回的 min_cursor。 */
+    val nextMinCursor: Long? = null,
 )
 
 data class AwemeItem(
@@ -60,12 +62,16 @@ data class Author(
 
 data class Video(
     @SerializedName("play_addr") val playAddr: PlayAddr?,
+    /** 部分接口仅下发下载地址，列表里 play_addr 可能为空。 */
+    @SerializedName("download_addr") val downloadAddr: PlayAddr? = null,
+    /** 多档清晰度；部分接口主地址在 bit_rate[].play_addr 中。 */
+    @SerializedName("bit_rate") val bitRate: List<DouyinBitRateEntry>? = null,
     @SerializedName("cover") val cover: ImageUrl?,
     @SerializedName("dynamic_cover") val dynamicCover: ImageUrl?,
-    @SerializedName("duration") val duration: Int, // 毫秒
+    @SerializedName("duration") val duration: Int = 0, // 毫秒
     @SerializedName("ratio") val ratio: String?,
-    @SerializedName("width") val width: Int,
-    @SerializedName("height") val height: Int
+    @SerializedName("width") val width: Int = 0,
+    @SerializedName("height") val height: Int = 0,
 )
 
 data class PlayAddr(
@@ -73,6 +79,12 @@ data class PlayAddr(
     @SerializedName("url_list") val urlList: List<String>?, // 视频真实下载地址
     @SerializedName("data_size") val dataSize: Long?,
     @SerializedName("url_key") val urlKey: String?
+)
+
+/** [Video.bitRate] 单档，含独立 [play_addr]。 */
+data class DouyinBitRateEntry(
+    @SerializedName("play_addr") val playAddr: PlayAddr?,
+    @SerializedName("gear_name") val gearName: String? = null,
 )
 
 data class ImageUrl(
@@ -92,8 +104,8 @@ data class DouyinCollectsListResponse(
     @SerializedName("status_code") val statusCode: Int,
     @SerializedName("status_msg") val statusMsg: String? = null,
     @SerializedName("collects_list") val collectsList: List<DouyinCollectsListItem>?,
-    /** 实际响应为 boolean（如 false），与部分列表接口的 0/1 不同 */
-    @SerializedName("has_more") val hasMore: Boolean? = null,
+    /** 实际响应多为 boolean（见 data.json）；旧版可能为 0/1，用 JsonElement 兼容 */
+    @SerializedName("has_more") val hasMore: JsonElement? = null,
     @SerializedName("cursor") val cursor: Long = 0,
     @SerializedName("total_number") val totalNumber: Int? = null,
     @SerializedName("extra") val extra: DouyinCollectsListExtra? = null,
@@ -152,7 +164,16 @@ data class CollectsUserAvatar(
     @SerializedName("width") val width: Int? = null,
 )
 
-fun DouyinCollectsListResponse.hasMorePages(): Boolean = hasMore == true
+fun DouyinCollectsListResponse.hasMorePages(): Boolean {
+    val el = hasMore ?: return false
+    if (!el.isJsonPrimitive) return false
+    val p = el.asJsonPrimitive
+    return when {
+        p.isBoolean -> p.asBoolean
+        p.isNumber -> p.asInt != 0
+        else -> false
+    }
+}
 
 /** 收藏夹列表一页（供 UI 选夹） */
 data class DouyinCollectsListPage(

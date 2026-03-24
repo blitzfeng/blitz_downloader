@@ -3,6 +3,7 @@ package com.blitz.downloader.api
 import com.google.gson.Gson
 import okhttp3.HttpUrl
 import com.blitz.downloader.api.signing.DouyinWebSigner
+import com.blitz.downloader.util.DouyinVerifyFpGenerator
 
 /**
  * 构造与 [DouyinApiService.getUserVideos] / [DouyinApiService.getVideoDetail] 默认参数一致的 URL，
@@ -32,18 +33,18 @@ object AwemeWebUrls {
     }
 
     /**
-     * F2 [USER_FAVORITE_A]：`/aweme/v1/web/aweme/favorite/`（用户「喜欢」列表），参数与作品列表一致。
+     * F2 [USER_FAVORITE_A]：`/aweme/v1/web/aweme/favorite/`。
+     * 与抓包/F2 默认 `ab` 一致：**仅 a_bogus**（无 X-Bogus、无 verify_fp），query 与 Edge 130 + `version_code=290100` 对齐；须配合 [DouyinApiClient.webUserAgentFavorite]。
      */
     fun userFavoriteSignedUrl(
         secUserId: String,
         maxCursor: Long,
-        webid: String?,
         msToken: String?,
         userAgent: String,
         count: Int = 18,
     ): String {
-        val q = userFavoriteEncodedQuery(secUserId, maxCursor, webid, msToken, count)
-        val signed = DouyinWebSigner.signGetEncodedQuery(q, userAgent)
+        val q = userFavoriteEncodedQuery(secUserId, maxCursor, msToken, count)
+        val signed = DouyinWebSigner.signGetAbOnlyEncodedQuery(q, userAgent)
         return HttpUrl.Builder()
             .scheme("https")
             .host("www.douyin.com")
@@ -204,10 +205,13 @@ object AwemeWebUrls {
         return b.build().encodedQuery ?: ""
     }
 
+    /**
+     * F2 [UserLike] + [BaseRequestModel]（`model_dump` 顺序）：`msToken` 在 `round_trip_time` 之后、`max_cursor` 之前；
+     * 抓包中无 `verify_fp`、无 `webid`；版本与浏览器字段与 F2 默认一致（290100 / Edge 130 / cpu 12 / rtt 100）。
+     */
     fun userFavoriteEncodedQuery(
         secUserId: String,
         maxCursor: Long,
-        webid: String?,
         msToken: String?,
         count: Int = 18,
     ): String {
@@ -215,39 +219,48 @@ object AwemeWebUrls {
             .scheme("https")
             .host("www.douyin.com")
             .encodedPath("/aweme/v1/web/aweme/favorite/")
-            .addQueryParameter("sec_user_id", secUserId)
-            .addQueryParameter("max_cursor", maxCursor.toString())
-            .addQueryParameter("locate_query", "false")
-            .addQueryParameter("show_live_replay_strategy", "1")
-            .addQueryParameter("count", count.coerceIn(1, 50).toString())
-            .addQueryParameter("publish_video_strategy_type", "2")
             .addQueryParameter("device_platform", "webapp")
             .addQueryParameter("aid", "6383")
             .addQueryParameter("channel", "channel_pc_web")
             .addQueryParameter("pc_client_type", "1")
-            .addQueryParameter("version_code", "190500")
-            .addQueryParameter("version_name", "19.5.0")
+            .addQueryParameter("publish_video_strategy_type", "2")
+            .addQueryParameter("pc_libra_divert", "Windows")
+            .addQueryParameter("version_code", "290100")
+            .addQueryParameter("version_name", "29.1.0")
             .addQueryParameter("cookie_enabled", "true")
             .addQueryParameter("screen_width", "1920")
             .addQueryParameter("screen_height", "1080")
             .addQueryParameter("browser_language", "zh-CN")
             .addQueryParameter("browser_platform", "Win32")
-            .addQueryParameter("browser_name", "Chrome")
-            .addQueryParameter("browser_version", "119.0.0.0")
+            .addQueryParameter("browser_name", "Edge")
+            .addQueryParameter("browser_version", "130.0.0.0")
             .addQueryParameter("browser_online", "true")
             .addQueryParameter("engine_name", "Blink")
-            .addQueryParameter("engine_version", "119.0.0.0")
+            .addQueryParameter("engine_version", "130.0.0.0")
             .addQueryParameter("os_name", "Windows")
             .addQueryParameter("os_version", "10")
-            .addQueryParameter("cpu_core_num", "8")
+            .addQueryParameter("cpu_core_num", "12")
             .addQueryParameter("device_memory", "8")
             .addQueryParameter("platform", "PC")
             .addQueryParameter("downlink", "10")
             .addQueryParameter("effective_type", "4g")
-            .addQueryParameter("round_trip_time", "50")
-        if (!webid.isNullOrBlank()) b.addQueryParameter("webid", webid)
-        if (!msToken.isNullOrBlank()) b.addQueryParameter("msToken", msToken)
+            .addQueryParameter("round_trip_time", "100")
+        if (!msToken.isNullOrBlank()) {
+            b.addQueryParameter("msToken", msToken)
+        }
+        b.addQueryParameter("max_cursor", maxCursor.toString())
+            .addQueryParameter("count", count.coerceIn(1, 50).toString())
+            .addQueryParameter("sec_user_id", secUserId)
         return b.build().encodedQuery ?: ""
+    }
+
+    /**
+     * Web 端接口常带 `verify_fp`（Cookie 中 s_v_web_id 或本地生成）。
+     */
+    private fun appendVerifyFpQueryParam(b: HttpUrl.Builder) {
+        val fp = DouyinApiClient.verifyFp?.takeIf { it.isNotBlank() }
+            ?: DouyinVerifyFpGenerator.generate()
+        b.addQueryParameter("verify_fp", fp)
     }
 
     fun userCollectionEncodedQuery(

@@ -5,18 +5,37 @@ import com.blitz.downloader.api.DouyinApiClient
 /**
  * **Token / 票据来源设计**（仅客户端：WebView 预热 + 剪贴板粘贴，无服务端协同）。
  *
- * 与 F2 文档一致，抖音 Web 接口除签名（X-Bogus / a_bogus 等）外，常见依赖两类输入：
+ * ### 与 F2（`f2/apps/douyin/utils.py`）对照
  *
- * 1. **完整 Cookie 行** → 经 [DouyinApiClient] 作为 `Cookie` 请求头原样发送（含登录态 `sessionid`、访客 `ttwid`、`msToken` 等）。
- * 2. **从 Cookie 解析出的少数键** → 同步到 Retrofit `@Query`，与桌面站行为对齐（键名随抖音版本可能变化，以下为本项目当前解析策略）。
+ * F2 中 [TokenManager] 说明：**msToken / ttwid / webid 并非只能从浏览器 Cookie 字符串里抄**，还可通过 **HTTP 请求 + 响应** 获取（配置见 F2 的 `douyin` 配置段 `msToken`、`ttwid`、`webid`）：
  *
- * | 用途 | 典型 Cookie 键名 | [DouyinApiClient] 字段 | 备注 |
- * |------|------------------|------------------------|------|
- * | 列表/详情常见 query | `msToken` | [DouyinApiClient.msToken] | 与 UA、签名同源刷新 |
- * | `webid` query | `webid` / `UIFID` / `uifid` | [DouyinApiClient.webId] | 取首个非空 |
- * | 访客/会话 | `ttwid` | [DouyinApiClient.ttwid] | 主要仍在 Cookie 头；字段便于排查与未来扩 query |
- * | 指纹类（部分接口） | `s_v_web_id` / `verify_fp` | [DouyinApiClient.verifyFp] | 若仅出现在 Cookie，先解析备用 |
- * | 登录态 | `sessionid` / `sessionid_ss` 等 | （不单独存） | 留在 [DouyinApiClient.globalCookie] 整行中 |
+ * - **msToken**
+ *   - `gen_real_msToken`：向配置的 `url` **POST** JSON（`magic`、`version`、`dataType`、`strData`、`ulr`、`tspFromClient` 等），从 **响应 Set-Cookie** 读取 `msToken`，并校验长度约 164 或 184。
+ *   - `gen_false_msToken`：**本地随机**生成长度约 182 的字符串 + `"=="`（占位/降级，非服务端签发）。
+ * - **ttwid**：`gen_ttwid`：向配置的 `url` **POST** 固定 body，从 **响应 Cookie** 取 `ttwid`。
+ * - **webid**：`gen_webid`：向配置的 `url` **POST** JSON（`app_id`、`referer`、`url`、`user_agent` 等），从 **响应 JSON** 字段 `web_id` 读取（不是 Cookie）。
+ * - **verify_fp / s_v_web_id**：`VerifyFpManager` — **纯本地算法**生成（与 Cookie 无关），见 [DouyinVerifyFpGenerator]。
+ *
+ * ### 本 App 策略
+ *
+ * 1. **完整 Cookie 行** → [DouyinApiClient.globalCookie] 原样作为 `Cookie` 头（含浏览器已下发的 `msToken`、`ttwid`、登录态等）。
+ * 2. **从 Cookie 解析 query 辅助字段** → [DouyinCookieSync.applyDerivedTokensFromCookieLine]（键名可能随抖音变更）。
+ * 3. **未实现** F2 那套「独立 POST 换 msToken/ttwid/webid」：需维护 endpoint 与 body、且与反爬策略强相关；当前以 **WebView 与真实站点一致** 为主路径。
+ * 4. 若后续接口需要 **verify_fp** 且 Cookie 中无，可对齐 F2 使用 [DouyinVerifyFpGenerator.generate]。
+ *
+ * | 票据 | F2 典型获取方式 | 本项目中 |
+ * |------|-----------------|----------|
+ * | msToken | POST 换 Cookie / 假随机 | Cookie 解析；未接独立 POST |
+ * | ttwid | POST 换 Cookie | Cookie 解析 |
+ * | webid | POST JSON `web_id` | Cookie：`webid`/`UIFID`/`uifid` |
+ * | verify_fp | 本地算法 | [DouyinVerifyFpGenerator] 可选 |
+ *
+ * ### 仅「本地解析 Cookie 字符串」是否可行
+ *
+ * **可行**，且与抖音 **PC Web** 常见导出形态一致：
+ * - **鉴权与访客标识**主要依赖 **`Cookie` 请求头整段**（`sessionid`、`ttwid`、`odin_tt`、`passport_*`、`s_v_web_id` 等），[DouyinApiClient] 会原样带上，**不依赖**先把每个键拆进 query。
+ * - **派生 query**（`msToken`、`webid` 等）是从同名或等价键（如 `UIFID`）解析的**补充**；若某键在 Cookie 里**不存在**（例如当前 PC 导出里常**没有** `msToken=`），则对应字段为 null，一般由 Retrofit **省略**该 query 参数。
+ * - 你提供的样例中含 `UIFID`、`UIFID_TEMP`、`s_v_web_id`、`ttwid`、`sessionid` 等：当前解析逻辑可正确识别 **`UIFID`→webId、`s_v_web_id`→verifyFp、`ttwid`→ttwid**；**无 `msToken` 键时 [DouyinApiClient.msToken] 为 null 属正常**，若某接口仍要求 query `msToken`，需另从带该 Cookie 的环境同步，或再评估 F2 式独立请求（见上文）。
  *
  * **来源路径**
  * - **主路径**：列表页 [android.webkit.WebView] 打开 `douyin.com`，[CookieManager] 写入后 [DouyinCookieSync.syncFromCookieManager]。

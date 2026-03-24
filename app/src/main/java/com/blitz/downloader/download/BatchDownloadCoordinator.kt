@@ -5,7 +5,6 @@ import android.content.Context
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
-import com.blitz.downloader.api.DouyinApiClient
 import com.blitz.downloader.ui.VideoItemUiModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -136,10 +135,14 @@ object BatchDownloadCoordinator {
                 val conn = URL(videoUrl).openConnection() as HttpURLConnection
                 conn.instanceFollowRedirects = true
                 conn.connectTimeout = 20_000
-                conn.readTimeout = 60_000
-                conn.setRequestProperty("User-Agent", DouyinApiClient.webUserAgent)
+                conn.readTimeout = 120_000
+                DouyinVideoHttp.applyCdnHeaders(conn)
                 val code = conn.responseCode
                 if (code !in 200..299) {
+                    Log.w(
+                        TAG,
+                        "CDN HTTP $code for $displayName url=${videoUrl.take(96)}…",
+                    )
                     conn.disconnect()
                     return false
                 }

@@ -28,6 +28,13 @@ object DouyinApiClient {
     const val webUserAgent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 
+    /**
+     * F2 `BaseRequestModel` 默认浏览器为 Edge 130；「喜欢」接口抓包 URL 中 browser_name=Edge 且仅含 a_bogus。
+     * 签名与 HTTP User-Agent 必须一致，否则易 200 空包。
+     */
+    const val webUserAgentFavorite =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
+
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -52,7 +59,14 @@ object DouyinApiClient {
         override fun intercept(chain: Interceptor.Chain): Response {
             val original = chain.request()
             val requestBuilder = original.newBuilder()
-                .header("User-Agent", webUserAgent)
+                .header(
+                    "User-Agent",
+                    if (original.url.encodedPath.contains("/aweme/v1/web/aweme/favorite")) {
+                        webUserAgentFavorite
+                    } else {
+                        webUserAgent
+                    },
+                )
                 .header("Referer", "https://www.douyin.com/")
                 .header("Accept", "application/json, text/plain, */*")
                 .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")

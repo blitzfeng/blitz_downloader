@@ -442,8 +442,8 @@ class ListDownloadFragment : Fragment() {
                 }
                 ListApiMode.UserLike -> {
                     val sid = listSecUserId ?: return
-                    val cursor = if (isFirstPage) 0L else listNextCursor
-                    DouyinListApi.fetchUserLikePage(secUserId = sid, maxCursor = cursor)
+                    val maxC = if (isFirstPage) 0L else listNextCursor
+                    DouyinListApi.fetchUserLikePage(secUserId = sid, maxCursor = maxC)
                 }
                 ListApiMode.UserCollection -> {
                     val cursor = if (isFirstPage) 0L else listNextCursor

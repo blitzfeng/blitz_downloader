@@ -66,9 +66,8 @@ object DouyinListApi {
             val url = AwemeWebUrls.userFavoriteSignedUrl(
                 secUserId = secUserId,
                 maxCursor = maxCursor,
-                webid = DouyinApiClient.webId,
                 msToken = DouyinApiClient.msToken,
-                userAgent = DouyinApiClient.webUserAgent,
+                userAgent = DouyinApiClient.webUserAgentFavorite,
                 count = count,
             )
             parseAwemeListBody(dynamicGetBody(url))
@@ -170,11 +169,20 @@ object DouyinListApi {
 
     private suspend fun dynamicGetBody(url: String): String {
         val resp = DouyinApiClient.api.dynamicGet(url)
+        val code = resp.code()
+        val raw = resp.body()?.use { it.string() } ?: ""
         if (!resp.isSuccessful) {
-            throw IllegalStateException("HTTP ${resp.code()}")
+            val hint = raw.take(300).ifBlank { "(无正文)" }
+            throw IllegalStateException("HTTP $code: $hint")
         }
-        return resp.body()?.use { it.string() }
-            ?: throw IllegalStateException("empty body")
+        if (raw.isBlank()) {
+            val ct = resp.headers()["Content-Type"].orEmpty()
+            val cl = resp.headers()["Content-Length"].orEmpty()
+            throw IllegalStateException(
+                "HTTP $code 响应体为空 (Content-Type=$ct, Content-Length=$cl)。常见原因：风控空包、Cookie 未登录或失效；请同步 Cookie 后重试。"
+            )
+        }
+        return raw
     }
 
     private fun parseCollectsListBody(json: String): Result<DouyinCollectsListPage> {
@@ -207,10 +215,20 @@ object DouyinListApi {
     }
 
     private fun parseAwemeListBody(json: String): Result<DouyinListPage> {
+        if (json.isBlank()) {
+            return Result.failure(
+                IllegalStateException("响应 JSON 为空字符串（上一请求可能未返回 body，或 Gson 解析前未读到内容）"),
+            )
+        }
         val data = try {
             gson.fromJson(json, DouyinUserVideosResponse::class.java)
         } catch (e: JsonSyntaxException) {
             return Result.failure(IllegalStateException("JSON 解析失败", e))
+        }
+        if (data == null) {
+            return Result.failure(
+                IllegalStateException("Gson 解析结果为 null（常见于空 JSON 字符串 \"\"）"),
+            )
         }
         if (data.statusCode != 0) {
             val msg = data.statusMsg?.takeIf { it.isNotBlank() } ?: "status_code=${data.statusCode}"
@@ -223,6 +241,7 @@ object DouyinListApi {
             nextCursor = data.nextPageCursor(),
             statusCode = data.statusCode,
             statusMessage = data.statusMsg,
+            nextMinCursor = data.minCursor,
         )
         return Result.success(page)
     }

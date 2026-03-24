@@ -8,6 +8,23 @@ import kotlin.random.Random
  */
 object DouyinWebSigner {
 
+    /**
+     * F2 默认 `encryption: ab` 时，GET 仅追加 **a_bogus**（见 `f2.utils.utils.ABogusManager.model_2_endpoint`），**无 X-Bogus**。
+     * 「喜欢」列表 `/aweme/favorite/` 与抓包一致时应走本方法。
+     */
+    fun signGetAbOnlyEncodedQuery(
+        encodedQueryWithoutSignatures: String,
+        userAgent: String,
+        random: Random = Random.Default,
+    ): String {
+        val fp = DouyinBrowserFingerprint.generate(DouyinBrowserFingerprint.BrowserType.EDGE, random)
+        return ABogusSigner(
+            browserFingerprint = fp,
+            userAgent = userAgent,
+            random = random,
+        ).generateAbogus(encodedQueryWithoutSignatures, "").paramsWithAbogus
+    }
+
     fun signGetEncodedQuery(
         encodedQueryWithoutSignatures: String,
         userAgent: String,

@@ -24,6 +24,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.blitz.downloader.R
 import com.blitz.downloader.databinding.FragmentSingleDownloadBinding
+import com.blitz.downloader.download.DouyinVideoHttp
 import com.blitz.downloader.util.UrlUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -219,8 +220,16 @@ class SingleDownloadFragment : Fragment() {
 
                 resolver.openOutputStream(uri)?.use { outStream ->
                     val conn = URL(videoUrl).openConnection() as HttpURLConnection
-                    conn.connectTimeout = 15000
-                    conn.readTimeout = 30000
+                    conn.instanceFollowRedirects = true
+                    conn.connectTimeout = 20_000
+                    conn.readTimeout = 120_000
+                    DouyinVideoHttp.applyCdnHeaders(conn)
+                    val code = conn.responseCode
+                    if (code !in 200..299) {
+                        Log.w("SingleDownload", "CDN HTTP $code url=${videoUrl.take(120)}")
+                        conn.disconnect()
+                        return@withContext false
+                    }
                     conn.inputStream.use { input -> input.copyTo(outStream) }
                     conn.disconnect()
                 }
