@@ -60,7 +60,7 @@ class DouyinParser {
                     if (body?.statusCode == 0) {
                         val videos = body.awemeList ?: emptyList()
                         allVideos.addAll(videos)
-                        hasMore = body.hasMore == 1
+                        hasMore = body.hasMorePages()
                         cursor = body.maxCursor
                         Log.d(TAG, "成功获取 ${videos.size} 个视频，总计 ${allVideos.size}")
                     } else {

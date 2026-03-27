@@ -9,6 +9,10 @@ object AwemeMapper {
 
     fun toGridItems(items: List<AwemeItem>): List<VideoItemUiModel> =
         items.mapNotNull { toGridItemOrNull(it) }
+            .distinctBy { it.id }
+
+    /** 判断是否为图集/图文类型（[AwemeItem.images] 非空即为图集）。 */
+    fun isPhotoItem(item: AwemeItem): Boolean = !item.images.isNullOrEmpty()
 
     /**
      * 与单视频 Tab 一致：将 `playwm` 换为 `play` 以尽量走无水印直链。
@@ -26,21 +30,66 @@ object AwemeMapper {
         return raw.trim().replace("playwm", "play", ignoreCase = false)
     }
 
+    /**
+     * 提取图集所有图片的最优下载 URL（每张图一个 URL）。
+     * 优先级：[AwemeImage.watermarkFreeDownloadUrlList] > [AwemeImage.urlList]（原图压缩，无水印）
+     * > [AwemeImage.downloadUrlList]（含水印）。
+     */
+    fun preferredImageUrls(item: AwemeItem): List<String> {
+        val images = item.images ?: return emptyList()
+        return images.mapNotNull { img ->
+            val candidates = buildList {
+                addAll(img.watermarkFreeDownloadUrlList.orEmpty())
+                addAll(img.urlList.orEmpty())
+                addAll(img.downloadUrlList.orEmpty())
+            }
+            candidates.firstOrNull { it.isNotBlank() }
+        }
+    }
+
     private fun urlsFromPlayAddr(addr: PlayAddr?): List<String> =
         addr?.urlList.orEmpty().mapNotNull { it?.trim()?.takeIf { s -> s.isNotEmpty() } }
 
     fun toGridItemOrNull(item: AwemeItem): VideoItemUiModel? {
-        val id = item.awemeId.trim()
+        val id = resolveStableAwemeId(item)
         if (id.isEmpty()) return null
-        val cover = item.video?.cover?.urlList?.firstOrNull()
-            ?: item.video?.dynamicCover?.urlList?.firstOrNull()
-        val title = item.desc?.trim().orEmpty().ifBlank { "（无标题）" }
+        val isPhoto = isPhotoItem(item)
+        val cover = if (isPhoto) {
+            item.images?.firstOrNull()?.urlList?.firstOrNull()
+                ?: item.video?.cover?.urlList?.firstOrNull()
+        } else {
+            item.video?.cover?.urlList?.firstOrNull()
+                ?: item.video?.dynamicCover?.urlList?.firstOrNull()
+        }
+        val rawDesc = item.desc?.trim().orEmpty()
+        val title = rawDesc.ifBlank { "（无标题）" }.take(120)
+        val nickname = item.author?.nickname?.trim().orEmpty()
+        val imageUrls = if (isPhoto) preferredImageUrls(item) else emptyList()
         return VideoItemUiModel(
             id = id,
-            title = title.take(120),
+            title = title,
+            authorNickname = nickname,
+            descRaw = rawDesc,
             coverUrl = cover,
-            downloadUrl = preferredPlayDownloadUrl(item),
+            downloadUrl = if (isPhoto) null else preferredPlayDownloadUrl(item),
             isSelected = false,
+            isPhoto = isPhoto,
+            imageUrls = imageUrls,
         )
     }
+
+    /**
+     * 列表侧常见仅缺 [AwemeItem.awemeId]、但有 [AwemeItem.idStr] / [AwemeItem.group_id] / [Statistics.awemeId] 的情况，
+     * 原先会被 [mapNotNull] 整段丢弃，导致一页 20 条只显示十几条。
+     */
+    internal fun resolveStableAwemeId(item: AwemeItem): String =
+        sequenceOf(
+            item.awemeId,
+            item.idStr,
+            item.groupId,
+            item.statistics?.awemeId,
+        )
+            .mapNotNull { it?.trim()?.takeIf { s -> s.isNotEmpty() } }
+            .firstOrNull()
+            .orEmpty()
 }

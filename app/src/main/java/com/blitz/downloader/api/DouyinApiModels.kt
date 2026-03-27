@@ -13,7 +13,8 @@ data class DouyinUserVideosResponse(
     @SerializedName("status_code") val statusCode: Int,
     @SerializedName("status_msg") val statusMsg: String? = null,
     @SerializedName("aweme_list") val awemeList: List<AwemeItem>?,
-    @SerializedName("has_more") val hasMore: Int,
+    /** 接口有时为 0/1、有时为 boolean，与 [DouyinCollectsListResponse.has_more] 类似 */
+    @SerializedName("has_more") val hasMore: JsonElement? = null,
     /** 用户发布列表：下一页游标（与请求参数 max_cursor 对应）。 */
     @SerializedName("max_cursor") val maxCursor: Long = 0,
     @SerializedName("min_cursor") val minCursor: Long? = null,
@@ -27,8 +28,21 @@ data class DouyinUserVideosResponse(
 fun DouyinUserVideosResponse.nextPageCursor(): Long =
     cursor?.takeIf { it != 0L } ?: maxCursor
 
-/** 是否还有更多（抖音常见为 0/1）。 */
-fun DouyinUserVideosResponse.hasMorePages(): Boolean = hasMore == 1
+/** 是否还有更多（抖音常见为 0/1，亦可能为 boolean / 字符串）。 */
+fun DouyinUserVideosResponse.hasMorePages(): Boolean {
+    val el = hasMore ?: return false
+    if (!el.isJsonPrimitive) return false
+    val p = el.asJsonPrimitive
+    return when {
+        p.isBoolean -> p.asBoolean
+        p.isNumber -> p.asInt != 0
+        p.isString -> {
+            val s = p.asString.trim()
+            s == "1" || s.equals("true", ignoreCase = true)
+        }
+        else -> false
+    }
+}
 
 /**
  * 列表接口一页结果（供 UI / 批量协调器使用）。
@@ -45,18 +59,24 @@ data class DouyinListPage(
 
 data class AwemeItem(
     @SerializedName("aweme_id") val awemeId: String = "",
+    /** 部分列表项仅下发字符串 id（与 aweme_id 同义）。 */
+    @SerializedName("id_str") val idStr: String? = null,
+    /** 与 aweme_id 常一致；轻量列表可能仅有此项。 */
+    @SerializedName("group_id") val groupId: String? = null,
     @SerializedName("desc") val desc: String?, // 视频描述
     @SerializedName("create_time") val createTime: Long,
     @SerializedName("author") val author: Author?,
     @SerializedName("video") val video: Video?,
+    /** 图集/图文类型（aweme_type=68）时不为空，列表中每个元素对应一张图片。 */
+    @SerializedName("images") val images: List<AwemeImage>? = null,
     @SerializedName("statistics") val statistics: Statistics?,
     @SerializedName("share_url") val shareUrl: String?
 )
 
 data class Author(
-    @SerializedName("uid") val uid: String,
-    @SerializedName("sec_uid") val secUid: String,
-    @SerializedName("nickname") val nickname: String,
+    @SerializedName("uid") val uid: String = "",
+    @SerializedName("sec_uid") val secUid: String = "",
+    @SerializedName("nickname") val nickname: String = "",
     @SerializedName("avatar_thumb") val avatarThumb: ImageUrl?
 )
 
@@ -91,12 +111,25 @@ data class ImageUrl(
     @SerializedName("url_list") val urlList: List<String>?
 )
 
+/**
+ * 图集中单张图片（`aweme_type=68` 时 [AwemeItem.images] 中的元素）。
+ * 下载优先级：[watermarkFreeDownloadUrlList] > [urlList]（原图压缩，无水印）> [downloadUrlList]（含水印）。
+ */
+data class AwemeImage(
+    @SerializedName("uri") val uri: String? = null,
+    @SerializedName("url_list") val urlList: List<String>? = null,
+    @SerializedName("download_url_list") val downloadUrlList: List<String>? = null,
+    @SerializedName("watermark_free_download_url_list") val watermarkFreeDownloadUrlList: List<String>? = null,
+    @SerializedName("width") val width: Int = 0,
+    @SerializedName("height") val height: Int = 0,
+)
+
 data class Statistics(
-    @SerializedName("aweme_id") val awemeId: String,
-    @SerializedName("comment_count") val commentCount: Int,
-    @SerializedName("digg_count") val diggCount: Int, // 点赞数
-    @SerializedName("share_count") val shareCount: Int,
-    @SerializedName("play_count") val playCount: Int
+    @SerializedName("aweme_id") val awemeId: String? = null,
+    @SerializedName("comment_count") val commentCount: Int = 0,
+    @SerializedName("digg_count") val diggCount: Int = 0, // 点赞数
+    @SerializedName("share_count") val shareCount: Int = 0,
+    @SerializedName("play_count") val playCount: Int = 0,
 )
 
 // ========== 收藏夹列表（F2：`USER_COLLECTS` → `collects_list`，结构见 activity/data.json）==========

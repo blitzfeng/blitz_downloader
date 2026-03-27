@@ -37,4 +37,23 @@ class DouyinListApiModelsTest {
         assertTrue(more.hasMorePages())
         assertFalse(done.hasMorePages())
     }
+
+    @Test
+    fun hasMorePages_acceptsBooleanAndString() {
+        val t = gson.fromJson(
+            """{"status_code":0,"aweme_list":[],"has_more":true,"max_cursor":0}""",
+            DouyinUserVideosResponse::class.java,
+        )
+        val f = gson.fromJson(
+            """{"status_code":0,"aweme_list":[],"has_more":false,"max_cursor":0}""",
+            DouyinUserVideosResponse::class.java,
+        )
+        val s = gson.fromJson(
+            """{"status_code":0,"aweme_list":[],"has_more":"1","max_cursor":0}""",
+            DouyinUserVideosResponse::class.java,
+        )
+        assertTrue(t.hasMorePages())
+        assertFalse(f.hasMorePages())
+        assertTrue(s.hasMorePages())
+    }
 }

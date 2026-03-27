@@ -12,12 +12,17 @@ import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
+import androidx.core.widget.NestedScrollView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.DouyinWebBrowserActivity
+import com.blitz.downloader.data.DownloadMediaType
+import com.blitz.downloader.data.DownloadSourceType
+import com.blitz.downloader.data.DownloadedVideoRepository
 import com.blitz.downloader.api.AwemeItem
 import com.blitz.downloader.api.AwemeMapper
 import com.blitz.downloader.api.DouyinApiClient
@@ -28,7 +33,6 @@ import com.blitz.downloader.api.DouyinUrlParser
 import com.blitz.downloader.databinding.FragmentListDownloadBinding
 import com.blitz.downloader.download.BatchDownloadCoordinator
 import com.blitz.downloader.util.DouyinCookieSync
-import com.blitz.downloader.util.UrlUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -45,6 +49,7 @@ class ListDownloadFragment : Fragment() {
 
     private var listLoadJob: Job? = null
     private var batchDownloadJob: Job? = null
+    private var showFabRunnable: Runnable? = null
 
     private enum class ListApiMode { None, UserPost, UserLike, UserCollection, CollectsVideo, MixAweme }
 
@@ -55,6 +60,9 @@ class ListDownloadFragment : Fragment() {
     private var listNextCursor: Long = 0L
     private var listHasMore: Boolean = false
     private var listLoadingMore: Boolean = false
+
+    private val downloadedRepo: DownloadedVideoRepository
+        get() = (requireContext().applicationContext as BlitzApp).downloadedVideoRepository
 
     override fun onCreateView(
         layoutInflater: LayoutInflater,
@@ -83,33 +91,28 @@ class ListDownloadFragment : Fragment() {
         }
         recyclerView.adapter = videoAdapter
 
-        recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                super.onScrolled(recyclerView, dx, dy)
-                if (dy <= 0 || listApiMode == ListApiMode.None || listLoadingMore || !listHasMore) return
-                val lm = recyclerView.layoutManager as? GridLayoutManager ?: return
-                val last = lm.findLastVisibleItemPosition()
-                val total = videoAdapter.itemCount
-                if (last >= total - 5 && total > 0) {
+        val thresholdPx = (200 * resources.displayMetrics.density).toInt()
+        binding.nestedScrollView.setOnScrollChangeListener(
+            NestedScrollView.OnScrollChangeListener { v, _, scrollY, _, _ ->
+                // FAB：滚动时立即隐藏；滚回顶部后延迟 300ms 确认停止再显示
+                showFabRunnable?.let { binding.root.removeCallbacks(it) }
+                if (scrollY > 0) {
+                    binding.fabParse.hide()
+                } else {
+                    val r = Runnable { binding.fabParse.show() }
+                    showFabRunnable = r
+                    binding.root.postDelayed(r, 300)
+                }
+                // 加载下一页
+                if (listApiMode == ListApiMode.None || listLoadingMore || !listHasMore) return@OnScrollChangeListener
+                val diff = v.getChildAt(0).measuredHeight - v.measuredHeight - scrollY
+                if (diff <= thresholdPx) {
                     loadNextListPage()
                 }
-            }
-        })
+            },
+        )
 
-        view.findViewById<Button>(R.id.btnPaste).setOnClickListener {
-            val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = clipboard.primaryClip
-            val text = clip?.getItemAt(0)?.text?.toString()
-            val url = if (!text.isNullOrBlank()) UrlUtils.extractFirstUrl(text) else null
-            if (url != null) {
-                etUrl.setText(url)
-                Toast.makeText(requireContext(), "已粘贴链接", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(requireContext(), "剪贴板中没有链接", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        view.findViewById<Button>(R.id.btnParse).setOnClickListener {
+        binding.fabParse.setOnClickListener {
             parseAndOpenOrLoadList(etUrl)
         }
 
@@ -130,10 +133,17 @@ class ListDownloadFragment : Fragment() {
                 Toast.makeText(requireContext(), R.string.batch_select_empty, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            val allSelected = videoItems.all { it.isSelected }
+            val selectable = videoItems.filter { !it.isDownloaded }
+            if (selectable.isEmpty()) {
+                Toast.makeText(requireContext(), R.string.batch_select_empty, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            val allSelected = selectable.all { it.isSelected }
             val newSelect = !allSelected
             for (i in videoItems.indices) {
-                videoItems[i] = videoItems[i].copy(isSelected = newSelect)
+                val v = videoItems[i]
+                if (v.isDownloaded) continue
+                videoItems[i] = v.copy(isSelected = newSelect)
             }
             videoAdapter.submitList(videoItems.toList())
             updateSelectedCountText()
@@ -145,15 +155,29 @@ class ListDownloadFragment : Fragment() {
                 Toast.makeText(requireContext(), R.string.batch_download_none_selected, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            if (selected.all { it.downloadUrl.isNullOrBlank() }) {
+            if (selected.all { it.downloadUrl.isNullOrBlank() && it.imageUrls.isEmpty() }) {
                 Toast.makeText(requireContext(), R.string.batch_download_no_play_url, Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             batchDownloadJob?.cancel()
             batchDownloadJob = viewLifecycleOwner.lifecycleScope.launch {
-                val n = selected.count { !it.downloadUrl.isNullOrBlank() }
+                val n = selected.count { !it.downloadUrl.isNullOrBlank() || it.imageUrls.isNotEmpty() }
                 tvListStatus?.text = getString(R.string.batch_download_running, n)
                 val result = BatchDownloadCoordinator.downloadSelected(requireContext(), videoItems.toList())
+                val sourceType = listSourceTypeForCurrentMode()
+                withContext(Dispatchers.IO) {
+                    result.succeededItems.forEach { item ->
+                        downloadedRepo.recordSuccessfulDownload(
+                            awemeId = item.id,
+                            downloadType = sourceType,
+                            userName = item.authorNickname,
+                            mediaType = if (item.isPhoto) DownloadMediaType.IMAGE else DownloadMediaType.VIDEO,
+                            filePath = result.succeededPaths[item.id].orEmpty(),
+                            coverPath = result.succeededCovers[item.id].orEmpty(),
+                        )
+                    }
+                }
+                reapplyDownloadedFlagsToList()
                 val line = getString(R.string.batch_download_done, result.success, result.failed)
                 tvListStatus?.text = line
                 Toast.makeText(requireContext(), line, Toast.LENGTH_LONG).show()
@@ -164,9 +188,16 @@ class ListDownloadFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         refreshCookieStatusUi()
+        if (videoItems.isNotEmpty()) {
+            viewLifecycleOwner.lifecycleScope.launch {
+                reapplyDownloadedFlagsToList()
+            }
+        }
     }
 
     override fun onDestroyView() {
+        showFabRunnable?.let { binding.root.removeCallbacks(it) }
+        showFabRunnable = null
         batchDownloadJob?.cancel()
         listLoadJob?.cancel()
         super.onDestroyView()
@@ -186,11 +217,38 @@ class ListDownloadFragment : Fragment() {
         val index = videoItems.indexOfFirst { it.id == id }
         if (index != -1) {
             val current = videoItems[index]
+            if (current.isDownloaded) return
             videoItems[index] = current.copy(isSelected = !current.isSelected)
-//            viewModel.selectedItemsSize.value = videoItems.count { it.isSelected }
             videoAdapter.submitList(videoItems.toList())
             updateSelectedCountText()
         }
+    }
+
+    private fun listSourceTypeForCurrentMode(): String = when (listApiMode) {
+        ListApiMode.UserPost -> DownloadSourceType.POST
+        ListApiMode.UserLike -> DownloadSourceType.LIKE
+        ListApiMode.UserCollection -> DownloadSourceType.COLLECT
+        ListApiMode.MixAweme -> DownloadSourceType.MIX
+        ListApiMode.CollectsVideo -> DownloadSourceType.COLLECTS
+        ListApiMode.None -> DownloadSourceType.POST
+    }
+
+    private suspend fun reapplyDownloadedFlagsToList() {
+        if (videoItems.isEmpty()) return
+        val ids = videoItems.map { it.id }
+        val downloaded = withContext(Dispatchers.IO) {
+            downloadedRepo.getDownloadedAwemeIdSet(ids)
+        }
+        for (i in videoItems.indices) {
+            val v = videoItems[i]
+            val isDl = v.id in downloaded
+            videoItems[i] = v.copy(
+                isDownloaded = isDl,
+                isSelected = if (isDl) false else v.isSelected,
+            )
+        }
+        videoAdapter.submitList(videoItems.toList())
+        updateSelectedCountText()
     }
 
     private fun updateSelectedCountText() {
@@ -472,9 +530,8 @@ class ListDownloadFragment : Fragment() {
                     videoItems.addAll(merged)
                     listNextCursor = page.nextCursor
                     listHasMore = page.hasMore
-                    videoAdapter.submitList(videoItems.toList())
+                    reapplyDownloadedFlagsToList()
                     refreshListStatusAfterOk()
-                    updateSelectedCountText()
                 },
                 onFailure = { e ->
                     Toast.makeText(

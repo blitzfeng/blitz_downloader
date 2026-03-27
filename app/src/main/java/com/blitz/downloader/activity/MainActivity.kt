@@ -1,8 +1,12 @@
 package com.blitz.downloader.activity
 
+import android.content.Intent
 import android.os.Bundle
+import android.view.Menu
+import android.view.MenuItem
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
@@ -18,7 +22,7 @@ import com.google.android.material.tabs.TabLayoutMediator
 
 class MainActivity : AppCompatActivity() {
 
-    private val  binding: ActivityMainBinding by lazy { ActivityMainBinding.inflate(layoutInflater) }
+    private val binding: ActivityMainBinding by lazy { ActivityMainBinding.inflate(layoutInflater) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,6 +36,9 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
+        val toolbar: Toolbar = findViewById(R.id.toolbar)
+        setSupportActionBar(toolbar)
+
         val tabLayout: TabLayout = findViewById(R.id.tabLayout)
         val viewPager: ViewPager2 = findViewById(R.id.viewPager)
 
@@ -44,6 +51,25 @@ class MainActivity : AppCompatActivity() {
                 else -> ""
             }
         }.attach()
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.menu_main, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.action_manage -> {
+                onManageClicked()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    private fun onManageClicked() {
+        startActivity(Intent(this, ManageActivity::class.java))
     }
 
     private class MainPagerAdapter(activity: AppCompatActivity) : FragmentStateAdapter(activity) {

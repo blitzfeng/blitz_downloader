@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.google.devtools.ksp)
 }
 
 android {
@@ -57,6 +58,9 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     implementation("io.coil-kt:coil:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -12,12 +12,7 @@
         android:orientation="horizontal"
         android:padding="8dp">
 
-        <Button
-            android:id="@+id/btnBack"
-            style="?attr/materialButtonOutlinedStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/browser_back" />
+
 
         <EditText
             android:id="@+id/etUrlBar"
@@ -32,21 +27,7 @@
             android:textIsSelectable="true"
             tools:text="https://www.douyin.com/" />
 
-        <Button
-            android:id="@+id/btnGo"
-            style="?attr/materialButtonOutlinedStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:text="@string/browser_go" />
 
-        <Button
-            android:id="@+id/btnCopyUrl"
-            style="?attr/materialButtonOutlinedStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="4dp"
-            android:text="@string/browser_copy_url" />
     </LinearLayout>
 
     <LinearLayout
@@ -56,24 +37,31 @@
         android:orientation="horizontal"
         android:paddingHorizontal="8dp"
         android:paddingBottom="4dp">
-
         <Button
-            android:id="@+id/btnUaMode"
+            android:id="@+id/btnBack"
             style="?attr/materialButtonOutlinedStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/browser_switch_to_mobile" />
-    </LinearLayout>
+            android:layout_weight="1"
+            android:text="@string/browser_back" />
+        <Button
+            android:id="@+id/btnGo"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:text="@string/browser_go" />
 
-    <TextView
-        android:id="@+id/tvUaHint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingHorizontal="10dp"
-        android:paddingBottom="6dp"
-        android:text="@string/browser_login_ua_hint"
-        android:textColor="#888888"
-        android:textSize="11sp" />
+        <Button
+            android:id="@+id/btnCopyUrl"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:text="@string/browser_copy_url" />
+    </LinearLayout>
 
     <WebView
         android:id="@+id/webViewBrowser"

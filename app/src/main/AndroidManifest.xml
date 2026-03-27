@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
+        android:name=".BlitzApp"
         android:usesCleartextTraffic="true"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -32,6 +33,10 @@
             android:exported="false"
             android:hardwareAccelerated="true"
             android:label="@string/douyin_browser_title" />
+        <activity
+            android:name=".activity.ManageActivity"
+            android:exported="false"
+            android:label="@string/manage_title" />
     </application>
 
 </manifest>

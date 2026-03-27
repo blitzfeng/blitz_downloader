@@ -35,7 +35,6 @@ class DouyinWebBrowserActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var etUrlBar: EditText
-    private lateinit var btnUaMode: Button
 
     /** true = 与 Chrome 电脑版一致（含登录页左侧扫码）；false = 移动站表单为主 */
     private var useDesktopUa: Boolean = true
@@ -49,7 +48,6 @@ class DouyinWebBrowserActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webViewBrowser)
         etUrlBar = findViewById(R.id.etUrlBar)
-        btnUaMode = findViewById(R.id.btnUaMode)
         val btnBack: Button = findViewById(R.id.btnBack)
         val btnGo: Button = findViewById(R.id.btnGo)
         val btnCopyUrl: Button = findViewById(R.id.btnCopyUrl)
@@ -70,7 +68,7 @@ class DouyinWebBrowserActivity : AppCompatActivity() {
             },
         )
 
-        btnBack.setOnClickListener { goBackOrClose() }
+        btnBack.setOnClickListener { finish() }
 
         btnGo.setOnClickListener { loadUrlFromBar() }
         etUrlBar.setOnEditorActionListener { _, actionId, event ->
@@ -97,13 +95,6 @@ class DouyinWebBrowserActivity : AppCompatActivity() {
 
         setupWebView()
 
-        btnUaMode.setOnClickListener {
-            useDesktopUa = !useDesktopUa
-            webView.settings.userAgentString = currentUserAgentString()
-            updateUaModeButtonLabel()
-            webView.reload()
-        }
-        updateUaModeButtonLabel()
 
         val initial = intent.getStringExtra(EXTRA_INITIAL_URL)?.trim().orEmpty()
         val startUrl = when {
@@ -211,13 +202,6 @@ class DouyinWebBrowserActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateUaModeButtonLabel() {
-        btnUaMode.text = if (useDesktopUa) {
-            getString(R.string.browser_switch_to_mobile)
-        } else {
-            getString(R.string.browser_switch_to_desktop)
-        }
-    }
 
     /**
      * 系统默认 UA 去掉 `; wv`，接近普通 Chrome 移动版（无左侧 PC 扫码布局）。
@@ -252,7 +236,7 @@ class DouyinWebBrowserActivity : AppCompatActivity() {
         /** 为 true 时首屏使用移动 UA（与默认「电脑版」相反） */
         const val EXTRA_PREFER_MOBILE_UA = "extra_prefer_mobile_ua"
 
-        private const val DOUYIN_DEFAULT_HOME_URL = "https://www.douyin.com/"
+        private const val DOUYIN_DEFAULT_HOME_URL = "https://www.douyin.com/user/MS4wLjABAAAA7ZinArXxNJlWd2iiRKUI3ruz4TwjqKN5F7iqF5nGKIAgCTDtscTfMCQMor1Fn9vr?from_tab_name=main"
 
         fun createIntent(context: Context, initialUrl: String?): Intent {
             return Intent(context, DouyinWebBrowserActivity::class.java).apply {

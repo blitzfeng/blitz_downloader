@@ -15,10 +15,20 @@ import com.blitz.downloader.R
 data class VideoItemUiModel(
     val id: String,
     val title: String,
+    /** 作者昵称；用于批量下载文件名 `{昵称}_{描述}`。 */
+    val authorNickname: String,
+    /** 接口原始文案（trim），空则无描述；文件名会去掉 #话题 后再用。 */
+    val descRaw: String,
     val coverUrl: String?,
-    /** 列表接口 [com.blitz.downloader.api.AwemeItem] 中 play_addr 的首选直链，已做 `playwm`→`play` 处理；无则无法批量下载。 */
+    /** 列表接口 [com.blitz.downloader.api.AwemeItem] 中 play_addr 的首选直链，已做 `playwm`→`play` 处理；无则无法批量下载。图集类型为 null。 */
     val downloadUrl: String?,
     val isSelected: Boolean,
+    /** 本地库中已记录下载（按作品 id）；列表中禁止勾选。 */
+    val isDownloaded: Boolean = false,
+    /** 是否为图集/图文类型（aweme_type=68，[images] 字段非空）。 */
+    val isPhoto: Boolean = false,
+    /** 图集所有图片的最优下载 URL 列表（[isPhoto]=true 时非空）。 */
+    val imageUrls: List<String> = emptyList(),
 )
 
 class VideoGridAdapter(
@@ -49,6 +59,8 @@ class VideoGridAdapter(
         private val title: TextView = itemView.findViewById(R.id.tvTitle)
         private val checkbox: CheckBox = itemView.findViewById(R.id.cbSelected)
         private val overlay: View = itemView.findViewById(R.id.selectionOverlay)
+        private val downloadedBadge: TextView = itemView.findViewById(R.id.tvDownloadedBadge)
+        private val photoBadge: TextView = itemView.findViewById(R.id.tvPhotoBadge)
 
         fun bind(item: VideoItemUiModel) {
             title.text = item.title
@@ -64,12 +76,32 @@ class VideoGridAdapter(
                 cover.setImageResource(R.drawable.ic_video_placeholder)
             }
 
-            checkbox.setOnCheckedChangeListener(null)
-            checkbox.isChecked = item.isSelected
-            overlay.visibility = if (item.isSelected) View.VISIBLE else View.GONE
+            if (item.isPhoto && item.imageUrls.isNotEmpty()) {
+                photoBadge.visibility = View.VISIBLE
+                photoBadge.text = itemView.context.getString(R.string.grid_badge_photo, item.imageUrls.size)
+            } else {
+                photoBadge.visibility = View.GONE
+            }
 
-            itemView.setOnClickListener { onItemClicked(item) }
-            checkbox.setOnClickListener { onItemClicked(item) }
+            if (item.isDownloaded) {
+                downloadedBadge.visibility = View.VISIBLE
+                checkbox.isEnabled = false
+                checkbox.alpha = 0.45f
+                checkbox.setOnCheckedChangeListener(null)
+                checkbox.isChecked = false
+                overlay.visibility = View.GONE
+                itemView.setOnClickListener(null)
+                checkbox.setOnClickListener(null)
+            } else {
+                downloadedBadge.visibility = View.GONE
+                checkbox.isEnabled = true
+                checkbox.alpha = 1f
+                checkbox.setOnCheckedChangeListener(null)
+                checkbox.isChecked = item.isSelected
+                overlay.visibility = if (item.isSelected) View.VISIBLE else View.GONE
+                itemView.setOnClickListener { onItemClicked(item) }
+                checkbox.setOnClickListener { onItemClicked(item) }
+            }
         }
     }
 
