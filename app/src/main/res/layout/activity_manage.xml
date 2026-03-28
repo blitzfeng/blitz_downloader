@@ -10,9 +10,9 @@
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
-        android:background="?attr/colorPrimary"
-        app:titleTextColor="?attr/colorOnPrimary"
-        app:navigationIconTint="?attr/colorOnPrimary"
+        android:background="@color/white"
+        app:titleTextColor="@color/black"
+        app:navigationIconTint="@color/teal_200"
         app:title="@string/manage_title" />
 
     <com.google.android.material.tabs.TabLayout

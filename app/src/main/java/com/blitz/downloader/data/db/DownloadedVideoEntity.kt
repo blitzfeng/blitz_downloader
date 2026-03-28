@@ -35,4 +35,47 @@ data class DownloadedVideoEntity(
      * - 旧记录默认为空字符串，显示时可回退到占位图。
      */
     val coverPath: String = "",
+    /**
+     * 视频/图集的文字描述（即作者发布时填写的文案/标题）。
+     * 旧记录默认为空字符串。
+     */
+    val desc: String = "",
+    /**
+     * 当 [downloadType] 为 `"collects"` 时，记录所属收藏夹的名称；其余场景留空。
+     * 旧记录默认为空字符串。
+     */
+    val collectionType: String = "",
+    /**
+     * 当 [downloadType] 为 `"collects"` 时，记录所属收藏夹的稳定 ID（与 [collectionType] 对应）；
+     * 其余场景留空。旧记录默认为空字符串。
+     */
+    val collectId: String = "",
+    /**
+     * 视频原始创作者的稳定 `sec_user_id`。
+     * 用于管理页「按作者过滤」，不受作者改名影响。
+     * 旧记录默认为空字符串。
+     */
+    val videoAuthorSecUserId: String = "",
+    /**
+     * 下载来源账户/主页的 `sec_user_id`。
+     * - [downloadType] 为 `"post"` 时：填被下载的目标用户 `sec_user_id`。
+     * - [downloadType] 为 `"like"`/`"collect"`/`"collects"` 时：填 App 所有者账号
+     *   [com.blitz.downloader.config.AppConfig.MY_SEC_USER_ID]，表示「来自我的账户列表」。
+     * 旧记录默认为空字符串。
+     */
+    val sourceOwnerSecUserId: String = "",
+    /**
+     * 视频与账户所有者的关系标签，仅对「我的账户」下载有效（[downloadType] 为
+     * `"like"`/`"collects"` 时填写，`"post"` 场景留空）。
+     *
+     * 编码规则（分隔符为 `|`）：
+     * - 从喜欢列表下载，未收藏（`collect_stat=0`）→ `"like"`
+     * - 从喜欢列表下载，已收藏（`collect_stat=1`）→ `"like|collect"`
+     * - 从收藏夹下载，未点赞（`user_digged=0`）→ `"<收藏夹名称>"`（如 `"舞蹈"`）
+     * - 从收藏夹下载，已点赞（`user_digged=1`）→ `"like|<收藏夹名称>"`（如 `"like|舞蹈"`）
+     *
+     * 管理页可直接展示此字段，或按 `|` 拆分后渲染为多个标签。
+     * 旧记录默认为空字符串。
+     */
+    val userRelation: String = "",
 )

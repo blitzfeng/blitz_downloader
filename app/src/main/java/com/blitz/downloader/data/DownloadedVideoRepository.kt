@@ -21,11 +21,16 @@ class DownloadedVideoRepository(context: Context) {
 
     suspend fun deleteByAwemeId(awemeId: String) = dao.deleteByAwemeId(awemeId)
 
+    suspend fun deleteByAwemeIds(awemeIds: List<String>): Int = dao.deleteByAwemeIds(awemeIds)
+
     suspend fun getByRowId(rowId: Long): DownloadedVideoEntity? = dao.getByRowId(rowId)
 
     suspend fun getByAwemeId(awemeId: String): DownloadedVideoEntity? = dao.getByAwemeId(awemeId)
 
     suspend fun getAll(): List<DownloadedVideoEntity> = dao.getAll()
+
+    suspend fun getAllByMediaType(mediaType: String): List<DownloadedVideoEntity> =
+        dao.getAllByMediaType(mediaType)
 
     /** 用于网格：是否存在本地已记录下载（按作品 id）。 */
     suspend fun getDownloadedAwemeIdSet(ids: Collection<String>): Set<String> {
@@ -49,6 +54,12 @@ class DownloadedVideoRepository(context: Context) {
         mediaType: String = DownloadMediaType.VIDEO,
         filePath: String = "",
         coverPath: String = "",
+        desc: String = "",
+        collectionType: String = "",
+        collectId: String = "",
+        videoAuthorSecUserId: String = "",
+        sourceOwnerSecUserId: String = "",
+        userRelation: String = "",
     ) {
         dao.insert(
             DownloadedVideoEntity(
@@ -58,8 +69,33 @@ class DownloadedVideoRepository(context: Context) {
                 mediaType = mediaType,
                 filePath = filePath,
                 coverPath = coverPath,
+                desc = desc,
+                collectionType = collectionType,
+                collectId = collectId,
+                videoAuthorSecUserId = videoAuthorSecUserId,
+                sourceOwnerSecUserId = sourceOwnerSecUserId,
+                userRelation = userRelation,
             ),
         )
+    }
+
+    companion object {
+        /**
+         * 从喜欢列表下载时，根据 `collect_stat` 构建 [DownloadedVideoEntity.userRelation]。
+         *
+         * @param collectStat 接口返回的 `collect_stat` 字段：0=未收藏，1=已收藏。
+         */
+        fun buildUserRelationFromLike(collectStat: Int): String =
+            if (collectStat == 1) "like|collect" else "like"
+
+        /**
+         * 从收藏夹下载时，根据 `user_digged` 和收藏夹名称构建 [DownloadedVideoEntity.userRelation]。
+         *
+         * @param userDigged 接口返回的 `user_digged` 字段：0=未点赞，1=已点赞。
+         * @param folderName 收藏夹名称（对应 [DownloadedVideoEntity.collectionType]）。
+         */
+        fun buildUserRelationFromCollection(userDigged: Int, folderName: String): String =
+            if (userDigged == 1) "like|$folderName" else folderName
     }
 
     suspend fun getPageByMediaType(mediaType: String, limit: Int, offset: Int): List<DownloadedVideoEntity> =

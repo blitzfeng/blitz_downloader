@@ -24,7 +24,7 @@
                 android:background="@drawable/ic_video_placeholder"
                 android:contentDescription="@string/app_name" />
 
-            <!-- 文件失效蒙层（仅视频使用） -->
+            <!-- 文件失效蒙层 -->
             <View
                 android:id="@+id/viewInvalidOverlay"
                 android:layout_width="match_parent"
@@ -44,6 +44,26 @@
                 android:textColor="#FFCCCC"
                 android:textSize="12sp"
                 android:textStyle="bold"
+                android:visibility="gone" />
+
+            <!-- 多选时的选中蒙层 -->
+            <View
+                android:id="@+id/viewSelectedOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#552196F3"
+                android:visibility="gone" />
+
+            <!-- 多选时的复选框（右上角） -->
+            <CheckBox
+                android:id="@+id/cbManageSelect"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_margin="4dp"
+                android:buttonTint="#2196F3"
+                android:clickable="false"
+                android:focusable="false"
                 android:visibility="gone" />
 
         </FrameLayout>

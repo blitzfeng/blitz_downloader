@@ -25,6 +25,9 @@ interface DownloadedVideoDao {
     @Query("DELETE FROM downloaded_videos WHERE awemeId = :awemeId")
     suspend fun deleteByAwemeId(awemeId: String)
 
+    @Query("DELETE FROM downloaded_videos WHERE awemeId IN (:awemeIds)")
+    suspend fun deleteByAwemeIds(awemeIds: List<String>): Int
+
     @Query("SELECT * FROM downloaded_videos WHERE id = :rowId LIMIT 1")
     suspend fun getByRowId(rowId: Long): DownloadedVideoEntity?
 
@@ -33,6 +36,9 @@ interface DownloadedVideoDao {
 
     @Query("SELECT * FROM downloaded_videos ORDER BY createdAtMillis DESC")
     suspend fun getAll(): List<DownloadedVideoEntity>
+
+    @Query("SELECT * FROM downloaded_videos WHERE mediaType = :mediaType ORDER BY createdAtMillis DESC")
+    suspend fun getAllByMediaType(mediaType: String): List<DownloadedVideoEntity>
 
     @Query("SELECT awemeId FROM downloaded_videos")
     suspend fun getAllAwemeIds(): List<String>

@@ -58,4 +58,16 @@
     <string name="manage_invalid_label">已失效</string>
     <string name="manage_empty_videos">暂无已下载视频</string>
     <string name="manage_empty_images">暂无已下载图片</string>
+    <string name="manage_menu_clear_invalid">清除已失效</string>
+    <string name="manage_menu_delete_selected">删除选中</string>
+    <string name="manage_menu_delete_selected_count">删除选中（%1$d）</string>
+    <string name="manage_selected_count">已选 %1$d 项</string>
+    <string name="manage_clear_invalid_confirm">将扫描数据库中的视频记录，删除本地文件已不存在的条目，操作不可撤销。确认继续？</string>
+    <string name="manage_clear_invalid_done">已清除 %1$d 条失效记录</string>
+    <string name="manage_clear_invalid_none">未发现失效记录</string>
+    <string name="manage_delete_done">已删除 %1$d 条记录</string>
+    <string name="manage_confirm_delete_title">确认删除</string>
+    <string name="manage_confirm_delete_msg">将删除已选的 %1$d 条记录，操作不可撤销。</string>
+    <string name="manage_confirm_ok">删除</string>
+    <string name="manage_confirm_cancel">取消</string>
 </resources>
