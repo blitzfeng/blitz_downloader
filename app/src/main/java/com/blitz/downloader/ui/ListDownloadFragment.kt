@@ -6,23 +6,20 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
-import android.widget.EditText
-import android.widget.RadioGroup
-import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.widget.NestedScrollView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
-import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.DouyinWebBrowserActivity
+import com.blitz.downloader.config.AppConfig
 import com.blitz.downloader.data.DownloadMediaType
 import com.blitz.downloader.data.DownloadSourceType
 import com.blitz.downloader.data.DownloadedVideoRepository
+import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.api.AwemeItem
 import com.blitz.downloader.api.AwemeMapper
 import com.blitz.downloader.api.DouyinApiClient
@@ -37,14 +34,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class ListDownloadFragment : Fragment() {
 
-    private lateinit var binding: FragmentListDownloadBinding
+
+    val myUserId = "MS4wLjABAAAA7ZinArXxNJlWd2iiRKUI3ruz4TwjqKN5F7iqF5nGKIAgCTDtscTfMCQMor1Fn9vr"
+    private var _binding: FragmentListDownloadBinding? = null
+    private val binding get() = _binding!!
     private lateinit var videoAdapter: VideoGridAdapter
-    private lateinit var tvCookieStatus: TextView
-    private var tvListStatus: TextView? = null
-    private lateinit var tvSelectedCountView: TextView
     private val videoItems = mutableListOf<VideoItemUiModel>()
 
     private var listLoadJob: Job? = null
@@ -57,9 +55,13 @@ class ListDownloadFragment : Fragment() {
     private var listSecUserId: String? = null
     private var listMixId: String? = null
     private var listCollectsId: String? = null
+    /** 当前选中收藏夹的显示名称（[ListApiMode.CollectsVideo] 时有效），用于写入 DB。 */
+    private var listCollectsName: String = ""
     private var listNextCursor: Long = 0L
     private var listHasMore: Boolean = false
     private var listLoadingMore: Boolean = false
+    private var selectedUserId = myUserId
+    val indexMainPage = "https://www.douyin.com/user/${selectedUserId}?from_tab_name=main"
 
     private val downloadedRepo: DownloadedVideoRepository
         get() = (requireContext().applicationContext as BlitzApp).downloadedVideoRepository
@@ -69,27 +71,21 @@ class ListDownloadFragment : Fragment() {
         container: ViewGroup?,
         savedInstanceState: Bundle?,
     ): View {
-        binding = FragmentListDownloadBinding.inflate(layoutInflater, container, false)
+        _binding = FragmentListDownloadBinding.inflate(layoutInflater, container, false)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        val etUrl: EditText = view.findViewById(R.id.etUrlInput)
-        val tvSelectedCount: TextView = view.findViewById(R.id.tvSelectedCount)
-        tvSelectedCountView = tvSelectedCount
-        tvCookieStatus = view.findViewById(R.id.tvCookieStatus)
-        tvListStatus = view.findViewById(R.id.tvStatus)
         refreshCookieStatusUi()
+        BatchDownloadCoordinator.createNoMediaFile(File(BatchDownloadCoordinator.COVER_SUBDIR))
 
-        val recyclerView: RecyclerView = view.findViewById(R.id.rvVideos)
-        recyclerView.layoutManager = GridLayoutManager(requireContext(), 3)
-
+        binding.rvVideos.layoutManager = GridLayoutManager(requireContext(), 3)
         videoAdapter = VideoGridAdapter(emptyList()) { item ->
             toggleSelection(item.id)
         }
-        recyclerView.adapter = videoAdapter
+        binding.rvVideos.adapter = videoAdapter
 
         val thresholdPx = (200 * resources.displayMetrics.density).toInt()
         binding.nestedScrollView.setOnScrollChangeListener(
@@ -113,22 +109,22 @@ class ListDownloadFragment : Fragment() {
         )
 
         binding.fabParse.setOnClickListener {
-            parseAndOpenOrLoadList(etUrl)
+            parseAndOpenOrLoadList()
         }
 
-        view.findViewById<Button>(R.id.btnSyncCookie).setOnClickListener {
+        binding.btnSyncCookie.setOnClickListener {
             syncCookieFromCookieManager()
         }
 
-        view.findViewById<Button>(R.id.btnPasteCookie).setOnClickListener {
+        binding.btnPasteCookie.setOnClickListener {
             importCookieFromClipboard()
         }
 
-        view.findViewById<Button>(R.id.btnOpenDouyinBrowser).setOnClickListener {
-            startDouyinBrowser(initialUrlFromInput(etUrl))
+        binding.btnOpenDouyinBrowser.setOnClickListener {
+            startDouyinBrowser(initialUrlFromInput())
         }
 
-        view.findViewById<Button>(R.id.btnSelectAll).setOnClickListener {
+        binding.btnSelectAll.setOnClickListener {
             if (videoItems.isEmpty()) {
                 Toast.makeText(requireContext(), R.string.batch_select_empty, Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
@@ -141,15 +137,15 @@ class ListDownloadFragment : Fragment() {
             val allSelected = selectable.all { it.isSelected }
             val newSelect = !allSelected
             for (i in videoItems.indices) {
-                val v = videoItems[i]
-                if (v.isDownloaded) continue
-                videoItems[i] = v.copy(isSelected = newSelect)
+                val item = videoItems[i]
+                if (item.isDownloaded) continue
+                videoItems[i] = item.copy(isSelected = newSelect)
             }
             videoAdapter.submitList(videoItems.toList())
             updateSelectedCountText()
         }
 
-        view.findViewById<Button>(R.id.btnDownloadSelected).setOnClickListener {
+        binding.btnDownloadSelected.setOnClickListener {
             val selected = videoItems.filter { it.isSelected }
             if (selected.isEmpty()) {
                 Toast.makeText(requireContext(), R.string.batch_download_none_selected, Toast.LENGTH_SHORT).show()
@@ -162,11 +158,29 @@ class ListDownloadFragment : Fragment() {
             batchDownloadJob?.cancel()
             batchDownloadJob = viewLifecycleOwner.lifecycleScope.launch {
                 val n = selected.count { !it.downloadUrl.isNullOrBlank() || it.imageUrls.isNotEmpty() }
-                tvListStatus?.text = getString(R.string.batch_download_running, n)
+                binding.tvStatus.text = getString(R.string.batch_download_running, n)
+                val appCtx = requireContext().applicationContext
                 val result = BatchDownloadCoordinator.downloadSelected(requireContext(), videoItems.toList())
                 val sourceType = listSourceTypeForCurrentMode()
                 withContext(Dispatchers.IO) {
+                    val isCollects = listApiMode == ListApiMode.CollectsVideo
+                    val folderName = if (isCollects) listCollectsName else ""
+                    val folderId = if (isCollects) listCollectsId.orEmpty() else ""
+                    val ownerSecUserId = when (listApiMode) {
+                        ListApiMode.UserPost -> listSecUserId.orEmpty()
+                        else -> AppConfig.MY_SEC_USER_ID
+                    }
+                    val tagRepo = VideoTagRepository(appCtx)
                     result.succeededItems.forEach { item ->
+                        val userRelation = when (listApiMode) {
+                            ListApiMode.UserLike ->
+                                DownloadedVideoRepository.buildUserRelationFromLike(item.collectStat)
+                            ListApiMode.UserCollection ->
+                                DownloadedVideoRepository.buildUserRelationFromCollection(item.userDigged, "collect")
+                            ListApiMode.CollectsVideo ->
+                                DownloadedVideoRepository.buildUserRelationFromCollection(item.userDigged, folderName)
+                            else -> ""
+                        }
                         downloadedRepo.recordSuccessfulDownload(
                             awemeId = item.id,
                             downloadType = sourceType,
@@ -174,12 +188,21 @@ class ListDownloadFragment : Fragment() {
                             mediaType = if (item.isPhoto) DownloadMediaType.IMAGE else DownloadMediaType.VIDEO,
                             filePath = result.succeededPaths[item.id].orEmpty(),
                             coverPath = result.succeededCovers[item.id].orEmpty(),
+                            desc = item.descRaw,
+                            collectionType = folderName,
+                            collectId = folderId,
+                            videoAuthorSecUserId = item.authorSecUserId,
+                            sourceOwnerSecUserId = ownerSecUserId,
+                            userRelation = userRelation,
                         )
+                        if (isCollects) {
+                            tagRepo.ensureCollectFolderTagLinked(awemeId = item.id, folderName = folderName)
+                        }
                     }
                 }
                 reapplyDownloadedFlagsToList()
                 val line = getString(R.string.batch_download_done, result.success, result.failed)
-                tvListStatus?.text = line
+                binding.tvStatus.text = line
                 Toast.makeText(requireContext(), line, Toast.LENGTH_LONG).show()
             }
         }
@@ -196,10 +219,11 @@ class ListDownloadFragment : Fragment() {
     }
 
     override fun onDestroyView() {
-        showFabRunnable?.let { binding.root.removeCallbacks(it) }
+        showFabRunnable?.let { _binding?.root?.removeCallbacks(it) }
         showFabRunnable = null
         batchDownloadJob?.cancel()
         listLoadJob?.cancel()
+        _binding = null
         super.onDestroyView()
     }
 
@@ -207,8 +231,8 @@ class ListDownloadFragment : Fragment() {
         startActivity(DouyinWebBrowserActivity.createIntent(requireContext(), initialUrl))
     }
 
-    private fun initialUrlFromInput(etUrl: EditText): String? {
-        val raw = etUrl.text?.toString()?.trim().orEmpty()
+    private fun initialUrlFromInput(): String? {
+        val raw = binding.etUrlInput.text?.toString()?.trim().orEmpty()
         if (raw.isEmpty()) return null
         return if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "https://$raw"
     }
@@ -253,25 +277,21 @@ class ListDownloadFragment : Fragment() {
 
     private fun updateSelectedCountText() {
         val c = videoItems.count { it.isSelected }
-        if (c == 0) {
-            binding.btnDownloadSelected.isEnabled = false
-        } else {
-            binding.btnDownloadSelected.isEnabled = true
-        }
-        tvSelectedCountView.text = "已选择 $c / ${videoItems.size}"
+        binding.btnDownloadSelected.isEnabled = c > 0
+        binding.tvSelectedCount.text = "已选择 $c / ${videoItems.size}"
     }
 
     private fun refreshCookieStatusUi() {
         val line = DouyinApiClient.globalCookie
         if (line.isNullOrBlank()) {
-            tvCookieStatus.setText(R.string.cookie_status_none)
+            binding.tvCookieStatus.setText(R.string.cookie_status_none)
             return
         }
         val snap = DouyinCookieSync.cookieTokenSnapshot(line)
         val yn = { ok: Boolean ->
             getString(if (ok) R.string.token_status_yes else R.string.token_status_no)
         }
-        tvCookieStatus.text = buildString {
+        binding.tvCookieStatus.text = buildString {
             append(getString(R.string.cookie_status_synced, snap.pairCount, snap.lineLength))
             append('\n')
             append(
@@ -320,9 +340,8 @@ class ListDownloadFragment : Fragment() {
         }
     }
 
-    private fun parseAndOpenOrLoadList(etUrl: EditText) {
-        val rg = view?.findViewById<RadioGroup>(R.id.rgListKind) ?: return
-        if (rg.checkedRadioButtonId == R.id.rbKindCollectsFolder) {
+    private fun parseAndOpenOrLoadList() {
+        if (binding.rgListKind.checkedRadioButtonId == R.id.rbKindCollectsFolder) {
             if (DouyinApiClient.globalCookie.isNullOrBlank()) {
                 Toast.makeText(
                     requireContext(),
@@ -338,7 +357,7 @@ class ListDownloadFragment : Fragment() {
             return
         }
 
-        val raw = etUrl.text?.toString()?.trim()
+        val raw = binding.etUrlInput.text?.toString()?.trim()
         if (raw.isNullOrBlank()) {
             Toast.makeText(requireContext(), "请输入URL", Toast.LENGTH_SHORT).show()
             return
@@ -353,7 +372,7 @@ class ListDownloadFragment : Fragment() {
                         Toast.makeText(requireContext(), R.string.list_api_need_user_or_mix, Toast.LENGTH_LONG).show()
                         return@launch
                     }
-                    when (view?.findViewById<RadioGroup>(R.id.rgListKind)?.checkedRadioButtonId) {
+                    when (binding.rgListKind.checkedRadioButtonId) {
                         R.id.rbKindLike -> {
                             resetListBatchState(ListApiMode.UserLike, secUserId = sid, mixId = null)
                             fetchListPage(isFirstPage = true)
@@ -387,8 +406,7 @@ class ListDownloadFragment : Fragment() {
                 }
                 DouyinPageKind.VIDEO -> {
                     resetListBatchState(ListApiMode.None, null, null)
-                    val initial = initialUrlFromInput(etUrl)
-                    startDouyinBrowser(initial)
+                    startDouyinBrowser(initialUrlFromInput())
                 }
                 DouyinPageKind.SHORT_UNRESOLVED -> {
                     Toast.makeText(requireContext(), R.string.list_api_short_unresolved, Toast.LENGTH_LONG).show()
@@ -396,14 +414,14 @@ class ListDownloadFragment : Fragment() {
                 DouyinPageKind.UNKNOWN -> {
                     resetListBatchState(ListApiMode.None, null, null)
                     Toast.makeText(requireContext(), "已按普通链接打开网页", Toast.LENGTH_SHORT).show()
-                    startDouyinBrowser(initialUrlFromInput(etUrl))
+                    startDouyinBrowser(initialUrlFromInput())
                 }
             }
         }
     }
 
     private suspend fun runCollectsFolderPickFlow() {
-        tvListStatus?.text = getString(R.string.collects_list_loading)
+        binding.tvStatus.text = getString(R.string.collects_list_loading)
         val folders = DouyinListApi.fetchAllCollectsFolders().getOrElse { e ->
             withContext(Dispatchers.Main) {
                 Toast.makeText(
@@ -418,7 +436,7 @@ class ListDownloadFragment : Fragment() {
         if (folders.isEmpty()) {
             withContext(Dispatchers.Main) {
                 Toast.makeText(requireContext(), R.string.collects_list_empty, Toast.LENGTH_LONG).show()
-                tvListStatus?.text = getString(R.string.collects_list_empty)
+                binding.tvStatus.text = getString(R.string.collects_list_empty)
             }
             return
         }
@@ -434,8 +452,9 @@ class ListDownloadFragment : Fragment() {
             AlertDialog.Builder(requireContext())
                 .setTitle(R.string.collects_pick_title)
                 .setItems(labels) { _, which ->
-                    val id = folders[which].id
-                    resetListBatchState(ListApiMode.CollectsVideo, secUserId = null, mixId = null, collectsId = id)
+                    val folder = folders[which]
+                    resetListBatchState(ListApiMode.CollectsVideo, secUserId = null, mixId = null, collectsId = folder.id)
+                    listCollectsName = folder.name.ifBlank { folder.id }
                     listLoadJob = viewLifecycleOwner.lifecycleScope.launch {
                         fetchListPage(isFirstPage = true)
                     }
@@ -455,13 +474,14 @@ class ListDownloadFragment : Fragment() {
         listSecUserId = secUserId
         listMixId = mixId
         listCollectsId = collectsId
+        listCollectsName = ""
         listNextCursor = 0L
         listHasMore = false
         videoItems.clear()
         videoAdapter.submitList(emptyList())
         updateSelectedCountText()
         if (mode == ListApiMode.None) {
-            tvListStatus?.setText(R.string.list_batch_scope_hint)
+            binding.tvStatus.setText(R.string.list_batch_scope_hint)
         }
     }
 
@@ -475,16 +495,16 @@ class ListDownloadFragment : Fragment() {
     }
 
     private fun refreshListStatusLoading() {
-        tvListStatus?.text = getString(R.string.list_api_loading)
+        binding.tvStatus.text = getString(R.string.list_api_loading)
     }
 
     private fun refreshListStatusAfterOk() {
         val tail = if (listHasMore) getString(R.string.list_api_has_more) else getString(R.string.list_api_no_more)
-        tvListStatus?.text = getString(R.string.list_api_status_loaded, videoItems.size, tail)
+        binding.tvStatus.text = getString(R.string.list_api_status_loaded, videoItems.size, tail)
     }
 
     private fun refreshListStatusError(msg: String?) {
-        tvListStatus?.text = getString(R.string.list_api_error, msg ?: "")
+        binding.tvStatus.text = getString(R.string.list_api_error, msg ?: "")
     }
 
     private suspend fun fetchListPage(isFirstPage: Boolean) {
@@ -554,4 +574,5 @@ class ListDownloadFragment : Fragment() {
             fetchListPage(isFirstPage = false)
         }
     }
+
 }

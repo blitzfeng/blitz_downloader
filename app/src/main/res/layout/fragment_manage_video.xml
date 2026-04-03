@@ -1,30 +1,48 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:orientation="vertical">
 
+    <!-- 标签过滤栏（水平横向 RecyclerView） -->
     <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rvManageVideos"
+        android:id="@+id/rvTagFilter"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="40dp"
+        android:background="?android:attr/colorBackground"
         android:clipToPadding="false"
-        android:padding="4dp" />
+        android:paddingHorizontal="4dp" />
 
-    <ProgressBar
-        android:id="@+id/progressManageVideo"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:visibility="gone" />
+    <!-- 视频网格列表区域 -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
 
-    <TextView
-        android:id="@+id/tvEmptyManageVideo"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:text="@string/manage_empty_videos"
-        android:textSize="14sp"
-        android:textColor="?android:attr/textColorSecondary"
-        android:visibility="gone" />
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvManageVideos"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:padding="4dp" />
 
-</FrameLayout>
+        <ProgressBar
+            android:id="@+id/progressManageVideo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvEmptyManageVideo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="@string/manage_empty_videos"
+            android:textSize="14sp"
+            android:textColor="?android:attr/textColorSecondary"
+            android:visibility="gone" />
+
+    </FrameLayout>
+
+</LinearLayout>

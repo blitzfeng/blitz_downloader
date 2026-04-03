@@ -12,6 +12,7 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
+        <!-- 封面区域 -->
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content">
@@ -68,15 +69,57 @@
 
         </FrameLayout>
 
-        <TextView
-            android:id="@+id/tvUsername"
+        <!-- 信息区域 -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:textSize="11sp"
-            android:padding="6dp"
-            android:textColor="?android:attr/textColorSecondary" />
+            android:orientation="vertical"
+            android:paddingHorizontal="7dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="7dp">
+
+            <!-- 作者名 -->
+            <TextView
+                android:id="@+id/tvUsername"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:textColor="?android:attr/textColorPrimary" />
+
+            <!-- 描述文案（空时隐藏） -->
+            <TextView
+                android:id="@+id/tvDesc"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:textSize="10sp"
+                android:lineSpacingMultiplier="1.2"
+                android:textColor="?android:attr/textColorSecondary"
+                android:visibility="gone" />
+
+            <!-- 标签行：downloadType chip + userRelation chips -->
+            <LinearLayout
+                android:id="@+id/tagContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="5dp"
+                android:orientation="horizontal" />
+
+            <!-- 用户自定义标签行（无标签时隐藏） -->
+            <LinearLayout
+                android:id="@+id/userTagContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:orientation="horizontal"
+                android:visibility="gone" />
+
+        </LinearLayout>
 
     </LinearLayout>
 

@@ -28,6 +28,10 @@ interface VideoTagDao {
     @Query("SELECT tagName FROM video_tags WHERE awemeId = :awemeId ORDER BY tagName")
     suspend fun getTagsForVideo(awemeId: String): List<String>
 
+    /** 批量查询多个视频的标签；返回所有匹配行，上层自行按 awemeId 分组。 */
+    @Query("SELECT awemeId, tagName FROM video_tags WHERE awemeId IN (:awemeIds) ORDER BY tagName")
+    suspend fun getTagsForVideos(awemeIds: List<String>): List<VideoTagEntity>
+
     /** 列出库中所有出现过的标签（去重，按字母顺序）。 */
     @Query("SELECT DISTINCT tagName FROM video_tags ORDER BY tagName")
     suspend fun getAllTags(): List<String>
@@ -49,6 +53,10 @@ interface VideoTagDao {
         """,
     )
     suspend fun getVideosByTag(tagName: String): List<DownloadedVideoEntity>
+
+    /** 删除某标签在所有视频上的关联行（标签被删除时使用）。 */
+    @Query("DELETE FROM video_tags WHERE tagName = :tagName")
+    suspend fun deleteTagFromAllVideos(tagName: String)
 
     /**
      * 重命名标签（批量更新）。

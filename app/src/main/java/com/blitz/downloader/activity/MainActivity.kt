@@ -28,21 +28,27 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         DouyinCookieStore.init(this)
         DouyinCookieStore.restoreIntoClient()
-        enableEdgeToEdge()
+//        enableEdgeToEdge()
         setContentView(binding.root)
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-            insets
-        }
 
         val toolbar: Toolbar = findViewById(R.id.toolbar)
         setSupportActionBar(toolbar)
+
+        // status bar 高度 → Toolbar 顶部 padding，令深色 Toolbar 背景填满状态栏区域。
+        // 导航栏高度 → 根布局底部 padding，避免内容被底部导航栏遮挡。
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
+            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            v.setPadding(navBars.left, 0, navBars.right, navBars.bottom)
+            toolbar.setPadding(0, statusBars.top, 0, 0)
+            insets
+        }
 
         val tabLayout: TabLayout = findViewById(R.id.tabLayout)
         val viewPager: ViewPager2 = findViewById(R.id.viewPager)
 
         viewPager.adapter = MainPagerAdapter(this)
+
 
         TabLayoutMediator(tabLayout, viewPager) { tab, position ->
             tab.text = when (position) {

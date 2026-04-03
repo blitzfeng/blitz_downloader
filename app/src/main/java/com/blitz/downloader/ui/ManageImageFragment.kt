@@ -1,6 +1,8 @@
 package com.blitz.downloader.ui
 
+import android.content.Intent
 import android.os.Bundle
+import android.os.Environment
 import android.view.View
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -11,11 +13,14 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
+import com.blitz.downloader.activity.ImageViewerActivity
 import com.blitz.downloader.activity.ManageActivity
 import com.blitz.downloader.data.DownloadedVideoRepository
+import com.blitz.downloader.data.db.DownloadedVideoEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabFragment {
 
@@ -75,9 +80,15 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
         val tvEmpty: TextView = view.findViewById(R.id.tvEmptyManageImage)
         tvEmptyRef = tvEmpty
 
-        adapter = ManageGridAdapter { active, count ->
-            (activity as? ManageActivity)?.onSelectionChanged(active, count)
-        }
+        adapter = ManageGridAdapter(
+            onSelectionChanged = { active, count ->
+                (activity as? ManageActivity)?.onSelectionChanged(active, count)
+            },
+            onItemClick = { entity ->
+                openImageViewer(entity)
+            },
+            supportsUserTags = false,
+        )
         val gridManager = GridLayoutManager(requireContext(), 2)
         recyclerView.layoutManager = gridManager
         recyclerView.adapter = adapter
@@ -121,6 +132,25 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
             }
             isLoading = false
         }
+    }
+
+    private fun openImageViewer(entity: DownloadedVideoEntity) {
+        if (entity.filePath.isBlank()) {
+            Toast.makeText(requireContext(), R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
+            return
+        }
+        @Suppress("DEPRECATION")
+        val file = File(Environment.getExternalStorageDirectory(), entity.filePath)
+        if (!file.exists()) {
+            Toast.makeText(requireContext(), R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val title = entity.desc.trim().ifBlank { entity.userName.ifBlank { entity.awemeId } }
+        val intent = Intent(requireContext(), ImageViewerActivity::class.java).apply {
+            putExtra(ImageViewerActivity.EXTRA_FILE_PATH, entity.filePath)
+            putExtra(ImageViewerActivity.EXTRA_TITLE, title)
+        }
+        startActivity(intent)
     }
 
     companion object {

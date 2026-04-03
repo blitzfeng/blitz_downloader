@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v6**
+> **当前版本：v8**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -12,7 +12,8 @@
 | 表名 | 对应 Entity | 用途 |
 |------|-------------|------|
 | `downloaded_videos` | `DownloadedVideoEntity` | 已下载视频/图集的核心记录 |
-| `video_tags` | `VideoTagEntity` | 用户自定义标签（多对多关联表） |
+| `video_tags` | `VideoTagEntity` | 视频-标签关联（多对多） |
+| `tags` | `TagEntity` | 独立标签名册（支持先建标签再打给视频） |
 
 ---
 
@@ -26,6 +27,8 @@
 | v4 | 新增 `desc`、`collectionType`；同时加了 `likeType`（冗余列，v5 删除） |
 | v5 | 重建表删除 `likeType`，新增 `videoAuthorSecUserId`、`sourceOwnerSecUserId` |
 | v6 | 新建 `video_tags` 表；新增 `collectId`、`userRelation` |
+| v7 | 新建 `tags` 独立标签名册；预插入 8 个默认标签 |
+| v8 | `tags` 表新增 `sortOrder` 列，支持用户自定义标签排列顺序 |
 
 > **注意**：v4 的 `likeType` 与 `downloadType` 语义重叠，v5 通过重建表删除，**后续不要再加同类冗余字段**。
 
@@ -148,11 +151,69 @@ SELECT tagName, COUNT(*) AS count FROM video_tags GROUP BY tagName ORDER BY coun
 
 ---
 
+## 表三：`tags`
+
+### 设计思路
+
+独立标签名册，解决"先建标签再打给视频"的需求。与 `video_tags` 配合使用：
+- `tags` 管理标签名的生命周期（增删改）
+- `video_tags` 管理视频与标签的关联关系
+
+删除标签时需同步删除 `video_tags` 中的关联行（`VideoTagRepository.deleteTag` 负责）。
+
+### 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `tagName` | TEXT PK | 标签名，主键唯一 |
+| `sortOrder` | INTEGER | 展示排列顺序，数值越小越靠前；用户在标签管理页拖拽后持久化（v8 新增） |
+
+### 预设默认标签（v7 migration 预插入）
+
+`美腿`、`可爱`、`纯欲`、`波霸`、`小沟`、`穿搭`、`舞蹈`、`黑丝`
+
+常量来源：`DefaultTags.list`（`config/DefaultTags.kt`）
+
+### 常用查询
+
+```sql
+-- 列出所有可用标签（按用户排序）
+SELECT tagName FROM tags ORDER BY sortOrder ASC, tagName ASC
+
+-- 判断标签是否存在
+SELECT COUNT(*) FROM tags WHERE tagName = '美腿'
+```
+
+**操作入口：** `VideoTagRepository`（`createTag`、`deleteTag`、`renameTag`、`getAvailableTags`）
+
+---
+
+## 标签双表关系总结
+
+```
+tags(tagName)          video_tags(awemeId, tagName)
+─────────────          ──────────────────────────────
+"美腿"          ←──── ("aweme_001", "美腿")
+"舞蹈"          ←──── ("aweme_001", "舞蹈")
+"黑丝"                 ("aweme_002", "美腿")
+"可爱"   ← 未使用，但存在于名册，可供选择
+```
+
+| 方法 | 说明 |
+|------|------|
+| `getAvailableTags()` | `tags` 表全量（含未使用）→ 打标签 UI 用 |
+| `getAllUsedTags()` | `video_tags` 去重 → 已使用标签统计 |
+| `getTagsWithCount()` | 标签 + 视频数 → 管理页统计展示 |
+| `getVideosByTag(tag)` | 按标签筛选视频 → 管理页过滤 |
+
+---
+
 ## 关联常量与配置
 
 | 位置 | 内容 |
 |------|------|
 | `AppConfig.MY_SEC_USER_ID` | App 所有者抖音账号的 `sec_user_id`（从主页 URL 提取，硬编码） |
+| `DefaultTags.list` | 预设标签名列表（v7 migration 数据源，同时作为 `getAvailableTags` 排序基准） |
 | `DownloadSourceType` | `downloadType` 字段的所有合法枚举值 |
 | `DownloadMediaType` | `mediaType` 字段的合法值（`"video"` / `"image"`） |
 
@@ -163,4 +224,4 @@ SELECT tagName, COUNT(*) AS count FROM video_tags GROUP BY tagName ORDER BY coun
 - **管理页展示**：`userRelation` 按 `|` 拆分渲染 chip；`videoAuthorSecUserId` 用于按作者分组/过滤。
 - **下载写入时**：调用 `DownloadedVideoRepository.recordSuccessfulDownload()`，`like` 场景传 `buildUserRelationFromLike(aweme.collectStat)`，`collects` 场景传 `buildUserRelationFromCollection(aweme.userDigged, folderName)`。
 - **标签功能**：通过 `VideoTagRepository` 操作，视频删除时标签自动级联删除，无需手动清理。
-- **新增数据库字段**：当前版本为 v6，下次变更需在 `AppDatabase` 中新增 `MIGRATION_6_7` 并将 version 改为 7。
+- **新增数据库字段**：当前版本为 **v8**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_8_9` 并将 version 改为 9。

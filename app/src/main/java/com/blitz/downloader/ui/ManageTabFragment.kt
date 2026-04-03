@@ -27,4 +27,10 @@ interface ManageTabFragment {
      * 视频 Tab 实现真正逻辑；图片 Tab 可空实现。
      */
     fun handleClearInvalid()
+
+    /**
+     * 弹出多选标签对话框，为所有已选条目批量**追加**标签。
+     * 默认空实现，有标签功能的 Tab 覆盖此方法。
+     */
+    fun handleSetTagsSelected() {}
 }

@@ -48,7 +48,7 @@ object AwemeMapper {
     }
 
     private fun urlsFromPlayAddr(addr: PlayAddr?): List<String> =
-        addr?.urlList.orEmpty().mapNotNull { it?.trim()?.takeIf { s -> s.isNotEmpty() } }
+        addr?.urlList.orEmpty().mapNotNull { it.trim().takeIf { s -> s.isNotEmpty() } }
 
     fun toGridItemOrNull(item: AwemeItem): VideoItemUiModel? {
         val id = resolveStableAwemeId(item)
@@ -75,6 +75,9 @@ object AwemeMapper {
             isSelected = false,
             isPhoto = isPhoto,
             imageUrls = imageUrls,
+            authorSecUserId = item.author?.secUid?.trim().orEmpty(),
+            collectStat = item.collectStat,
+            userDigged = item.userDigged,
         )
     }
 

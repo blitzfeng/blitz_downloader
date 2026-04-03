@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/black">
+
+    <!--
+        TextureView 在 OpenGL 合成管线内渲染，不会出现 SurfaceView "有声无画" 问题。
+    -->
+    <TextureView
+        android:id="@+id/textureView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@null" />
+
+    <!--
+        顶部控制栏：白色背景，延伸至状态栏区域。
+        显示/隐藏由 Activity 通过 alpha 动画控制。
+    -->
+    <LinearLayout
+        android:id="@+id/topControls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@color/white">
+
+        <!-- 占位：高度在代码中根据 WindowInsets 动态设置，填满状态栏区域 -->
+        <View
+            android:id="@+id/statusBarSpacer"
+            android:layout_width="match_parent"
+            android:layout_height="0dp" />
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="@android:color/transparent"
+            android:theme="@style/ThemeOverlay.BlitzDownloader.Toolbar.PlayerLight"
+            app:elevation="0dp"
+            app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light" />
+
+    </LinearLayout>
+
+</FrameLayout>

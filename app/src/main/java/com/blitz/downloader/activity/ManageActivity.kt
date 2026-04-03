@@ -9,6 +9,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
+import android.content.Intent
+import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.blitz.downloader.R
 import com.blitz.downloader.databinding.ActivityManageBinding
 import com.blitz.downloader.ui.ManageImageFragment
@@ -26,10 +30,20 @@ class ManageActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+//        enableEdgeToEdge()
         binding = ActivityManageBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
         setSupportActionBar(binding.toolbar)
+
+        // status bar 高度 → Toolbar 顶部 padding；导航栏 → 根布局底部 padding。
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
+            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            v.setPadding(navBars.left, 0, navBars.right, navBars.bottom)
+            binding.toolbar.setPadding(0, statusBars.top, 0, 0)
+            insets
+        }
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         defaultNavIcon = binding.toolbar.navigationIcon
 
@@ -85,16 +99,22 @@ class ManageActivity : AppCompatActivity() {
     override fun onPrepareOptionsMenu(menu: Menu): Boolean {
         val clearInvalid = menu.findItem(R.id.action_clear_invalid)
         val deleteSelected = menu.findItem(R.id.action_delete_selected)
+        val setTagsSelected = menu.findItem(R.id.action_set_tags_selected)
+        val manageTags = menu.findItem(R.id.action_manage_tags)
 
         if (isInSelectionMode) {
             clearInvalid?.isVisible = false
+            manageTags?.isVisible = false
             deleteSelected?.isVisible = true
             deleteSelected?.title = getString(R.string.manage_menu_delete_selected_count, currentSelectionCount)
+            setTagsSelected?.isVisible = true
         } else {
             // 「清除已失效」仅在视频 Tab（position==0）下显示
             val onVideoTab = binding.viewPager.currentItem == 0
             clearInvalid?.isVisible = onVideoTab
+            manageTags?.isVisible = true
             deleteSelected?.isVisible = false
+            setTagsSelected?.isVisible = false
         }
         return super.onPrepareOptionsMenu(menu)
     }
@@ -105,12 +125,20 @@ class ManageActivity : AppCompatActivity() {
                 handleHomeButton()
                 true
             }
+            R.id.action_set_tags_selected -> {
+                getCurrentTabFragment()?.handleSetTagsSelected()
+                true
+            }
             R.id.action_delete_selected -> {
                 getCurrentTabFragment()?.handleDeleteSelected()
                 true
             }
             R.id.action_clear_invalid -> {
                 getCurrentTabFragment()?.handleClearInvalid()
+                true
+            }
+            R.id.action_manage_tags -> {
+                startActivity(Intent(this, TagManageActivity::class.java))
                 true
             }
             else -> super.onOptionsItemSelected(item)

@@ -29,6 +29,18 @@ data class VideoItemUiModel(
     val isPhoto: Boolean = false,
     /** 图集所有图片的最优下载 URL 列表（[isPhoto]=true 时非空）。 */
     val imageUrls: List<String> = emptyList(),
+    /** 视频创作者的稳定 `sec_user_id`，来自 [com.blitz.downloader.api.Author.secUid]。写入 DB 时用。 */
+    val authorSecUserId: String = "",
+    /**
+     * 喜欢列表接口返回的 `collect_stat`（0=未收藏，1=已收藏）。
+     * 用于构建 [com.blitz.downloader.data.db.DownloadedVideoEntity.userRelation]。
+     */
+    val collectStat: Int = 0,
+    /**
+     * 收藏夹接口返回的 `user_digged`（0=未点赞，1=已点赞）。
+     * 用于构建 [com.blitz.downloader.data.db.DownloadedVideoEntity.userRelation]。
+     */
+    val userDigged: Int = 0,
 )
 
 class VideoGridAdapter(

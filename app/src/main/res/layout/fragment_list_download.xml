@@ -102,25 +102,25 @@
 
                 <Button
                     android:id="@+id/btnSyncCookie"
-                    style="?attr/materialButtonOutlinedStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:background="@drawable/bg_main_button_shape"
                     android:text="@string/btn_sync_cookie_from_webview" />
 
                 <Button
                     android:id="@+id/btnPasteCookie"
-                    style="?attr/materialButtonOutlinedStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_main_button_shape"
                     android:text="@string/btn_paste_cookie" />
 
                 <Button
                     android:id="@+id/btnOpenDouyinBrowser"
-                    style="?attr/materialButtonOutlinedStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_main_button_shape"
                     android:text="@string/btn_open_douyin_browser" />
             </LinearLayout>
 
@@ -176,7 +176,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
-        android:background="?attr/colorSurface"
+        android:background="@color/white"
         android:elevation="4dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
@@ -184,7 +184,6 @@
 
         <Button
             android:id="@+id/btnSelectAll"
-            style="?attr/materialButtonOutlinedStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="全选" />
@@ -212,6 +211,7 @@
         android:layout_gravity="bottom|end"
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="96dp"
+        android:textColor="@color/text_color_primary"
         android:text="解析"
         app:icon="@drawable/ic_parse"
         app:elevation="6dp" />

@@ -37,6 +37,23 @@
             android:name=".activity.ManageActivity"
             android:exported="false"
             android:label="@string/manage_title" />
+        <activity
+            android:name=".activity.TagManageActivity"
+            android:exported="false"
+            android:label="@string/manage_menu_tags"
+            android:parentActivityName=".activity.ManageActivity" />
+        <activity
+            android:name=".activity.VideoPlayerActivity"
+            android:exported="false"
+            android:hardwareAccelerated="true"
+            android:label="@string/video_player_title"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:parentActivityName=".activity.ManageActivity" />
+        <activity
+            android:name=".activity.ImageViewerActivity"
+            android:exported="false"
+            android:label="@string/image_viewer_title"
+            android:parentActivityName=".activity.ManageActivity" />
     </application>
 
 </manifest>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- res/drawable/bg_btn_primary.xml -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 按下状态：使用深一点的紫色增加反馈 -->
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="#5469d4" />
+            <corners android:radius="8dp" />
+        </shape>
+    </item>
+    <!-- 默认状态：活力蓝紫 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#667eea" />
+            <corners android:radius="8dp" />
+        </shape>
+    </item>
+</selector>

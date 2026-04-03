@@ -2,15 +2,54 @@
     <!-- Base application theme. -->
     <style name="Theme.BlitzDownloader" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <!-- Primary brand color. -->
-        <item name="colorPrimary">#000000</item>
-        <item name="colorPrimaryVariant">@color/purple_700</item>
+        <item name="colorPrimary">@color/color_primary</item>
+        <item name="colorPrimaryVariant">#FFDA00</item>
         <item name="colorOnPrimary">@color/white</item>
+
+        <item name="colorAccent">@color/color_accent</item>
         <!-- Secondary brand color. -->
-        <item name="colorSecondary">@color/teal_200</item>
-        <item name="colorSecondaryVariant">@color/teal_700</item>
-        <item name="colorOnSecondary">@color/black</item>
+        <item name="colorSecondary">@color/color_dopamine_pink</item>
+        <item name="colorSecondaryVariant">@color/color_dopamine_blue</item>
+        <item name="colorOnSecondary">@color/color_dopamine_red</item>
         <!-- Status bar color. -->
-        <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
-        <!-- Customize your theme here. -->
+        <item name="android:statusBarColor">@color/color_primary_dark</item>
+        <item name="android:background">@color/color_surface</item>
+        <item name="android:textColor">@color/text_color_primary</item>
+    </style>
+
+    <!--
+        统一 Toolbar 主题覆盖层（不继承任何 Dark/Light overlay，避免 colorSurface 污染）：
+        · titleTextColor / subtitleTextColor：标题文字白色
+        · colorControlNormal：导航箭头、溢出菜单图标等所有控件 icon tint 白色
+        · colorControlHighlight：按压 ripple 半透明白，适配深色底色
+        · actionBarItemBackground：替换为纯透明+ripple，去掉 holo-light 遗留的浅色底
+        · android:background = transparent：防止 Toolbar 内部子 View（标题 TextView 等）
+          从 app 主题继承 color_surface 白色背景
+    -->
+    <!--
+        播放页 Toolbar 覆盖层：白色控制栏背景下使用深色图标/标题。
+    -->
+    <style name="ThemeOverlay.BlitzDownloader.Toolbar.PlayerLight" parent="">
+        <item name="titleTextColor">@android:color/black</item>
+        <item name="subtitleTextColor">#80000000</item>
+        <item name="colorControlNormal">@android:color/black</item>
+        <item name="colorControlActivated">@android:color/black</item>
+        <item name="colorControlHighlight">#20000000</item>
+        <item name="actionMenuTextColor">@android:color/black</item>
+        <item name="android:textColorPrimary">@android:color/black</item>
+        <item name="android:background">@android:color/transparent</item>
+    </style>
+
+    <style name="ThemeOverlay.BlitzDownloader.Toolbar" parent="">
+        <item name="titleTextColor">@color/white</item>
+        <item name="subtitleTextColor">@color/white</item>
+        <item name="colorControlNormal">@color/white</item>
+        <item name="colorControlActivated">@color/white</item>
+        <item name="colorControlHighlight">#40FFFFFF</item>
+        <item name="actionBarItemBackground">?attr/selectableItemBackgroundBorderless</item>
+        <item name="actionMenuTextColor">@color/white</item>
+        <item name="android:textColorPrimary">@color/white</item>
+        <item name="android:textColorSecondary">#B3FFFFFF</item>
+        <item name="android:background">@android:color/transparent</item>
     </style>
 </resources>

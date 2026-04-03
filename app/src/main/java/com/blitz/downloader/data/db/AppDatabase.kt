@@ -8,8 +8,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [DownloadedVideoEntity::class, VideoTagEntity::class],
-    version = 6,
+    entities = [DownloadedVideoEntity::class, VideoTagEntity::class, TagEntity::class],
+    version = 8,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -17,6 +17,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun downloadedVideoDao(): DownloadedVideoDao
 
     abstract fun videoTagDao(): VideoTagDao
+
+    abstract fun tagDao(): TagDao
 
     companion object {
         private const val DB_NAME = "blitz_downloader.db"
@@ -133,6 +135,44 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v6 → v7：新建独立 `tags` 表，管理标签名称生命周期（支持先建标签再打给视频）。
+         * 同时预插入 [com.blitz.downloader.config.DefaultTags.list] 中的 8 个默认标签。
+         * `video_tags` 与 `downloaded_videos` 主表无任何变更。
+         */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS tags (tagName TEXT NOT NULL, PRIMARY KEY (tagName))",
+                )
+                // 预插入默认标签（与 DefaultTags.list 保持一致）
+                val defaultTags = listOf("美腿", "可爱", "纯欲", "波霸", "小沟", "穿搭", "舞蹈", "黑丝")
+                defaultTags.forEach { name ->
+                    db.execSQL("INSERT OR IGNORE INTO tags (tagName) VALUES ('$name')")
+                }
+            }
+        }
+
+        /**
+         * v7 → v8：`tags` 表新增 `sortOrder` 列（展示顺序）。
+         * 预设 8 个默认标签按 DefaultTags.list 的下标回填 0‥7；
+         * 其余非预设标签（用户自建）按 rowid 顺序追加到 100 之后，避免与预设冲突。
+         */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tags ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0")
+                val presets = listOf("美腿", "可爱", "纯欲", "波霸", "小沟", "穿搭", "舞蹈", "黑丝")
+                presets.forEachIndexed { idx, name ->
+                    db.execSQL("UPDATE tags SET sortOrder = $idx WHERE tagName = '${name.replace("'", "''")}'")
+                }
+                val inClause = presets.joinToString(",") { "'${it.replace("'", "''")}'" }
+                // 非预设标签：用 rowid 保持相对顺序，起始偏移 100 避免与预设冲突
+                db.execSQL(
+                    "UPDATE tags SET sortOrder = 100 + rowid WHERE tagName NOT IN ($inClause)"
+                )
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -143,7 +183,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     DB_NAME,
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }

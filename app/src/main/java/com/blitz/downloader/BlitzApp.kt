@@ -2,6 +2,7 @@ package com.blitz.downloader
 
 import android.app.Application
 import com.blitz.downloader.data.DownloadedVideoRepository
+import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.data.db.AppDatabase
 
 class BlitzApp : Application() {
@@ -10,6 +11,10 @@ class BlitzApp : Application() {
 
     val downloadedVideoRepository: DownloadedVideoRepository by lazy {
         DownloadedVideoRepository(this)
+    }
+
+    val videoTagRepository: VideoTagRepository by lazy {
+        VideoTagRepository(this)
     }
 
     override fun onCreate() {

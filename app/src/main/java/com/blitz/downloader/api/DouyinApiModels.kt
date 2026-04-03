@@ -70,7 +70,17 @@ data class AwemeItem(
     /** 图集/图文类型（aweme_type=68）时不为空，列表中每个元素对应一张图片。 */
     @SerializedName("images") val images: List<AwemeImage>? = null,
     @SerializedName("statistics") val statistics: Statistics?,
-    @SerializedName("share_url") val shareUrl: String?
+    @SerializedName("share_url") val shareUrl: String?,
+    /**
+     * 喜欢列表接口返回：该视频是否已被当前用户收藏（0=未收藏，1=已收藏）。
+     * 用于构建 [com.blitz.downloader.data.db.DownloadedVideoEntity.userRelation]。
+     */
+    @SerializedName("collect_stat") val collectStat: Int = 0,
+    /**
+     * 收藏夹接口返回：该视频是否已被当前用户点赞（0=未点赞，1=已点赞）。
+     * 用于构建 [com.blitz.downloader.data.db.DownloadedVideoEntity.userRelation]。
+     */
+    @SerializedName("user_digged") val userDigged: Int = 0,
 )
 
 data class Author(

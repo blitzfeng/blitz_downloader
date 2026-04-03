@@ -17,6 +17,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -331,7 +332,20 @@ object BatchDownloadCoordinator {
             ""
         }
     }
-
+    // 避免被相册扫描当前文件夹
+    fun createNoMediaFile(directory: File) {
+        if (!directory.exists()) {
+            directory.mkdirs()
+        }
+        val noMediaFile = File(directory, ".nomedia")
+        if (!noMediaFile.exists()) {
+            try {
+                noMediaFile.createNewFile()
+            } catch (e: IOException) {
+                e.printStackTrace()
+            }
+        }
+    }
     /**
      * API 24–28：通过 [File] API 写文件，并在 covers 目录中创建 `.nomedia`，
      * 阻止媒体扫描器索引该目录（文件不会出现在相册中）。

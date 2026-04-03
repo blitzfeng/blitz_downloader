@@ -4,23 +4,32 @@
     android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/color_surface"
     android:orientation="vertical">
 
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
-        android:background="@color/white"
-        app:titleTextColor="@color/black"
-        app:title=""
-        app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light" />
+        android:layout_height="wrap_content"
+        android:minHeight="?attr/actionBarSize"
+        android:background="@color/color_primary_dark"
+        android:theme="@style/ThemeOverlay.BlitzDownloader.Toolbar"
+        app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light"
+        app:title="" />
 
     <com.google.android.material.tabs.TabLayout
         android:id="@+id/tabLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        app:tabGravity="fill"
         app:tabMode="fixed"
-        app:tabGravity="fill" />
+        app:tabIndicator="@drawable/tab_selected"
+        app:tabIndicatorColor="@color/color_dopamine_pink"
+        app:tabIndicatorHeight="4dp"
+        app:tabIndicatorFullWidth="false"
+        app:tabSelectedTextColor="@color/color_dopamine_pink"
+        app:tabTextColor="@color/text_color_secondary"
+        app:tabRippleColor="@color/color_dopamine_pink" />
 
     <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/viewPager"

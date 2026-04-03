@@ -7,4 +7,34 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="dopamine_yellow">#FFDA00</color>
+    <color name="dopamine_second_yellow">#FFFF00</color>
+    <color name="dopamine_green">#76FF03</color>
+    <color name="dopamine_second_green">#7FFF00</color>
+    <color name="dopamine_third_green">#61DE2A</color>
+    <color name="dopamine_fourth_green">#32CD32</color>
+    <color name="dopamine_red">#FF4500</color>
+    <color name="gray">#808080</color>
+
+    <!-- 主题色调 (紫色系 - 头部/主按钮背景) -->
+    <color name="color_primary">#667eea</color> <!-- 活力蓝紫 -->
+    <color name="color_primary_dark">#5469d4</color> <!-- 深紫用于状态栏 -->
+    <color name="color_accent">#FFD166</color> <!-- 亮柠檬黄 - 重点强调 -->
+
+    <!-- 辅助色调 (多巴胺撞色) -->
+    <color name="color_dopamine_pink">#EE5A64</color> <!-- 亮粉色 - 选中状态/危险操作 -->
+    <color name="color_dopamine_blue">#4ECDC4</color> <!-- 蒂芙尼蓝 - 辅助按钮 -->
+    <color name="color_dopamine_red">#FF6B6B</color> <!-- 珊瑚红 - 链接/次要文字 -->
+
+    <!-- 背景与卡片 -->
+    <color name="color_surface">#F7F9FE</color> <!-- 极浅淡紫背景 -->
+    <color name="color_card_background">#FFFFFF</color> <!-- 卡片白 -->
+
+    <!-- 文字颜色 -->
+    <color name="text_color_primary">#333333</color> <!-- 深灰文字 -->
+    <color name="text_color_secondary">#666666</color> <!-- 浅灰文字 -->
+    <color name="text_color_white">#FFFFFF</color> <!-- 白色文字 -->
+
+    <!-- 透明度 -->
+    <color name="color_transparent">#00000000</color>
 </resources>
