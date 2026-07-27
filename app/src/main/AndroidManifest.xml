@@ -22,6 +22,9 @@
     <!-- Android 14+：用户在系统选择器里只授予部分媒体时需要此权限 -->
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 前台下载服务：批量下载迁到后台执行，退到后台也不中断 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:name=".BlitzApp"
@@ -67,6 +70,11 @@
             android:exported="false"
             android:label="@string/image_viewer_title"
             android:parentActivityName=".activity.ManageActivity" />
+
+        <service
+            android:name=".download.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

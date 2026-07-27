@@ -5,7 +5,9 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.RawQuery
 import androidx.room.Update
+import androidx.sqlite.db.SupportSQLiteQuery
 
 @Dao
 interface DownloadedVideoDao {
@@ -53,6 +55,13 @@ interface DownloadedVideoDao {
     suspend fun getPageByMediaType(mediaType: String, limit: Int, offset: Int): List<DownloadedVideoEntity>
 
     /**
+     * 可指定排序列的分页查询（管理页排序用）。排序列名由 Repository 从固定枚举映射后传入，
+     * **不接受用户输入**，无注入风险。
+     */
+    @RawQuery
+    suspend fun getPageRawSorted(query: SupportSQLiteQuery): List<DownloadedVideoEntity>
+
+    /**
      * 按作者昵称模糊搜索（管理页搜索栏使用）。
      * [userNameLike] 由 Repository 拼为 `%query%`；空查询不应走此方法（让上层走分页路径）。
      * 结果集预计不大，一次性返回；如未来体量增大再加 LIMIT 分页。
@@ -60,20 +69,44 @@ interface DownloadedVideoDao {
     @Query("SELECT * FROM downloaded_videos WHERE mediaType = :mediaType AND userName LIKE :userNameLike ORDER BY createdAtMillis DESC")
     suspend fun searchByMediaTypeAndUserName(mediaType: String, userNameLike: String): List<DownloadedVideoEntity>
 
-    /** 精确匹配某作者昵称的全部作品（管理页「按作者筛选」使用）。 */
+    /** 精确匹配某作者昵称的全部作品（无稳定 ID 的老记录按昵称筛选时使用）。 */
     @Query("SELECT * FROM downloaded_videos WHERE mediaType = :mediaType AND userName = :userName ORDER BY createdAtMillis DESC")
     suspend fun getByMediaTypeAndUserName(mediaType: String, userName: String): List<DownloadedVideoEntity>
 
     /**
-     * 按作者昵称聚合作品数（管理页作者抽屉使用），按作品数倒序、同数量按昵称升序。
-     * 空昵称记录也会成组（分组键即空串），由上层决定是否展示。
+     * 按作者稳定 `sec_user_id` 精确匹配的全部作品（管理页「按作者筛选」主路径）。
+     * 作者改名不影响 `videoAuthorSecUserId`，故改名前后的作品都能一并取出。
+     */
+    @Query("SELECT * FROM downloaded_videos WHERE mediaType = :mediaType AND videoAuthorSecUserId = :secUserId ORDER BY createdAtMillis DESC")
+    suspend fun getByMediaTypeAndAuthorSecUserId(mediaType: String, secUserId: String): List<DownloadedVideoEntity>
+
+    /**
+     * 按作者聚合作品数（管理页作者抽屉使用）。**按稳定 `sec_user_id` 归并**：
+     * 有 ID 的按 ID 分组（改名也算一人），无 ID 的老记录退回按昵称分组。
+     *
+     * `name` 借助 SQLite「单个 MAX() 时裸列取自最大值所在行」的特性，取该组**最新一条**的昵称；
+     * `secUserId` 为该组的稳定 ID（无 ID 组为空串）。按作品数倒序、同数量按昵称升序。
      */
     @Query(
-        "SELECT userName AS name, COUNT(*) AS count FROM downloaded_videos " +
-            "WHERE mediaType = :mediaType GROUP BY userName ORDER BY count DESC, userName ASC"
+        "SELECT userName AS name, COUNT(*) AS count, videoAuthorSecUserId AS secUserId, " +
+            "MAX(createdAtMillis) AS latest FROM downloaded_videos WHERE mediaType = :mediaType " +
+            "GROUP BY (CASE WHEN videoAuthorSecUserId != '' THEN videoAuthorSecUserId ELSE userName END) " +
+            "ORDER BY count DESC, name ASC"
     )
     suspend fun getAuthorCountsByMediaType(mediaType: String): List<AuthorCount>
 
-    /** 作者聚合投影：昵称 + 作品数。 */
-    data class AuthorCount(val name: String, val count: Int)
+    /** 跨类型（视频+图集）的作者聚合，用于统计面板；同样按 `sec_user_id` 归并。 */
+    @Query(
+        "SELECT userName AS name, COUNT(*) AS count, videoAuthorSecUserId AS secUserId, " +
+            "MAX(createdAtMillis) AS latest FROM downloaded_videos " +
+            "GROUP BY (CASE WHEN videoAuthorSecUserId != '' THEN videoAuthorSecUserId ELSE userName END) " +
+            "ORDER BY count DESC, name ASC"
+    )
+    suspend fun getAuthorCountsAll(): List<AuthorCount>
+
+    /**
+     * 作者聚合投影：显示昵称（最新）+ 作品数 + 稳定 ID。
+     * [secUserId] 为空表示该组无稳定 ID（老记录），此时上层按 [name] 匹配。
+     */
+    data class AuthorCount(val name: String, val count: Int, val secUserId: String = "")
 }

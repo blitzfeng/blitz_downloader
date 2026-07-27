@@ -75,7 +75,10 @@
     <string name="manage_backup_done">备份完成：%1$s</string>
     <string name="manage_backup_failed">备份失败：%1$s</string>
     <string name="manage_restore_pick_title">选择要恢复的备份</string>
-    <string name="manage_restore_no_backups">没有找到任何备份（Download/bDouyin/backup 为空）</string>
+    <string name="manage_restore_from_file">从文件选择…（重装后请用此项）</string>
+    <string name="manage_restore_denied_hint">无法直接读取该备份文件，通常是重装或更换签名后系统限制了访问权限。请改用「从文件选择」手动选取备份的 blitz_downloader.db 文件恢复。</string>
+    <string name="manage_restore_picker_unavailable">无法打开系统文件选择器</string>
+    <string name="manage_restore_no_backups">没有找到可列出的备份，将打开文件选择器供你手动选取 .db</string>
     <string name="manage_restore_confirm_title">恢复数据库</string>
     <string name="manage_restore_confirm_msg">这将用所选备份覆盖当前数据库，未备份的数据会丢失。恢复完成后 App 会自动重启。继续？</string>
     <string name="manage_restore_doing">正在恢复…</string>
@@ -100,6 +103,39 @@
     <string name="manage_author_empty">作者「%1$s」暂无作品</string>
     <string name="manage_author_unknown">（未知作者）</string>
     <string name="manage_author_filtering">作者：%1$s</string>
+    <!-- 排序 -->
+    <string name="manage_menu_sort">排序</string>
+    <string name="manage_sort_title">选择排序方式</string>
+    <string name="manage_sort_download_time">下载时间（最新）</string>
+    <string name="manage_sort_publish_time">发布时间（最新）</string>
+    <string name="manage_sort_digg">点赞数（最多）</string>
+    <!-- 统计面板 -->
+    <string name="manage_menu_stats">统计</string>
+    <string name="manage_stats_title">数据统计</string>
+    <string name="manage_stats_count_line">视频 %1$d · 图集 %2$d · 合计 %3$d</string>
+    <string name="manage_stats_size_title">占用空间</string>
+    <string name="manage_stats_size_video">· 视频：%1$s</string>
+    <string name="manage_stats_size_image">· 图集：%1$s</string>
+    <string name="manage_stats_size_cover">· 封面：%1$s</string>
+    <string name="manage_stats_size_total">· 合计：%1$s</string>
+    <string name="manage_stats_top_authors">作者 Top（按作品数）</string>
+    <string name="manage_stats_top_tags">标签 Top（按作品数）</string>
+    <string name="manage_stats_none">（暂无）</string>
+    <!-- 前台下载服务 / 通知 -->
+    <string name="download_channel_name">下载进度</string>
+    <string name="download_channel_desc">批量下载的进度与结果通知</string>
+    <string name="download_notif_title">批量下载</string>
+    <string name="download_notif_preparing">准备中…</string>
+    <string name="download_notif_progress">下载中 %1$d / %2$d</string>
+    <string name="download_notif_done">完成：成功 %1$d，失败 %2$d</string>
+    <string name="batch_download_enqueued">已提交后台下载 %1$d 项，进度见通知栏</string>
+    <string name="batch_download_enqueued_toast">已转入后台下载，可离开本页，进度见通知栏</string>
+    <string name="batch_hide_downloaded">隐藏已下载</string>
+    <!-- 登录态失效引导 -->
+    <string name="session_expired_title">登录状态可能已失效</string>
+    <string name="session_expired_msg">接口返回空数据或被拦截，通常是 Cookie 未登录或已过期。可重新登录，或在已登录网页后同步 Cookie 再重试。</string>
+    <string name="session_expired_login">去登录</string>
+    <string name="session_expired_sync">同步 Cookie 重试</string>
     <!-- 导出选中：ZIP 到 Download/bDouyin/export -->
     <string name="manage_menu_export_zip">导出为压缩包</string>
     <string name="manage_export_zip_confirm_title">导出为压缩包</string>

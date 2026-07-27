@@ -153,6 +153,88 @@ class AwemeMapperTest {
     }
 
     @Test
+    fun preferredPlayUrl_prefers1080OverPlayAddrAndLowerGears() {
+        val item = AwemeItem(
+            awemeId = "7123456789012345678",
+            desc = "t",
+            createTime = 0L,
+            author = null,
+            video = Video(
+                // 默认 play_addr 是较低档，应被 1080 档覆盖
+                playAddr = PlayAddr(null, listOf("https://cdn.example.com/play/default?x=1"), null, null),
+                bitRate = listOf(
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/720?x=1"), null, null),
+                        gearName = "normal_720_0", bitRateBps = 1_000_000,
+                    ),
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/1080?x=1"), null, null),
+                        gearName = "normal_1080_0", bitRateBps = 2_000_000,
+                    ),
+                ),
+                cover = null, dynamicCover = null, duration = 0, ratio = null, width = 1080, height = 1920,
+            ),
+            statistics = null,
+            shareUrl = null,
+        )
+        assertEquals("https://cdn.example.com/play/1080?x=1", AwemeMapper.toGridItemOrNull(item)!!.downloadUrl)
+    }
+
+    @Test
+    fun preferredPlayUrl_picksHighestBitRateAmong1080Gears() {
+        val item = AwemeItem(
+            awemeId = "7123456789012345678",
+            desc = "t",
+            createTime = 0L,
+            author = null,
+            video = Video(
+                playAddr = null,
+                bitRate = listOf(
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/1080_low?x=1"), null, null),
+                        gearName = "normal_1080_0", bitRateBps = 1_500_000,
+                    ),
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/1080_high?x=1"), null, null),
+                        gearName = "adapt_1080_1", bitRateBps = 3_000_000,
+                    ),
+                ),
+                cover = null, dynamicCover = null, duration = 0, ratio = null, width = 1080, height = 1920,
+            ),
+            statistics = null,
+            shareUrl = null,
+        )
+        assertEquals("https://cdn.example.com/play/1080_high?x=1", AwemeMapper.toGridItemOrNull(item)!!.downloadUrl)
+    }
+
+    @Test
+    fun preferredPlayUrl_fallsBackToHighestResolutionWhenNo1080() {
+        val item = AwemeItem(
+            awemeId = "7123456789012345678",
+            desc = "t",
+            createTime = 0L,
+            author = null,
+            video = Video(
+                playAddr = null,
+                bitRate = listOf(
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/540?x=1"), null, null),
+                        gearName = "normal_540_0", bitRateBps = 800_000,
+                    ),
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/720?x=1"), null, null),
+                        gearName = "normal_720_0", bitRateBps = 1_200_000,
+                    ),
+                ),
+                cover = null, dynamicCover = null, duration = 0, ratio = null, width = 720, height = 1280,
+            ),
+            statistics = null,
+            shareUrl = null,
+        )
+        assertEquals("https://cdn.example.com/play/720?x=1", AwemeMapper.toGridItemOrNull(item)!!.downloadUrl)
+    }
+
+    @Test
     fun preferredImageUrls_preferWatermarkFree() {
         val wm = "https://p3.douyinpic.com/img/wm.webp"
         val free = "https://p3.douyinpic.com/img/free.webp"

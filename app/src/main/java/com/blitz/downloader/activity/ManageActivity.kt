@@ -5,8 +5,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import android.os.Process
+import androidx.activity.result.contract.ActivityResultContracts
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.Menu
@@ -31,15 +34,19 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.blitz.downloader.R
 import com.blitz.downloader.data.DownloadedVideoRepository
+import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.data.db.DatabaseBackupManager
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.databinding.ActivityManageBinding
+import com.blitz.downloader.download.BatchDownloadCoordinator
 import com.blitz.downloader.download.MediaExportManager
 import com.blitz.downloader.net.LanFileServer
 import com.blitz.downloader.ui.AuthorFilterAdapter
 import com.blitz.downloader.ui.ManageImageFragment
+import com.blitz.downloader.ui.ManageSortOrder
 import com.blitz.downloader.ui.ManageTabFragment
 import com.blitz.downloader.ui.ManageVideoFragment
+import java.io.File
 import com.google.android.material.tabs.TabLayoutMediator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -66,6 +73,12 @@ class ManageActivity : AppCompatActivity() {
     /** 作者筛选抽屉的列表 Adapter。 */
     private lateinit var authorAdapter: AuthorFilterAdapter
     private val downloadedRepo by lazy { DownloadedVideoRepository(this) }
+
+    /** SAF 文件选择器：选中备份 .db 后经授权 Uri 恢复，绕过 MediaStore 归属限制（重装后可用）。 */
+    private val restoreFilePickerLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) confirmAndRestoreUri(uri)
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -135,9 +148,9 @@ class ManageActivity : AppCompatActivity() {
     // ── 按作者筛选抽屉 ───────────────────────────────────────────────────────────
 
     private fun setupAuthorDrawer() {
-        authorAdapter = AuthorFilterAdapter { name ->
-            getCurrentTabFragment()?.applyAuthorFilter(name)
-            authorAdapter.setSelected(name)
+        authorAdapter = AuthorFilterAdapter { author ->
+            getCurrentTabFragment()?.applyAuthorFilter(author.secUserId, author.name)
+            authorAdapter.setSelected(author.secUserId.ifBlank { author.name })
             binding.drawerLayout.closeDrawer(GravityCompat.END)
         }
         binding.rvAuthorFilter.layoutManager = LinearLayoutManager(this)
@@ -153,7 +166,7 @@ class ManageActivity : AppCompatActivity() {
         })
 
         binding.btnAuthorClear.setOnClickListener {
-            getCurrentTabFragment()?.applyAuthorFilter(null)
+            getCurrentTabFragment()?.applyAuthorFilter(null, null)
             authorAdapter.setSelected(null)
             binding.drawerLayout.closeDrawer(GravityCompat.END)
         }
@@ -174,11 +187,11 @@ class ManageActivity : AppCompatActivity() {
     /** 打开作者抽屉：加载当前 Tab（mediaType）的作者聚合，预选中当前筛选作者。 */
     private fun openAuthorDrawer() {
         val mediaType = if (binding.viewPager.currentItem == 0) MEDIA_TYPE_VIDEO else MEDIA_TYPE_IMAGE
-        val currentAuthor = getCurrentTabFragment()?.activeAuthorName
+        val currentKey = getCurrentTabFragment()?.activeAuthorKey
         lifecycleScope.launch {
             val authors = withContext(Dispatchers.IO) { downloadedRepo.getAuthorCounts(mediaType) }
             authorAdapter.submit(authors)
-            authorAdapter.setSelected(currentAuthor)
+            authorAdapter.setSelected(currentKey)
             binding.etAuthorSearch.setText("")
             updateAuthorEmptyState()
             binding.drawerLayout.setDrawerLockMode(
@@ -191,6 +204,98 @@ class ManageActivity : AppCompatActivity() {
     private fun updateAuthorEmptyState() {
         binding.tvAuthorEmpty.visibility =
             if (authorAdapter.itemCountShown() == 0) View.VISIBLE else View.GONE
+    }
+
+    // ── 排序 ───────────────────────────────────────────────────────────────────
+
+    private fun showSortDialog() {
+        val fragment = getCurrentTabFragment() ?: return
+        val orders = ManageSortOrder.values()
+        val labels = orders.map { getString(it.labelRes) }.toTypedArray()
+        val checked = orders.indexOf(fragment.activeSortOrder)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manage_sort_title)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                fragment.applySort(orders[which])
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    // ── 统计面板 ───────────────────────────────────────────────────────────────
+
+    private fun showStatsDialog() {
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) { buildStatsText() }
+            AlertDialog.Builder(this@ManageActivity)
+                .setTitle(R.string.manage_stats_title)
+                .setMessage(text)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+        }
+    }
+
+    /** 在 IO 线程汇总统计文本：数量、占用空间、Top 作者、Top 标签。 */
+    private suspend fun buildStatsText(): String {
+        val videoCount = downloadedRepo.countByMediaType(MEDIA_TYPE_VIDEO)
+        val imageCount = downloadedRepo.countByMediaType(MEDIA_TYPE_IMAGE)
+
+        val videoBytes = dirSize(BatchDownloadCoordinator.VIDEO_SUBDIR)
+        val imageBytes = dirSize(BatchDownloadCoordinator.IMAGE_SUBDIR)
+        val coverBytes = dirSize(BatchDownloadCoordinator.COVER_SUBDIR)
+        val totalBytes = videoBytes + imageBytes + coverBytes
+
+        val topAuthors = downloadedRepo.getAuthorCountsAll().take(TOP_N)
+        val topTags = VideoTagRepository(this).getTagsWithCount().take(TOP_N)
+
+        return buildString {
+            append(getString(R.string.manage_stats_count_line, videoCount, imageCount, videoCount + imageCount))
+            append("\n\n")
+            append(getString(R.string.manage_stats_size_title)).append('\n')
+            append(getString(R.string.manage_stats_size_video, humanSize(videoBytes))).append('\n')
+            append(getString(R.string.manage_stats_size_image, humanSize(imageBytes))).append('\n')
+            append(getString(R.string.manage_stats_size_cover, humanSize(coverBytes))).append('\n')
+            append(getString(R.string.manage_stats_size_total, humanSize(totalBytes)))
+            append("\n\n")
+            append(getString(R.string.manage_stats_top_authors)).append('\n')
+            if (topAuthors.isEmpty()) {
+                append(getString(R.string.manage_stats_none))
+            } else {
+                topAuthors.forEachIndexed { i, a ->
+                    val name = a.name.ifBlank { getString(R.string.manage_author_unknown) }
+                    append("${i + 1}. $name (${a.count})")
+                    if (i < topAuthors.lastIndex) append('\n')
+                }
+            }
+            append("\n\n")
+            append(getString(R.string.manage_stats_top_tags)).append('\n')
+            if (topTags.isEmpty()) {
+                append(getString(R.string.manage_stats_none))
+            } else {
+                topTags.forEachIndexed { i, t ->
+                    append("${i + 1}. ${t.tagName} (${t.count})")
+                    if (i < topTags.lastIndex) append('\n')
+                }
+            }
+        }
+    }
+
+    private fun dirSize(subDir: String): Long {
+        @Suppress("DEPRECATION")
+        val root = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val dir = File(root, subDir)
+        if (!dir.isDirectory) return 0L
+        return dir.walkTopDown()
+            .filter { it.isFile }
+            .sumOf { runCatching { it.length() }.getOrDefault(0L) }
+    }
+
+    private fun humanSize(bytes: Long): String = when {
+        bytes < 1024 -> "$bytes B"
+        bytes < 1024 * 1024 -> "%.1f KB".format(bytes / 1024.0)
+        bytes < 1024L * 1024 * 1024 -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+        else -> "%.2f GB".format(bytes / 1024.0 / 1024.0 / 1024.0)
     }
 
     /** 由 Fragment 回调：多选模式或选中数量发生变化。 */
@@ -219,6 +324,8 @@ class ManageActivity : AppCompatActivity() {
         val backup = menu.findItem(R.id.action_backup_db)
         val restore = menu.findItem(R.id.action_restore_db)
         val filterAuthor = menu.findItem(R.id.action_filter_author)
+        val sort = menu.findItem(R.id.action_sort)
+        val stats = menu.findItem(R.id.action_stats)
 
         val exportZip = menu.findItem(R.id.action_export_zip)
         val exportLan = menu.findItem(R.id.action_export_lan)
@@ -231,6 +338,8 @@ class ManageActivity : AppCompatActivity() {
             backup?.isVisible = false
             restore?.isVisible = false
             filterAuthor?.isVisible = false
+            sort?.isVisible = false
+            stats?.isVisible = false
             deleteSelected?.isVisible = true
             deleteSelected?.title = getString(R.string.manage_menu_delete_selected_count, currentSelectionCount)
             setTagsSelected?.isVisible = true
@@ -252,6 +361,8 @@ class ManageActivity : AppCompatActivity() {
             backup?.isVisible = true
             restore?.isVisible = true
             filterAuthor?.isVisible = true
+            sort?.isVisible = true
+            stats?.isVisible = true
             deleteSelected?.isVisible = false
             setTagsSelected?.isVisible = false
             selectAll?.isVisible = false
@@ -348,6 +459,14 @@ class ManageActivity : AppCompatActivity() {
                 openAuthorDrawer()
                 true
             }
+            R.id.action_sort -> {
+                showSortDialog()
+                true
+            }
+            R.id.action_stats -> {
+                showStatsDialog()
+                true
+            }
             R.id.action_backup_db -> {
                 confirmAndBackup()
                 true
@@ -403,26 +522,74 @@ class ManageActivity : AppCompatActivity() {
         }
     }
 
-    /** 列出已有备份让用户选；选定后再二次确认并执行 [doRestore]。 */
+    /**
+     * 列出已有备份让用户选；首项固定为「从文件选择」（SAF），用于重装后备份文件被孤儿化、
+     * 无法直接 File 读取的场景。选定后二次确认并执行恢复。
+     */
     private fun pickAndRestoreBackup() {
         lifecycleScope.launch {
             val backups = withContext(Dispatchers.IO) { DatabaseBackupManager.listBackups() }
             if (backups.isEmpty()) {
-                Toast.makeText(
-                    this@ManageActivity,
-                    R.string.manage_restore_no_backups,
-                    Toast.LENGTH_LONG,
-                ).show()
+                // 没有可列出的备份：直接走文件选择（备份可能存在但已孤儿化，列不出/读不了）
+                Toast.makeText(this@ManageActivity, R.string.manage_restore_no_backups, Toast.LENGTH_LONG).show()
+                launchRestoreFilePicker()
                 return@launch
             }
-            val labels = backups.map { it.displayLabel() }.toTypedArray()
+            val labels = (listOf(getString(R.string.manage_restore_from_file)) +
+                backups.map { it.displayLabel() }).toTypedArray()
             AlertDialog.Builder(this@ManageActivity)
                 .setTitle(R.string.manage_restore_pick_title)
                 .setItems(labels) { _, which ->
-                    confirmAndRestore(backups[which])
+                    if (which == 0) launchRestoreFilePicker() else confirmAndRestore(backups[which - 1])
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
+        }
+    }
+
+    private fun launchRestoreFilePicker() {
+        // db 文件 MIME 不稳定，用 */* 让用户自由选取；SAF 授权 Uri 可绕过归属校验
+        runCatching { restoreFilePickerLauncher.launch(arrayOf("*/*")) }
+            .onFailure {
+                Toast.makeText(this, R.string.manage_restore_picker_unavailable, Toast.LENGTH_LONG).show()
+            }
+    }
+
+    private fun confirmAndRestoreUri(uri: Uri) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manage_restore_confirm_title)
+            .setMessage(R.string.manage_restore_confirm_msg)
+            .setPositiveButton(android.R.string.ok) { _, _ -> doRestoreUri(uri) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun doRestoreUri(uri: Uri) {
+        @Suppress("DEPRECATION")
+        val progress = ProgressDialog(this).apply {
+            setMessage(getString(R.string.manage_restore_doing))
+            setCancelable(false)
+            show()
+        }
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    contentResolver.openInputStream(uri)?.use { input ->
+                        DatabaseBackupManager.restoreFromStream(applicationContext, input)
+                    } ?: throw java.io.IOException("无法打开所选文件")
+                }
+            }
+            progress.dismiss()
+            result.fold(
+                onSuccess = { restartApp() },
+                onFailure = { e ->
+                    Toast.makeText(
+                        this@ManageActivity,
+                        getString(R.string.manage_restore_failed, e.message ?: e.javaClass.simpleName),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                },
+            )
         }
     }
 
@@ -450,11 +617,21 @@ class ManageActivity : AppCompatActivity() {
             result.fold(
                 onSuccess = { restartApp() },
                 onFailure = { e ->
-                    Toast.makeText(
-                        this@ManageActivity,
-                        getString(R.string.manage_restore_failed, e.message ?: e.javaClass.simpleName),
-                        Toast.LENGTH_LONG,
-                    ).show()
+                    if (e is SecurityException) {
+                        // 备份文件被孤儿化（重装/换签名），File 读取被拒 → 引导改用文件选择器
+                        AlertDialog.Builder(this@ManageActivity)
+                            .setTitle(R.string.manage_restore_confirm_title)
+                            .setMessage(R.string.manage_restore_denied_hint)
+                            .setPositiveButton(R.string.manage_restore_from_file) { _, _ -> launchRestoreFilePicker() }
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .show()
+                    } else {
+                        Toast.makeText(
+                            this@ManageActivity,
+                            getString(R.string.manage_restore_failed, e.message ?: e.javaClass.simpleName),
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
                 },
             )
         }
@@ -621,6 +798,7 @@ class ManageActivity : AppCompatActivity() {
     companion object {
         private const val MEDIA_TYPE_VIDEO = "video"
         private const val MEDIA_TYPE_IMAGE = "image"
+        private const val TOP_N = 8
     }
 
     private class ManagePagerAdapter(activity: AppCompatActivity) : FragmentStateAdapter(activity) {

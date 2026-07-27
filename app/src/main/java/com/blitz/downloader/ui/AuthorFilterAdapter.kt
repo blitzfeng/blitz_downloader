@@ -15,16 +15,19 @@ import com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount
  * 全量数据由 [submit] 传入（已按作品数倒序），内部用 [filter] 做客户端昵称模糊过滤，
  * 无需重新查库。选中项高亮，供用户看到当前正按哪个作者筛选。
  *
- * @param onAuthorClick 点击某作者时回调，传昵称。
+ * @param onAuthorClick 点击某作者时回调，传该作者聚合项（含稳定 ID 与最新昵称）。
  */
 class AuthorFilterAdapter(
-    private val onAuthorClick: (name: String) -> Unit,
+    private val onAuthorClick: (author: AuthorCount) -> Unit,
 ) : RecyclerView.Adapter<AuthorFilterAdapter.ViewHolder>() {
 
     private val all = mutableListOf<AuthorCount>()
     private val shown = mutableListOf<AuthorCount>()
     private var query: String = ""
-    private var selectedName: String? = null
+    private var selectedKey: String? = null
+
+    /** 分组键：稳定 ID 优先，无则昵称（与筛选逻辑一致）。 */
+    private fun keyOf(a: AuthorCount): String = a.secUserId.ifBlank { a.name }
 
     /** 传入全量作者数据（应已按作品数倒序），并保持当前搜索词过滤。 */
     fun submit(list: List<AuthorCount>) {
@@ -39,9 +42,9 @@ class AuthorFilterAdapter(
         applyFilter()
     }
 
-    /** 设置当前选中的作者（高亮），传 null 取消。 */
-    fun setSelected(name: String?) {
-        selectedName = name
+    /** 设置当前选中的作者分组键（高亮），传 null 取消。 */
+    fun setSelected(key: String?) {
+        selectedKey = key
         notifyDataSetChanged()
     }
 
@@ -64,7 +67,7 @@ class AuthorFilterAdapter(
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        holder.bind(shown[position], shown[position].name == selectedName)
+        holder.bind(shown[position], keyOf(shown[position]) == selectedKey)
     }
 
     override fun getItemCount(): Int = shown.size
@@ -83,7 +86,7 @@ class AuthorFilterAdapter(
             tvCount.text = item.count.toString()
             // 选中项淡粉底色高亮（与多巴胺粉主色呼应），未选中透明
             itemView.setBackgroundColor(if (selected) SELECTED_BG else Color.TRANSPARENT)
-            itemView.setOnClickListener { onAuthorClick(item.name) }
+            itemView.setOnClickListener { onAuthorClick(item) }
         }
     }
 }

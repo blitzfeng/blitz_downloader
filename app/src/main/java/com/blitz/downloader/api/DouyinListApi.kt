@@ -157,29 +157,40 @@ object DouyinListApi {
             val body = json.toRequestBody(JSON_MEDIA_TYPE)
             val resp = DouyinApiClient.api.dynamicPost(url, body)
             if (!resp.isSuccessful) {
-                throw IllegalStateException("HTTP ${resp.code()}")
+                val code = resp.code()
+                if (code in AUTH_HTTP_CODES) {
+                    throw DouyinAuthException("HTTP $code：登录态可能已失效", httpCode = code)
+                }
+                throw IllegalStateException("HTTP $code")
             }
-            val raw = resp.body()?.use { it.string() }
-                ?: throw IllegalStateException("empty body")
+            val raw = resp.body()?.use { it.string() }.orEmpty()
+            if (raw.isBlank()) {
+                throw DouyinAuthException("HTTP ${resp.code()} 响应体为空：Cookie 未登录或已失效，请重新登录后重试")
+            }
             parseAwemeListBody(raw)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
+    /** 视为「登录态失效」的 HTTP 状态码：401 未授权、403 禁止、419 需验证。 */
+    private val AUTH_HTTP_CODES = setOf(401, 403, 419)
+
     private suspend fun dynamicGetBody(url: String): String {
         val resp = DouyinApiClient.api.dynamicGet(url)
         val code = resp.code()
         val raw = resp.body()?.use { it.string() } ?: ""
         if (!resp.isSuccessful) {
+            if (code in AUTH_HTTP_CODES) {
+                throw DouyinAuthException("HTTP $code：登录态可能已失效", httpCode = code)
+            }
             val hint = raw.take(300).ifBlank { "(无正文)" }
             throw IllegalStateException("HTTP $code: $hint")
         }
         if (raw.isBlank()) {
-            val ct = resp.headers()["Content-Type"].orEmpty()
-            val cl = resp.headers()["Content-Length"].orEmpty()
-            throw IllegalStateException(
-                "HTTP $code 响应体为空 (Content-Type=$ct, Content-Length=$cl)。常见原因：风控空包、Cookie 未登录或失效；请同步 Cookie 后重试。"
+            // HTTP 200 但空包：本工程里最典型的 Cookie 失效 / 风控表现。
+            throw DouyinAuthException(
+                "HTTP $code 响应体为空。常见原因：风控空包、Cookie 未登录或失效；请重新登录后重试。"
             )
         }
         return raw

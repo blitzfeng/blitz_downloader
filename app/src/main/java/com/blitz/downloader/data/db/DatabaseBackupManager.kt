@@ -142,7 +142,28 @@ object DatabaseBackupManager {
         if (!srcDb.isFile) {
             throw java.io.FileNotFoundException("备份文件不存在: ${srcDb.absolutePath}")
         }
+        // 直接 File 读取；重装/换签名后该文件在 MediaStore 里可能被"孤儿化"，
+        // 读取会抛 SecurityException——此时应由 UI 层引导改走 SAF（[restoreFromStream]）。
+        applyRestore(context) { srcDb.inputStream() }
+    }
 
+    /**
+     * 从任意输入流恢复（供 SAF 文件选择器场景使用）。**必须在 IO 线程调用，且调用方负责重启进程。**
+     *
+     * 用户通过系统文件选择器（`ACTION_OPEN_DOCUMENT`）选中备份 `.db` 后，用其授权 Uri 打开流传入，
+     * 可**绕过 MediaStore 归属校验**，因此即便备份文件在重装后被孤儿化也能读取。
+     */
+    @Throws(Exception::class)
+    fun restoreFromStream(context: Context, source: java.io.InputStream) {
+        applyRestore(context) { source }
+    }
+
+    /**
+     * 恢复的写入核心：关闭数据库单例 → 删除现有 `.db / -wal / -shm` → 从 [openSource] 覆盖写入 `.db`。
+     * 备份写入时已 `checkpoint`，主库自洽，无需再恢复 wal/shm。
+     */
+    @Throws(Exception::class)
+    private inline fun applyRestore(context: Context, openSource: () -> java.io.InputStream) {
         AppDatabase.closeAndReset()
 
         val dst = context.getDatabasePath(DB_FILE_NAME)
@@ -159,11 +180,8 @@ object DatabaseBackupManager {
             throw java.io.IOException("无法删除现有数据库: ${dst.absolutePath}")
         }
 
-        srcDb.copyTo(dst, overwrite = true)
-        // 备份目录里若还残留 wal/shm（正常不应该有，备份时已 checkpoint）也一起恢复
-        listOf("$DB_FILE_NAME-wal", "$DB_FILE_NAME-shm").forEach { suffixName ->
-            val s = File(entry.dir, suffixName)
-            if (s.exists()) s.copyTo(File(dst.parentFile, suffixName), overwrite = true)
+        openSource().use { input ->
+            dst.outputStream().use { output -> input.copyTo(output) }
         }
     }
 

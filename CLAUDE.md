@@ -31,7 +31,8 @@ ui (Fragments / Adapters)        activity (MainActivity, DouyinWebBrowserActivit
    │                                       ManageActivity, TagManageActivity,
    │                                       VideoPlayerActivity, ImageViewerActivity)
    ▼
-download (BatchDownloadCoordinator, DouyinVideoHttp, MediaExportManager)
+download (BatchDownloadCoordinator, DouyinVideoHttp, MediaExportManager,
+          DownloadService — 前台下载服务, DownloadJob/DownloadRecordMeta)
    │
    ├─▶ net (LanFileServer — 「发送到电脑」局域网导出)
    ▼
@@ -91,6 +92,7 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 - `PRIMARY_TARGET_IS_LOGGED_IN_LISTS = true`：**主场景**是需登录的列表（喜欢 / 收藏 / 收藏夹）。
 - `SUPPORTS_PUBLIC_GUEST_LIST_BATCH = true`：访客可访问的公开列表（公开主页、公开合集）作为并行支持的路径保留，**不要**删除处理这条路径的代码。
 - 遇到 403 / 419 / 空包时，正确做法是回到 WebView 重新登录或刷新页面后重新同步 Cookie，**不要**通过硬编码 token 绕过。
+- 这类失效已在接口层统一识别：`DouyinListApi` 对 HTTP 401/403/419 与「200 空包」抛 `DouyinAuthException`；`ListDownloadFragment.handleListLoadError` 据此弹「重新登录 / 同步 Cookie」引导，并支持登录返回后自动重试（`awaitingLoginRetry`）。新增列表接口时沿用 `dynamicGetBody` 的失效判定，不要退化成普通 Toast。
 
 `AppConfig.MY_SEC_USER_ID` 是当前 App 所有者抖音账号的 `sec_user_id`，用于把"我的账户"列表（喜欢/收藏）下载下来的记录与"他人主页帖子"的记录区分开（写入 `sourceOwnerSecUserId`）。换账号时同步更新这个常量。
 
@@ -103,6 +105,8 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 - `Download/bDouyin/covers/` — 视频封面缩略图（图集复用第一张图作为封面，不重复写）
 
 文件命名约定为 `<userName>+<desc>`（截断/转义后）。下载成功后必须调用 `DownloadedVideoRepository.recordSuccessfulDownload(...)` 写入数据库，否则管理页角标无法识别为"已下载"。
+
+**批量下载在前台服务里执行**（`DownloadService`，`foregroundServiceType=dataSync`），而非 Fragment 协程——离开页面 / 应用退到后台都不中断，进度走通知栏。链路：`ListDownloadFragment` 预先算好每项的 `DownloadRecordMeta`（入库所需字段快照）→ 组成 `DownloadJob` → `DownloadService.start(...)`（大列表经**同进程内存队列**交接，不走 Intent 序列化）→ 服务内调 `BatchDownloadCoordinator.downloadSelected(..., onItemDone=...)` 下载并更新通知 → **成功项在服务内自行 `recordSuccessfulDownload` + 收藏夹标签关联**。不做跨进程重启的断点续传。改动写库逻辑时注意它现在有两处调用点的等价性（服务内 vs. 直接调用）。
 
 ### 导出管道（管理页「导出选中」）
 
@@ -119,10 +123,11 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 
 - `AppDatabase` 当前 **version = 10**。三张表：`downloaded_videos`、`video_tags`、`tags`。
 - 所有迁移 `MIGRATION_1_2 .. MIGRATION_9_10` 都在 `AppDatabase` 里显式列出。**不要**依赖 `fallbackToDestructiveMigration` 来"对付过去"。新增字段时：写 `MIGRATION_10_11` → `version = 11` → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。
-- 备份/恢复走 `DatabaseBackupManager`（管理页入口）——它直接操作 SQLite 文件，改库结构后要确认导入旧备份的兼容处理。
+- 备份/恢复走 `DatabaseBackupManager`（管理页入口）——它直接操作 SQLite 文件，改库结构后要确认导入旧备份的兼容处理。备份写到公共 `Download/bDouyin/backup`（存活于卸载、可 MTP 看到）。**恢复有两条路径**：`restoreFrom(entry)` 直接 File 读取，但**重装/换签名后备份文件在 MediaStore 被孤儿化**（owner 清空 + `.db` 属非媒体，`READ_MEDIA_*` 不覆盖）会抛 `SecurityException`；此时 UI 引导改用 SAF（`ACTION_OPEN_DOCUMENT` → `restoreFromStream`），授权 Uri 绕过归属校验。别把恢复退回成"只 File 读取"。
 - `userRelation` 是 `|` 分隔的多标签字符串（`"like"`、`"like|<夹名>"`、`"<夹名>"`）；写入时统一通过 `DownloadedVideoRepository.buildUserRelationFromLike(...)` / `buildUserRelationFromCollection(...)` 构造，**不要**手拼。
 - `DefaultTags.list` 是预设标签的唯一来源，也是 v6→v7 / v7→v8 迁移插入的内容；改 `DefaultTags.kt` 的同时检查迁移逻辑是否还一致。
 - `downloadType` 合法值见 `DownloadSourceType`；`mediaType` 见 `DownloadMediaType`（`"video"` / `"image"`）。
+- 管理页排序走 `getPageByMediaTypeSorted(...)`（`@RawQuery` + `SimpleSQLiteQuery`），排序列名来自固定枚举 `ManageSortOrder`（`createdAtMillis`/`createTime`/`diggCount`），**非用户输入，不接受任意字符串**，别改成拼用户串。筛选/全选等非分页路径在内存里按同一 `ManageSortOrder` 重排。统计面板用 `getAuthorCountsAll()` 与 `VideoTagDao.getTagsWithCount()` 聚合，占用空间由 `dirSize` 遍历 `Download/bDouyin/{videos,images,covers}` 求和。
 
 ### 接口响应样本
 

@@ -1,6 +1,7 @@
 package com.blitz.downloader.data
 
 import android.content.Context
+import androidx.sqlite.db.SimpleSQLiteQuery
 import com.blitz.downloader.data.db.AppDatabase
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 
@@ -32,9 +33,13 @@ class DownloadedVideoRepository(context: Context) {
     suspend fun getAllByMediaType(mediaType: String): List<DownloadedVideoEntity> =
         dao.getAllByMediaType(mediaType)
 
-    /** 精确匹配某作者昵称的全部作品（管理页「按作者筛选」使用）。 */
+    /** 精确匹配某作者昵称的全部作品（无稳定 ID 的老记录按昵称筛选时使用）。 */
     suspend fun getByMediaTypeAndUserName(mediaType: String, userName: String): List<DownloadedVideoEntity> =
         dao.getByMediaTypeAndUserName(mediaType, userName)
+
+    /** 按作者稳定 `sec_user_id` 精确匹配的全部作品（改名前后一并取出）。 */
+    suspend fun getByMediaTypeAndAuthorSecUserId(mediaType: String, secUserId: String): List<DownloadedVideoEntity> =
+        dao.getByMediaTypeAndAuthorSecUserId(mediaType, secUserId)
 
     /** 按作者昵称聚合作品数，按作品数倒序返回（管理页作者抽屉使用）。 */
     suspend fun getAuthorCounts(mediaType: String): List<com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount> =
@@ -115,7 +120,26 @@ class DownloadedVideoRepository(context: Context) {
     suspend fun getPageByMediaType(mediaType: String, limit: Int, offset: Int): List<DownloadedVideoEntity> =
         dao.getPageByMediaType(mediaType, limit, offset)
 
+    /**
+     * 指定排序列的分页查询（管理页排序）。[orderColumn] 仅接受来自
+     * [com.blitz.downloader.ui.ManageSortOrder] 的固定列名，无注入风险；一律倒序。
+     */
+    suspend fun getPageByMediaTypeSorted(
+        mediaType: String,
+        orderColumn: String,
+        limit: Int,
+        offset: Int,
+    ): List<DownloadedVideoEntity> {
+        val sql = "SELECT * FROM downloaded_videos WHERE mediaType = ? " +
+            "ORDER BY $orderColumn DESC, createdAtMillis DESC LIMIT ? OFFSET ?"
+        return dao.getPageRawSorted(SimpleSQLiteQuery(sql, arrayOf(mediaType, limit, offset)))
+    }
+
     suspend fun countByMediaType(mediaType: String): Int = dao.countByMediaType(mediaType)
+
+    /** 跨类型作者聚合（统计面板）。 */
+    suspend fun getAuthorCountsAll(): List<com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount> =
+        dao.getAuthorCountsAll()
 
     /**
      * 管理页按作者昵称搜索：自动转义 LIKE 元字符（`%` / `_` / `\`）并加首尾 `%`。

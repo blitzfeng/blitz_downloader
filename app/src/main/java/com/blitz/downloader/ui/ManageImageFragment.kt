@@ -35,8 +35,21 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
     /** 当前激活的搜索关键词（trim 后非空时启用搜索路径）。 */
     private var activeSearchQuery: String = ""
 
-    /** 当前激活的作者昵称筛选（非空时优先于搜索，精确匹配 userName）。 */
-    private var activeAuthor: String = ""
+    /**
+     * 当前作者筛选：优先按稳定 ID [activeAuthorSecId]，无 ID 时按昵称 [activeAuthorName]。
+     * 二者都为空表示未按作者筛选。
+     */
+    private var activeAuthorSecId: String = ""
+    private var activeAuthorName: String = ""
+
+    private fun hasAuthorFilter(): Boolean = activeAuthorSecId.isNotBlank() || activeAuthorName.isNotBlank()
+    private fun clearAuthorFilterState() {
+        activeAuthorSecId = ""
+        activeAuthorName = ""
+    }
+
+    /** 当前排序方式（默认下载时间倒序）。 */
+    private var activeSort: ManageSortOrder = ManageSortOrder.DEFAULT
 
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
@@ -80,11 +93,27 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
 
     /** 当前范围（搜索 / 全部）在数据库中的全部记录，供全选使用。 */
     private suspend fun loadFullScopeEntities(): List<DownloadedVideoEntity> = withContext(Dispatchers.IO) {
-        when {
-            activeAuthor.isNotBlank() -> repo.getByMediaTypeAndUserName(MEDIA_TYPE_IMAGE, activeAuthor)
+        val list = when {
+            hasAuthorFilter() -> loadAuthorEntities(MEDIA_TYPE_IMAGE)
             activeSearchQuery.isNotBlank() -> repo.searchByUserName(MEDIA_TYPE_IMAGE, activeSearchQuery)
             else -> repo.getAllByMediaType(MEDIA_TYPE_IMAGE)
         }
+        sortEntities(list)
+    }
+
+    /** 按当前 [activeSort] 对内存中的实体列表倒序排序。 */
+    private fun sortEntities(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> = when (activeSort) {
+        ManageSortOrder.DOWNLOAD_TIME -> list.sortedByDescending { it.createdAtMillis }
+        ManageSortOrder.PUBLISH_TIME -> list.sortedByDescending { it.createTime }
+        ManageSortOrder.DIGG -> list.sortedByDescending { it.diggCount }
+    }
+
+    override val activeSortOrder: ManageSortOrder get() = activeSort
+
+    override fun applySort(sort: ManageSortOrder) {
+        if (sort == activeSort) return
+        activeSort = sort
+        refreshList()
     }
 
     override fun handleDeleteSelected() {
@@ -167,16 +196,16 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
             val entities = withContext(Dispatchers.IO) {
                 when {
                     // 作者筛选 / 搜索：一次性返回匹配集，后续不再分页
-                    activeAuthor.isNotBlank() ->
-                        if (currentOffset == 0) repo.getByMediaTypeAndUserName(MEDIA_TYPE_IMAGE, activeAuthor) else emptyList()
+                    hasAuthorFilter() ->
+                        if (currentOffset == 0) sortEntities(loadAuthorEntities(MEDIA_TYPE_IMAGE)) else emptyList()
                     activeSearchQuery.isNotBlank() ->
-                        if (currentOffset == 0) repo.searchByUserName(MEDIA_TYPE_IMAGE, activeSearchQuery) else emptyList()
-                    else -> repo.getPageByMediaType(MEDIA_TYPE_IMAGE, PAGE_SIZE, currentOffset)
+                        if (currentOffset == 0) sortEntities(repo.searchByUserName(MEDIA_TYPE_IMAGE, activeSearchQuery)) else emptyList()
+                    else -> repo.getPageByMediaTypeSorted(MEDIA_TYPE_IMAGE, activeSort.column, PAGE_SIZE, currentOffset)
                 }
             }
             progress.visibility = View.GONE
             when {
-                activeAuthor.isNotBlank() -> hasMore = false
+                hasAuthorFilter() -> hasMore = false
                 activeSearchQuery.isNotBlank() -> hasMore = false
                 entities.size < PAGE_SIZE -> hasMore = false
             }
@@ -184,7 +213,7 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
 
             if (entities.isEmpty() && currentOffset == 0) {
                 tvEmpty.text = when {
-                    activeAuthor.isNotBlank() -> getString(R.string.manage_author_empty, activeAuthor)
+                    hasAuthorFilter() -> getString(R.string.manage_author_empty, activeAuthorName)
                     activeSearchQuery.isNotBlank() -> getString(R.string.manage_search_empty, activeSearchQuery)
                     else -> getString(R.string.manage_empty_images)
                 }
@@ -201,20 +230,30 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
         val q = query?.trim().orEmpty()
         if (q == activeSearchQuery) return
         activeSearchQuery = q
-        if (q.isNotBlank()) activeAuthor = ""
+        if (q.isNotBlank()) clearAuthorFilterState()
         refreshList()
     }
 
-    override val activeAuthorName: String?
-        get() = activeAuthor.ifBlank { null }
+    override val activeAuthorKey: String?
+        get() = activeAuthorSecId.ifBlank { activeAuthorName }.ifBlank { null }
 
-    override fun applyAuthorFilter(userName: String?) {
+    override fun applyAuthorFilter(secUserId: String?, userName: String?) {
+        val sec = secUserId?.trim().orEmpty()
         val name = userName?.trim().orEmpty()
-        if (name == activeAuthor) return
-        activeAuthor = name
-        if (name.isNotBlank()) activeSearchQuery = ""
+        if (sec == activeAuthorSecId && name == activeAuthorName) return
+        activeAuthorSecId = sec
+        activeAuthorName = name
+        if (sec.isNotBlank() || name.isNotBlank()) activeSearchQuery = ""
         refreshList()
     }
+
+    /** 按当前作者筛选取该 mediaType 下的全部作品：有稳定 ID 走 ID，无则退回昵称。 */
+    private suspend fun loadAuthorEntities(mediaType: String): List<DownloadedVideoEntity> =
+        if (activeAuthorSecId.isNotBlank()) {
+            repo.getByMediaTypeAndAuthorSecUserId(mediaType, activeAuthorSecId)
+        } else {
+            repo.getByMediaTypeAndUserName(mediaType, activeAuthorName)
+        }
 
     /** 从头加载（搜索切换 / 退出搜索时调用）。 */
     private fun refreshList() {

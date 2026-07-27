@@ -111,10 +111,15 @@ data class PlayAddr(
     @SerializedName("url_key") val urlKey: String?
 )
 
-/** [Video.bitRate] 单档，含独立 [play_addr]。 */
+/**
+ * [Video.bitRate] 单档，含独立 [play_addr]。
+ * [gearName] 形如 `normal_1080_0` / `normal_720_0`，数字即分辨率档位；
+ * [bitRateBps] 为该档码率（bits/s），用于同分辨率下选更清晰的一档。
+ */
 data class DouyinBitRateEntry(
     @SerializedName("play_addr") val playAddr: PlayAddr?,
     @SerializedName("gear_name") val gearName: String? = null,
+    @SerializedName("bit_rate") val bitRateBps: Long = 0,
 )
 
 data class ImageUrl(

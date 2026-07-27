@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 列表批量下载：仅处理 [VideoItemUiModel.isSelected] 且 [VideoItemUiModel.downloadUrl] 非空的项；
@@ -86,6 +87,7 @@ object BatchDownloadCoordinator {
         items: List<VideoItemUiModel>,
         maxConcurrent: Int = DEFAULT_MAX_CONCURRENT,
         maxRetries: Int = DEFAULT_MAX_RETRIES,
+        onItemDone: ((done: Int, total: Int, success: Boolean) -> Unit)? = null,
     ): BatchResult = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         val videoTargets = items.filter { it.isSelected && !it.isPhoto && !it.downloadUrl.isNullOrBlank() }
@@ -95,6 +97,11 @@ object BatchDownloadCoordinator {
             return@withContext BatchResult(total = 0, success = 0, failed = 0, succeededItems = emptyList())
         }
         val sem = Semaphore(maxConcurrent.coerceAtLeast(1))
+        // 每完成一项（成功/失败）就回调一次，供前台服务更新通知栏进度。
+        val doneCounter = AtomicInteger(0)
+        fun reportDone(success: Boolean) {
+            onItemDone?.invoke(doneCounter.incrementAndGet(), total, success)
+        }
 
         // item to DownloadOutcome-or-null
         val videoPairs = coroutineScope {
@@ -108,14 +115,19 @@ object BatchDownloadCoordinator {
                             videoUrl = url,
                             displayName = "$base.mp4",
                             maxRetries = maxRetries,
-                        ) ?: return@withPermit null
-                        // 封面：尽力而为，不计入成功/失败统计
-                        val coverPath = if (!item.coverUrl.isNullOrBlank()) {
-                            val ext = extractImageExtension(item.coverUrl)
-                            downloadCoverBestEffort(app, item.coverUrl, "$base.$ext")
-                        } else ""
-                        DownloadOutcome(filePath = filePath, coverPath = coverPath)
+                        )
+                        if (filePath == null) {
+                            null
+                        } else {
+                            // 封面：尽力而为，不计入成功/失败统计
+                            val coverPath = if (!item.coverUrl.isNullOrBlank()) {
+                                val ext = extractImageExtension(item.coverUrl)
+                                downloadCoverBestEffort(app, item.coverUrl, "$base.$ext")
+                            } else ""
+                            DownloadOutcome(filePath = filePath, coverPath = coverPath)
+                        }
                     }
+                    reportDone(outcome != null)
                     item to outcome
                 }
             }.awaitAll()
@@ -129,10 +141,12 @@ object BatchDownloadCoordinator {
                             app = app,
                             item = item,
                             maxRetries = maxRetries,
-                        ) ?: return@withPermit null
+                        )
                         // 图集封面直接复用第一张图，不重复下载
-                        DownloadOutcome(filePath = firstImagePath, coverPath = firstImagePath)
+                        if (firstImagePath == null) null
+                        else DownloadOutcome(filePath = firstImagePath, coverPath = firstImagePath)
                     }
+                    reportDone(outcome != null)
                     item to outcome
                 }
             }.awaitAll()

@@ -147,7 +147,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 previewSubtitles.addAll(listSubtitles)
                 previewIsNetwork = true
                 currentIndex = listPosition.coerceIn(0, listUrls.lastIndex)
-                loadItemAtIndex(currentIndex, updateUi = false)
+                loadItemAtIndex(currentIndex, updateUi = true)
             }
             !listFilePaths.isNullOrEmpty() -> {
                 // 列表本地文件模式
@@ -156,7 +156,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 previewSubtitles.addAll(listSubtitles)
                 previewIsNetwork = false
                 currentIndex = listPosition.coerceIn(0, listFilePaths.lastIndex)
-                loadItemAtIndex(currentIndex, updateUi = false)
+                loadItemAtIndex(currentIndex, updateUi = true)
                 // 检查起始文件是否存在
                 if (videoFile?.exists() == false) {
                     Toast.makeText(this, R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
@@ -408,7 +408,8 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     /**
      * 根据索引加载对应的播放源和标题，并重置播放器进度 UI。
-     * @param updateUi 是否立即更新标题栏（首次 onCreate 时已由外部处理，传 false）
+     * @param updateUi 是否更新标题栏/副标题/序号徽标。列表模式首次进入与后续切换都传 true，
+     *   使初始（点击进入的那条）也正确显示标题+昵称，而不是停留在 Activity 默认 label。
      */
     private fun loadItemAtIndex(index: Int, updateUi: Boolean) {
         val source = previewSources.getOrNull(index) ?: return

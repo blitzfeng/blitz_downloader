@@ -1,13 +1,18 @@
 package com.blitz.downloader.ui
 
+import android.Manifest
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
 import androidx.core.widget.NestedScrollView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -24,12 +29,16 @@ import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.api.AwemeItem
 import com.blitz.downloader.api.AwemeMapper
 import com.blitz.downloader.api.DouyinApiClient
+import com.blitz.downloader.api.DouyinAuthException
 import com.blitz.downloader.api.DouyinCollectsFolderRow
 import com.blitz.downloader.api.DouyinListApi
 import com.blitz.downloader.api.DouyinPageKind
 import com.blitz.downloader.api.DouyinUrlParser
 import com.blitz.downloader.databinding.FragmentListDownloadBinding
 import com.blitz.downloader.download.BatchDownloadCoordinator
+import com.blitz.downloader.download.DownloadJob
+import com.blitz.downloader.download.DownloadRecordMeta
+import com.blitz.downloader.download.DownloadService
 import com.blitz.downloader.util.DouyinCookieSync
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -49,6 +58,17 @@ class ListDownloadFragment : Fragment() {
     private var listLoadJob: Job? = null
     private var batchDownloadJob: Job? = null
     private var showFabRunnable: Runnable? = null
+
+    /** Android 13+ 通知权限申请器：用于展示前台下载进度，拒绝也不阻断下载。 */
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* 拒绝也照常下载，仅无通知 */ }
+
+    /** 登录态失效弹窗中「去登录」后待重试的加载动作；登录返回且已登录时自动执行。 */
+    private var pendingRetryAfterLogin: (suspend () -> Unit)? = null
+    private var awaitingLoginRetry: Boolean = false
+
+    /** 是否在列表中隐藏已下载项（仅影响展示，不影响 videoItems 源数据）。 */
+    private var hideDownloaded: Boolean = false
 
     private enum class ListApiMode { None, UserPost, UserLike, UserCollection, CollectsVideo, MixAweme }
 
@@ -154,73 +174,93 @@ class ListDownloadFragment : Fragment() {
                 if (item.isDownloaded) continue
                 videoItems[i] = item.copy(isSelected = newSelect)
             }
-            videoAdapter.submitList(videoItems.toList())
+            videoAdapter.submitList(currentDisplayList())
             updateSelectedCountText()
         }
 
+        binding.cbHideDownloaded.setOnCheckedChangeListener { _, checked ->
+            hideDownloaded = checked
+            videoAdapter.submitList(currentDisplayList())
+        }
+
         binding.btnDownloadSelected.setOnClickListener {
-            val selected = videoItems.filter { it.isSelected }
-            if (selected.isEmpty()) {
-                Toast.makeText(requireContext(), R.string.batch_download_none_selected, Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
+            startBatchDownload()
+        }
+    }
+
+    /** 提交给 Adapter 展示的列表：按「隐藏已下载」开关过滤，源数据 [videoItems] 不变。 */
+    private fun currentDisplayList(): List<VideoItemUiModel> =
+        if (hideDownloaded) videoItems.filter { !it.isDownloaded } else videoItems.toList()
+
+    /**
+     * 提交批量下载：预先算好每项的入库元数据，交给 [DownloadService] 在前台服务里执行。
+     * 下载与写库都在服务内完成，离开本页 / 应用退到后台也不会中断，进度见通知栏。
+     */
+    private fun startBatchDownload() {
+        val selected = videoItems.filter { it.isSelected }
+        if (selected.isEmpty()) {
+            Toast.makeText(requireContext(), R.string.batch_download_none_selected, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val downloadable = selected.filter { !it.downloadUrl.isNullOrBlank() || it.imageUrls.isNotEmpty() }
+        if (downloadable.isEmpty()) {
+            Toast.makeText(requireContext(), R.string.batch_download_no_play_url, Toast.LENGTH_LONG).show()
+            return
+        }
+
+        // Android 13+：通知权限用于展示前台进度，缺失也不阻断下载（服务照常运行）。
+        requestNotificationPermissionIfNeeded()
+
+        val sourceType = listSourceTypeForCurrentMode()
+        val isCollects = listApiMode == ListApiMode.CollectsVideo
+        val folderName = if (isCollects) listCollectsName else ""
+        val folderId = if (isCollects) listCollectsId.orEmpty() else ""
+        val ownerSecUserId = when (listApiMode) {
+            ListApiMode.UserPost -> listSecUserId.orEmpty()
+            else -> AppConfig.MY_SEC_USER_ID
+        }
+        val metas = downloadable.associate { item ->
+            val userRelation = when (listApiMode) {
+                ListApiMode.UserLike ->
+                    DownloadedVideoRepository.buildUserRelationFromLike(item.collectStat)
+                ListApiMode.UserCollection ->
+                    DownloadedVideoRepository.buildUserRelationFromCollection(item.userDigged, "collect")
+                ListApiMode.CollectsVideo ->
+                    DownloadedVideoRepository.buildUserRelationFromCollection(item.userDigged, folderName)
+                else -> ""
             }
-            if (selected.all { it.downloadUrl.isNullOrBlank() && it.imageUrls.isEmpty() }) {
-                Toast.makeText(requireContext(), R.string.batch_download_no_play_url, Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
-            batchDownloadJob?.cancel()
-            batchDownloadJob = viewLifecycleOwner.lifecycleScope.launch {
-                val n = selected.count { !it.downloadUrl.isNullOrBlank() || it.imageUrls.isNotEmpty() }
-                binding.tvStatus.text = getString(R.string.batch_download_running, n)
-                val appCtx = requireContext().applicationContext
-                val result = BatchDownloadCoordinator.downloadSelected(requireContext(), videoItems.toList())
-                val sourceType = listSourceTypeForCurrentMode()
-                withContext(Dispatchers.IO) {
-                    val isCollects = listApiMode == ListApiMode.CollectsVideo
-                    val folderName = if (isCollects) listCollectsName else ""
-                    val folderId = if (isCollects) listCollectsId.orEmpty() else ""
-                    val ownerSecUserId = when (listApiMode) {
-                        ListApiMode.UserPost -> listSecUserId.orEmpty()
-                        else -> AppConfig.MY_SEC_USER_ID
-                    }
-                    val tagRepo = VideoTagRepository(appCtx)
-                    result.succeededItems.forEach { item ->
-                        val userRelation = when (listApiMode) {
-                            ListApiMode.UserLike ->
-                                DownloadedVideoRepository.buildUserRelationFromLike(item.collectStat)
-                            ListApiMode.UserCollection ->
-                                DownloadedVideoRepository.buildUserRelationFromCollection(item.userDigged, "collect")
-                            ListApiMode.CollectsVideo ->
-                                DownloadedVideoRepository.buildUserRelationFromCollection(item.userDigged, folderName)
-                            else -> ""
-                        }
-                        downloadedRepo.recordSuccessfulDownload(
-                            awemeId = item.id,
-                            downloadType = sourceType,
-                            userName = item.authorNickname,
-                            mediaType = if (item.isPhoto) DownloadMediaType.IMAGE else DownloadMediaType.VIDEO,
-                            filePath = result.succeededPaths[item.id].orEmpty(),
-                            coverPath = result.succeededCovers[item.id].orEmpty(),
-                            createTime = item.createTime,
-                            desc = item.descRaw,
-                            collectionType = folderName,
-                            collectId = folderId,
-                            videoAuthorSecUserId = item.authorSecUserId,
-                            sourceOwnerSecUserId = ownerSecUserId,
-                            userRelation = userRelation,
-                            diggCount = item.diggCount,
-                            collectCount = item.collectCount,
-                        )
-                        if (isCollects) {
-                            tagRepo.ensureCollectFolderTagLinked(awemeId = item.id, folderName = folderName)
-                        }
-                    }
-                }
-                reapplyDownloadedFlagsToList()
-                val line = getString(R.string.batch_download_done, result.success, result.failed)
-                binding.tvStatus.text = line
-                Toast.makeText(requireContext(), line, Toast.LENGTH_LONG).show()
-            }
+            item.id to DownloadRecordMeta(
+                downloadType = sourceType,
+                userName = item.authorNickname,
+                mediaType = if (item.isPhoto) DownloadMediaType.IMAGE else DownloadMediaType.VIDEO,
+                createTime = item.createTime,
+                desc = item.descRaw,
+                collectionType = folderName,
+                collectId = folderId,
+                videoAuthorSecUserId = item.authorSecUserId,
+                sourceOwnerSecUserId = ownerSecUserId,
+                userRelation = userRelation,
+                diggCount = item.diggCount,
+                collectCount = item.collectCount,
+                linkCollectFolderTag = isCollects,
+            )
+        }
+
+        DownloadService.start(
+            requireContext().applicationContext,
+            DownloadJob(items = downloadable, metas = metas),
+        )
+        binding.tvStatus.text = getString(R.string.batch_download_enqueued, downloadable.size)
+        Toast.makeText(requireContext(), R.string.batch_download_enqueued_toast, Toast.LENGTH_LONG).show()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            requireContext(), Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
@@ -230,6 +270,20 @@ class ListDownloadFragment : Fragment() {
         if (videoItems.isNotEmpty()) {
             viewLifecycleOwner.lifecycleScope.launch {
                 reapplyDownloadedFlagsToList()
+            }
+        }
+        // 从登录页返回：先把 WebView 里的最新 Cookie 同步进来，再判断是否已登录。
+        if (awaitingLoginRetry) {
+            DouyinCookieSync.syncFromCookieManager()
+            refreshCookieStatusUi()
+            val hasLogin = DouyinCookieSync.cookieTokenSnapshot(DouyinApiClient.globalCookie).hasLoginSession
+            if (hasLogin) {
+                awaitingLoginRetry = false
+                val retry = pendingRetryAfterLogin
+                pendingRetryAfterLogin = null
+                if (retry != null) {
+                    viewLifecycleOwner.lifecycleScope.launch { retry() }
+                }
             }
         }
     }
@@ -259,7 +313,7 @@ class ListDownloadFragment : Fragment() {
             val current = videoItems[index]
             if (current.isDownloaded) return
             videoItems[index] = current.copy(isSelected = !current.isSelected)
-            videoAdapter.submitList(videoItems.toList())
+            videoAdapter.submitList(currentDisplayList())
             updateSelectedCountText()
         }
     }
@@ -287,7 +341,7 @@ class ListDownloadFragment : Fragment() {
                 isSelected = if (isDl) false else v.isSelected,
             )
         }
-        videoAdapter.submitList(videoItems.toList())
+        videoAdapter.submitList(currentDisplayList())
         updateSelectedCountText()
     }
 
@@ -440,12 +494,7 @@ class ListDownloadFragment : Fragment() {
         binding.tvStatus.text = getString(R.string.collects_list_loading)
         val folders = DouyinListApi.fetchAllCollectsFolders().getOrElse { e ->
             withContext(Dispatchers.Main) {
-                Toast.makeText(
-                    requireContext(),
-                    getString(R.string.list_api_error, e.message ?: ""),
-                    Toast.LENGTH_LONG,
-                ).show()
-                refreshListStatusError(e.message)
+                handleListLoadError(e) { runCollectsFolderPickFlow() }
             }
             return
         }
@@ -571,17 +620,49 @@ class ListDownloadFragment : Fragment() {
                     refreshListStatusAfterOk()
                 },
                 onFailure = { e ->
-                    Toast.makeText(
-                        requireContext(),
-                        getString(R.string.list_api_error, e.message ?: ""),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                    refreshListStatusError(e.message)
+                    handleListLoadError(e) { fetchListPage(isFirstPage) }
                 },
             )
         } finally {
             listLoadingMore = false
         }
+    }
+
+    /**
+     * 列表加载失败统一处理：登录态失效（[DouyinAuthException]）弹「重新登录 / 同步 Cookie」引导，
+     * 其余错误照旧 Toast。[retry] 为该次加载动作，登录/同步后可自动重试。
+     */
+    private fun handleListLoadError(e: Throwable, retry: (suspend () -> Unit)?) {
+        refreshListStatusError(e.message)
+        if (e is DouyinAuthException) {
+            showSessionExpiredDialog(retry)
+        } else {
+            Toast.makeText(
+                requireContext(),
+                getString(R.string.list_api_error, e.message ?: ""),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun showSessionExpiredDialog(retry: (suspend () -> Unit)?) {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.session_expired_title)
+            .setMessage(R.string.session_expired_msg)
+            .setPositiveButton(R.string.session_expired_login) { _, _ ->
+                pendingRetryAfterLogin = retry
+                awaitingLoginRetry = true
+                startDouyinBrowser(DouyinWebBrowserActivity.DOUYIN_DEFAULT_HOME_URL)
+            }
+            .setNeutralButton(R.string.session_expired_sync) { _, _ ->
+                syncCookieFromCookieManager()
+                val hasLogin = DouyinCookieSync.cookieTokenSnapshot(DouyinApiClient.globalCookie).hasLoginSession
+                if (hasLogin && retry != null) {
+                    viewLifecycleOwner.lifecycleScope.launch { retry() }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun loadNextListPage() {

@@ -23,6 +23,18 @@
         android:title="@string/manage_menu_clear_invalid"
         app:showAsAction="never" />
 
+    <!-- 普通模式下可见：列表排序 -->
+    <item
+        android:id="@+id/action_sort"
+        android:title="@string/manage_menu_sort"
+        app:showAsAction="never" />
+
+    <!-- 普通模式下可见：统计面板 -->
+    <item
+        android:id="@+id/action_stats"
+        android:title="@string/manage_menu_stats"
+        app:showAsAction="never" />
+
     <!-- 普通模式下可见：进入标签管理页 -->
     <item
         android:id="@+id/action_manage_tags"

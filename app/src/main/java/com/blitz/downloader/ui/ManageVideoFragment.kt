@@ -43,8 +43,21 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
     /** 当前激活的搜索关键词（trim 后非空时启用搜索路径，忽略 [activeTag]）。 */
     private var activeSearchQuery: String = ""
 
-    /** 当前激活的作者昵称筛选（非空时优先于搜索/标签，精确匹配 userName）。 */
-    private var activeAuthor: String = ""
+    /**
+     * 当前作者筛选：优先按稳定 ID [activeAuthorSecId]，无 ID 时按昵称 [activeAuthorName]。
+     * 二者都为空表示未按作者筛选。[activeAuthorName] 同时用于空状态文案与抽屉回显。
+     */
+    private var activeAuthorSecId: String = ""
+    private var activeAuthorName: String = ""
+
+    private fun hasAuthorFilter(): Boolean = activeAuthorSecId.isNotBlank() || activeAuthorName.isNotBlank()
+    private fun clearAuthorFilterState() {
+        activeAuthorSecId = ""
+        activeAuthorName = ""
+    }
+
+    /** 当前排序方式（默认下载时间倒序）。 */
+    private var activeSort: ManageSortOrder = ManageSortOrder.DEFAULT
 
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
@@ -91,12 +104,28 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
 
     /** 当前范围（搜索 / 标签 / 全部）在数据库中的全部记录，供全选使用。 */
     private suspend fun loadFullScopeEntities(): List<DownloadedVideoEntity> = withContext(Dispatchers.IO) {
-        when {
-            activeAuthor.isNotBlank() -> repo.getByMediaTypeAndUserName(MEDIA_TYPE_VIDEO, activeAuthor)
+        val list = when {
+            hasAuthorFilter() -> loadAuthorEntities(MEDIA_TYPE_VIDEO)
             activeSearchQuery.isNotBlank() -> repo.searchByUserName(MEDIA_TYPE_VIDEO, activeSearchQuery)
             activeTag == TagFilterAdapter.TAG_ALL -> repo.getAllByMediaType(MEDIA_TYPE_VIDEO)
             else -> tagRepo.getVideosByTag(activeTag).filter { it.mediaType == MEDIA_TYPE_VIDEO }
         }
+        sortEntities(list)
+    }
+
+    /** 按当前 [activeSort] 对内存中的实体列表倒序排序（用于非分页的筛选/全选路径）。 */
+    private fun sortEntities(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> = when (activeSort) {
+        ManageSortOrder.DOWNLOAD_TIME -> list.sortedByDescending { it.createdAtMillis }
+        ManageSortOrder.PUBLISH_TIME -> list.sortedByDescending { it.createTime }
+        ManageSortOrder.DIGG -> list.sortedByDescending { it.diggCount }
+    }
+
+    override val activeSortOrder: ManageSortOrder get() = activeSort
+
+    override fun applySort(sort: ManageSortOrder) {
+        if (sort == activeSort) return
+        activeSort = sort
+        refreshList()
     }
 
     override fun handleDeleteSelected() {
@@ -213,7 +242,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
             // 选择标签时强制清掉搜索词与作者筛选；标签与二者互斥，
             // 不清就会出现「点了标签但列表还按搜索/作者筛」的迷之结果。
             activeSearchQuery = ""
-            activeAuthor = ""
+            clearAuthorFilterState()
             activeTag = tag
             refreshList()
         }
@@ -281,12 +310,10 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         viewLifecycleOwner.lifecycleScope.launch {
             val entities: List<DownloadedVideoEntity>
             when {
-                activeAuthor.isNotBlank() -> {
-                    // 作者筛选：精确匹配昵称，一次性返回全部，不再分页
+                hasAuthorFilter() -> {
+                    // 作者筛选：优先按稳定 ID，无 ID 退回昵称；一次性返回全部，不再分页
                     entities = if (currentOffset == 0) {
-                        withContext(Dispatchers.IO) {
-                            repo.getByMediaTypeAndUserName(MEDIA_TYPE_VIDEO, activeAuthor)
-                        }
+                        withContext(Dispatchers.IO) { sortEntities(loadAuthorEntities(MEDIA_TYPE_VIDEO)) }
                     } else {
                         emptyList()
                     }
@@ -297,7 +324,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                     // 搜索路径：按昵称全量查询，忽略标签过滤
                     entities = if (currentOffset == 0) {
                         withContext(Dispatchers.IO) {
-                            repo.searchByUserName(MEDIA_TYPE_VIDEO, activeSearchQuery)
+                            sortEntities(repo.searchByUserName(MEDIA_TYPE_VIDEO, activeSearchQuery))
                         }
                     } else {
                         emptyList()
@@ -306,9 +333,9 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                     currentOffset += entities.size
                 }
                 activeTag == TagFilterAdapter.TAG_ALL -> {
-                    // 全量分页
+                    // 全量分页（按当前排序）
                     entities = withContext(Dispatchers.IO) {
-                        repo.getPageByMediaType(MEDIA_TYPE_VIDEO, PAGE_SIZE, currentOffset)
+                        repo.getPageByMediaTypeSorted(MEDIA_TYPE_VIDEO, activeSort.column, PAGE_SIZE, currentOffset)
                     }
                     if (entities.size < PAGE_SIZE) hasMore = false
                     currentOffset += entities.size
@@ -317,8 +344,9 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                     // 按标签全量加载（标签结果集通常不大，不做额外分页）
                     entities = if (currentOffset == 0) {
                         withContext(Dispatchers.IO) {
-                            tagRepo.getVideosByTag(activeTag)
-                                .filter { it.mediaType == MEDIA_TYPE_VIDEO }
+                            sortEntities(
+                                tagRepo.getVideosByTag(activeTag).filter { it.mediaType == MEDIA_TYPE_VIDEO }
+                            )
                         }
                     } else {
                         emptyList()
@@ -332,7 +360,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
 
             if (entities.isEmpty() && currentOffset == 0) {
                 tvEmpty.text = when {
-                    activeAuthor.isNotBlank() -> getString(R.string.manage_author_empty, activeAuthor)
+                    hasAuthorFilter() -> getString(R.string.manage_author_empty, activeAuthorName)
                     activeSearchQuery.isNotBlank() -> getString(R.string.manage_search_empty, activeSearchQuery)
                     else -> getString(R.string.manage_empty_videos)
                 }
@@ -352,18 +380,20 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         if (q == activeSearchQuery) return
         activeSearchQuery = q
         // 主搜索启用时清掉作者筛选（二者互斥）；activeTag 不动，退出搜索后仍回到之前选中的标签
-        if (q.isNotBlank()) activeAuthor = ""
+        if (q.isNotBlank()) clearAuthorFilterState()
         refreshList()
     }
 
-    override val activeAuthorName: String?
-        get() = activeAuthor.ifBlank { null }
+    override val activeAuthorKey: String?
+        get() = activeAuthorSecId.ifBlank { activeAuthorName }.ifBlank { null }
 
-    override fun applyAuthorFilter(userName: String?) {
+    override fun applyAuthorFilter(secUserId: String?, userName: String?) {
+        val sec = secUserId?.trim().orEmpty()
         val name = userName?.trim().orEmpty()
-        if (name == activeAuthor) return
-        activeAuthor = name
-        if (name.isNotBlank()) {
+        if (sec == activeAuthorSecId && name == activeAuthorName) return
+        activeAuthorSecId = sec
+        activeAuthorName = name
+        if (sec.isNotBlank() || name.isNotBlank()) {
             // 作者筛选与搜索/标签互斥
             activeSearchQuery = ""
             activeTag = TagFilterAdapter.TAG_ALL
@@ -371,6 +401,14 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         }
         refreshList()
     }
+
+    /** 按当前作者筛选取该 mediaType 下的全部作品：有稳定 ID 走 ID，无则退回昵称。 */
+    private suspend fun loadAuthorEntities(mediaType: String): List<DownloadedVideoEntity> =
+        if (activeAuthorSecId.isNotBlank()) {
+            repo.getByMediaTypeAndAuthorSecUserId(mediaType, activeAuthorSecId)
+        } else {
+            repo.getByMediaTypeAndUserName(mediaType, activeAuthorName)
+        }
 
     /**
      * 在 IO 线程批量查询 [entities] 中每条视频的用户自定义标签，

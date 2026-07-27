@@ -59,12 +59,22 @@ interface ManageTabFragment {
      */
     fun handleToggleSelectAll() {}
 
-    /** 当前激活的作者筛选昵称；未按作者筛选时为 null（供抽屉预选中当前作者）。 */
-    val activeAuthorName: String? get() = null
+    /**
+     * 当前作者筛选的分组键（`secUserId` 优先，无则昵称）；未按作者筛选时为 null。
+     * 供作者抽屉预选中当前作者。
+     */
+    val activeAuthorKey: String? get() = null
 
     /**
-     * 按作者昵称筛选当前 Tab 列表；传 null / 空表示清除作者筛选。
+     * 按作者筛选当前 Tab 列表：优先按稳定 [secUserId]（改名前后一并显示），
+     * [secUserId] 为空时按 [userName]（老记录无稳定 ID）。二者都为空 / null 表示清除筛选。
      * 作者筛选与搜索、标签互斥（设置作者时应清空后两者）。
      */
-    fun applyAuthorFilter(userName: String?) {}
+    fun applyAuthorFilter(secUserId: String?, userName: String?) {}
+
+    /** 当前排序方式（供排序对话框预选中）。 */
+    val activeSortOrder: ManageSortOrder get() = ManageSortOrder.DEFAULT
+
+    /** 切换排序方式并从头刷新列表。 */
+    fun applySort(sort: ManageSortOrder) {}
 }
