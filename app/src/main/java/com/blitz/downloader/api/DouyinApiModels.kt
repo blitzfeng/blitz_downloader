@@ -137,9 +137,11 @@ data class AwemeImage(
 data class Statistics(
     @SerializedName("aweme_id") val awemeId: String? = null,
     @SerializedName("comment_count") val commentCount: Int = 0,
-    @SerializedName("digg_count") val diggCount: Int = 0, // 点赞数
+    @SerializedName("digg_count") val diggCount: Long = 0L, // 点赞数
     @SerializedName("share_count") val shareCount: Int = 0,
     @SerializedName("play_count") val playCount: Int = 0,
+    /** 收藏数（接口字段 `collect_count`）。喜欢/收藏夹列表均下发。 */
+    @SerializedName("collect_count") val collectCount: Long = 0L,
 )
 
 // ========== 收藏夹列表（F2：`USER_COLLECTS` → `collects_list`，结构见 activity/data.json）==========

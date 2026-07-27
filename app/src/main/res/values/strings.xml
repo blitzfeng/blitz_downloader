@@ -51,6 +51,10 @@
     <string name="batch_download_done">批量下载结束：成功 %1$d，失败 %2$d（视频→下载/bDouyin/videos，图集→下载/bDouyin/images）</string>
     <string name="grid_badge_downloaded">已下载</string>
     <string name="grid_badge_photo">图集 %1$d张</string>
+    <string name="item_action_author_posts">查看TA的Post</string>
+    <string name="item_action_preview">预览</string>
+    <string name="btn_back_to_my_page">返回我的主页</string>
+    <string name="author_posts_mode_hint">正在查看 %1$s 的Post</string>
     <string name="menu_manage">管理</string>
     <string name="manage_title">管理</string>
     <string name="manage_tab_videos">视频</string>
@@ -58,8 +62,24 @@
     <string name="manage_invalid_label">已失效</string>
     <string name="manage_empty_videos">暂无已下载视频</string>
     <string name="manage_empty_images">暂无已下载图片</string>
+    <string name="manage_menu_search">搜索</string>
+    <string name="manage_search_hint">按作者昵称搜索</string>
+    <string name="manage_search_empty">没有匹配「%1$s」的结果</string>
     <string name="manage_menu_clear_invalid">清除已失效</string>
     <string name="manage_menu_tags">标签管理</string>
+    <string name="manage_menu_backup_db">备份数据库</string>
+    <string name="manage_menu_restore_db">恢复备份</string>
+    <string name="manage_backup_confirm_title">备份数据库</string>
+    <string name="manage_backup_confirm_msg">将把当前数据库复制到 Download/bDouyin/backup 下带时间戳的子目录，旧备份会保留。继续？</string>
+    <string name="manage_backup_doing">正在备份…</string>
+    <string name="manage_backup_done">备份完成：%1$s</string>
+    <string name="manage_backup_failed">备份失败：%1$s</string>
+    <string name="manage_restore_pick_title">选择要恢复的备份</string>
+    <string name="manage_restore_no_backups">没有找到任何备份（Download/bDouyin/backup 为空）</string>
+    <string name="manage_restore_confirm_title">恢复数据库</string>
+    <string name="manage_restore_confirm_msg">这将用所选备份覆盖当前数据库，未备份的数据会丢失。恢复完成后 App 会自动重启。继续？</string>
+    <string name="manage_restore_doing">正在恢复…</string>
+    <string name="manage_restore_failed">恢复失败：%1$s</string>
     <string name="manage_edit_tags_title">设置标签</string>
     <string name="manage_menu_set_tags_selected">批量设置标签</string>
     <string name="manage_set_tags_title">为选中的 %1$d 项批量添加标签</string>
@@ -82,4 +102,6 @@
     <string name="image_viewer_page_indicator">%1$d / %2$d</string>
     <string name="player_file_not_found">文件未找到，可能已被移动或删除</string>
     <string name="player_play_error">视频播放失败，请检查文件是否完整</string>
+    <string name="player_first_video">已经是第一个视频了</string>
+    <string name="player_last_video">已经是最后一个视频了</string>
 </resources>

@@ -15,6 +15,7 @@ import coil.load
 import coil.transform.RoundedCornersTransformation
 import com.blitz.downloader.R
 import com.blitz.downloader.data.db.DownloadedVideoEntity
+import com.blitz.downloader.util.NumberFormatUtils
 import java.io.File
 
 data class ManageGridItem(
@@ -54,6 +55,9 @@ class ManageGridAdapter(
     private val selectedIds = mutableSetOf<String>()
 
     // ── 公共 API ──────────────────────────────────────────────────────────────
+
+    /** 返回当前已加载的所有 item 快照，供打开播放器时构建列表使用。 */
+    fun getItems(): List<ManageGridItem> = items.toList()
 
     fun addItems(newItems: List<ManageGridItem>) {
         val insertStart = items.size
@@ -148,6 +152,7 @@ class ManageGridAdapter(
         private val cover: ImageView = itemView.findViewById(R.id.ivCover)
         private val invalidOverlay: View = itemView.findViewById(R.id.viewInvalidOverlay)
         private val invalidBadge: TextView = itemView.findViewById(R.id.tvInvalidBadge)
+        private val diggBadge: TextView = itemView.findViewById(R.id.tvDiggCount)
         private val selectedOverlay: View = itemView.findViewById(R.id.viewSelectedOverlay)
         private val checkbox: CheckBox = itemView.findViewById(R.id.cbManageSelect)
         private val username: TextView = itemView.findViewById(R.id.tvUsername)
@@ -199,6 +204,15 @@ class ManageGridAdapter(
                     tagContainer.addView(makeChip(ctx, labelForRelation(part), colorForRelation(part)))
                 }
 
+            // 点赞数徽标：旧记录或接口未带 → 0 → 隐藏
+            val diggText = NumberFormatUtils.formatChineseCount(entity.diggCount)
+            if (diggText.isEmpty()) {
+                diggBadge.visibility = View.GONE
+            } else {
+                diggBadge.visibility = View.VISIBLE
+                diggBadge.text = "♥ $diggText"
+            }
+
             bindInvalidState(item.fileExists)
             bindSelectionState(selectionMode, isSelected)
             bindUserTags(item.userTags)
@@ -219,9 +233,92 @@ class ManageGridAdapter(
                 return
             }
             userTagContainer.visibility = View.VISIBLE
-            tags.forEach { tag ->
-                userTagContainer.addView(makeChip(ctx, tag, USER_TAG_COLOR))
+            // 容器尚未走过 layout（首次 bind）时宽度为 0，post 一次再排版；
+            // 已有宽度则同步排版，避免出现「先全塞一行再跳成两行」的闪烁。
+            val w = userTagContainer.width
+            if (w > 0) {
+                layoutTagsInTwoRows(tags, w)
+            } else {
+                userTagContainer.post {
+                    if (userTagContainer.width > 0) {
+                        layoutTagsInTwoRows(tags, userTagContainer.width)
+                    }
+                }
             }
+        }
+
+        /**
+         * 把 [tags] 排进 [userTagContainer]，最多两行；
+         * 第二行容纳不下剩余 chip 时，尾部用「+N」概要 chip 表示剩余数量。
+         */
+        private fun layoutTagsInTwoRows(tags: List<String>, maxWidth: Int) {
+            userTagContainer.removeAllViews()
+            val ctx = itemView.context
+            val density = ctx.resources.displayMetrics.density
+            val rowGap = (3 * density).toInt()
+            // maxWidth 异常时退化为「全放第一行」，由系统裁剪兜底
+            val safe = if (maxWidth > 0) maxWidth else Int.MAX_VALUE
+            val mw = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+            val mh = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+
+            fun chipOuterWidth(v: View): Int {
+                v.measure(mw, mh)
+                val lp = v.layoutParams as? LinearLayout.LayoutParams
+                return v.measuredWidth + (lp?.marginEnd ?: 0)
+            }
+
+            fun newRow(topGap: Int): LinearLayout = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                ).also { it.topMargin = topGap }
+            }
+
+            val maxRows = 2
+            val rows = mutableListOf(newRow(0))
+            var rowWidth = 0
+            var overflowFromIndex = -1
+
+            for ((idx, tag) in tags.withIndex()) {
+                val chip = makeChip(ctx, tag, USER_TAG_COLOR)
+                val w = chipOuterWidth(chip)
+                if (rowWidth + w > safe && rows.last().childCount > 0) {
+                    if (rows.size >= maxRows) {
+                        overflowFromIndex = idx
+                        break
+                    }
+                    rows.add(newRow(rowGap))
+                    rowWidth = 0
+                }
+                rows.last().addView(chip)
+                rowWidth += w
+            }
+
+            if (overflowFromIndex >= 0) {
+                // 末尾换 "+N" 概要 chip；放不下就回撤一格再试，直到能塞下或第二行清空。
+                var remaining = tags.size - overflowFromIndex
+                val lastRow = rows.last()
+                while (true) {
+                    val plus = makeChip(ctx, "+$remaining", USER_TAG_OVERFLOW_COLOR)
+                    val plusW = chipOuterWidth(plus)
+                    var curW = 0
+                    for (i in 0 until lastRow.childCount) {
+                        val c = lastRow.getChildAt(i)
+                        val lp = c.layoutParams as? LinearLayout.LayoutParams
+                        curW += c.measuredWidth + (lp?.marginEnd ?: 0)
+                    }
+                    if (curW + plusW <= safe || lastRow.childCount == 0) {
+                        lastRow.addView(plus)
+                        break
+                    }
+                    // 撤掉一个已渲染 chip 给 "+N" 让位，被撤的 chip 也要计入未展示数量
+                    lastRow.removeViewAt(lastRow.childCount - 1)
+                    remaining += 1
+                }
+            }
+
+            rows.forEach { userTagContainer.addView(it) }
         }
 
         fun bindInvalidState(fileExists: Boolean) {
@@ -350,6 +447,9 @@ class ManageGridAdapter(
 
         /** 用户自定义标签的背景色（深蓝紫，与系统 chip 区分）。 */
         private val USER_TAG_COLOR = 0xFF5C6BC0.toInt()  // Indigo 400
+
+        /** 两行装不下时的「+N」概要 chip 背景色（中性灰，弱化视觉权重）。 */
+        private val USER_TAG_OVERFLOW_COLOR = 0xFF9E9E9E.toInt()  // Grey 500
 
         // ── downloadType 配色与标签 ────────────────────────────────────────────
 

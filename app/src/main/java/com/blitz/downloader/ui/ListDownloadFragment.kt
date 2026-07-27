@@ -15,6 +15,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.DouyinWebBrowserActivity
+import com.blitz.downloader.activity.VideoPlayerActivity
 import com.blitz.downloader.config.AppConfig
 import com.blitz.downloader.data.DownloadMediaType
 import com.blitz.downloader.data.DownloadSourceType
@@ -78,13 +79,17 @@ class ListDownloadFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        binding.etUrlInput.setText(DouyinWebBrowserActivity.DOUYIN_DEFAULT_HOME_URL)
         refreshCookieStatusUi()
         BatchDownloadCoordinator.createNoMediaFile(File(BatchDownloadCoordinator.COVER_SUBDIR))
 
         binding.rvVideos.layoutManager = GridLayoutManager(requireContext(), 3)
-        videoAdapter = VideoGridAdapter(emptyList()) { item ->
-            toggleSelection(item.id)
-        }
+        videoAdapter = VideoGridAdapter(
+            items = emptyList(),
+            onItemClicked = { item -> toggleSelection(item.id) },
+            onAuthorPostsClicked = { item -> onAuthorPostsClicked(item) },
+            onPreviewClicked = { item -> onPreviewClicked(item) },
+        )
         binding.rvVideos.adapter = videoAdapter
 
         val thresholdPx = (200 * resources.displayMetrics.density).toInt()
@@ -112,6 +117,10 @@ class ListDownloadFragment : Fragment() {
             parseAndOpenOrLoadList()
         }
 
+        binding.btnBackToMyPage.setOnClickListener {
+            exitAuthorPostsMode()
+        }
+
         binding.btnSyncCookie.setOnClickListener {
             syncCookieFromCookieManager()
         }
@@ -122,6 +131,10 @@ class ListDownloadFragment : Fragment() {
 
         binding.btnOpenDouyinBrowser.setOnClickListener {
             startDouyinBrowser(initialUrlFromInput())
+        }
+
+        binding.btnBackToMyPage.setOnClickListener {
+            exitAuthorPostsMode()
         }
 
         binding.btnSelectAll.setOnClickListener {
@@ -188,12 +201,15 @@ class ListDownloadFragment : Fragment() {
                             mediaType = if (item.isPhoto) DownloadMediaType.IMAGE else DownloadMediaType.VIDEO,
                             filePath = result.succeededPaths[item.id].orEmpty(),
                             coverPath = result.succeededCovers[item.id].orEmpty(),
+                            createTime = item.createTime,
                             desc = item.descRaw,
                             collectionType = folderName,
                             collectId = folderId,
                             videoAuthorSecUserId = item.authorSecUserId,
                             sourceOwnerSecUserId = ownerSecUserId,
                             userRelation = userRelation,
+                            diggCount = item.diggCount,
+                            collectCount = item.collectCount,
                         )
                         if (isCollects) {
                             tagRepo.ensureCollectFolderTagLinked(awemeId = item.id, folderName = folderName)
@@ -478,6 +494,7 @@ class ListDownloadFragment : Fragment() {
         listNextCursor = 0L
         listHasMore = false
         videoItems.clear()
+        videoAdapter.setUserPostMode(mode == ListApiMode.UserPost)
         videoAdapter.submitList(emptyList())
         updateSelectedCountText()
         if (mode == ListApiMode.None) {
@@ -573,6 +590,104 @@ class ListDownloadFragment : Fragment() {
         listLoadJob = viewLifecycleOwner.lifecycleScope.launch {
             fetchListPage(isFirstPage = false)
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // 查看 TA 的 Post 模式
+    // -----------------------------------------------------------------------
+
+    /**
+     * 进入「查看 TA 的 Post」模式：
+     * - 用作者的 secUserId 构造主页 URL 填入输入框
+     * - 选中 Post RadioButton，其余不可选
+     * - 显示「返回」按钮
+     * - 自动触发列表加载
+     */
+    private fun onAuthorPostsClicked(item: VideoItemUiModel) {
+        val secUid = item.authorSecUserId.takeIf { it.isNotBlank() } ?: run {
+            Toast.makeText(requireContext(), "该作品没有作者ID，无法加载", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val authorUrl = "https://www.douyin.com/user/$secUid?from_tab_name=main"
+        enterAuthorPostsMode(authorUrl, item.authorNickname)
+    }
+
+    private fun enterAuthorPostsMode(authorUrl: String, nickname: String) {
+        // 填充 URL
+        binding.etUrlInput.setText(authorUrl)
+        binding.etUrlInput.clearFocus()
+
+        // 强制选中 Post，其余禁用
+        binding.rgListKind.check(R.id.rbKindPost)
+        binding.rbKindLike.isEnabled = false
+        binding.rbKindCollection.isEnabled = false
+        binding.rbKindCollectsFolder.isEnabled = false
+
+        // 显示返回按钮
+        binding.btnBackToMyPage.visibility = View.VISIBLE
+
+        // 状态栏提示
+        binding.tvStatus.text = getString(R.string.author_posts_mode_hint, nickname)
+
+        // 滚回顶部后触发解析加载
+        binding.nestedScrollView.smoothScrollTo(0, 0)
+        binding.nestedScrollView.post { parseAndOpenOrLoadList() }
+    }
+
+    /** 退出「查看 TA 的 Post」模式，恢复默认状态 */
+    private fun exitAuthorPostsMode() {
+        // 恢复输入框为自己的主页
+        binding.etUrlInput.setText(indexMainPage)
+        binding.etUrlInput.clearFocus()
+
+        // 恢复所有 RadioButton 可选，重置为 Post
+        binding.rbKindLike.isEnabled = true
+        binding.rbKindCollection.isEnabled = true
+        binding.rbKindCollectsFolder.isEnabled = true
+        binding.rgListKind.check(R.id.rbKindPost)
+
+        // 隐藏返回按钮
+        binding.btnBackToMyPage.visibility = View.GONE
+
+        // 清空列表与状态
+        resetListBatchState(ListApiMode.None, null, null)
+    }
+
+    // -----------------------------------------------------------------------
+    // 预览占位 —— 后续实现
+    // -----------------------------------------------------------------------
+
+    /**
+     * 预览当前 item。
+     * - 视频：将列表中所有可预览的视频一并传入播放器，支持上下滑动切换。
+     * - 图集：TODO 后续打开 ImageViewerActivity 的网络 URL 模式。
+     */
+    private fun onPreviewClicked(item: VideoItemUiModel) {
+        if (item.isPhoto) {
+            Toast.makeText(requireContext(), "图集预览功能即将上线", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 过滤出所有可预览的视频 item（非图集且有播放地址）
+        val previewable = videoItems.filter { !it.isPhoto && !it.downloadUrl.isNullOrBlank() }
+        val position = previewable.indexOfFirst { it.id == item.id }
+
+        if (position < 0 || item.downloadUrl.isNullOrBlank()) {
+            Toast.makeText(requireContext(), "该视频暂无可用播放地址", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        startActivity(
+            VideoPlayerActivity.createListNetworkIntent(
+                context = requireContext(),
+                urls = ArrayList(previewable.map { it.downloadUrl!! }),
+                titles = ArrayList(previewable.map {
+                    it.authorNickname.ifBlank { getString(R.string.video_player_title) }
+                }),
+                subtitles = ArrayList(previewable.map { it.descRaw.take(60) }),
+                position = position,
+            )
+        )
     }
 
 }

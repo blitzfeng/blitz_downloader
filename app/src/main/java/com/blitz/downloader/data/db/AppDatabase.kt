@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [DownloadedVideoEntity::class, VideoTagEntity::class, TagEntity::class],
-    version = 8,
+    version = 10,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -21,7 +21,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tagDao(): TagDao
 
     companion object {
-        private const val DB_NAME = "blitz_downloader.db"
+        /** 数据库文件名；[DatabaseBackupManager] 也会用这个名字（务必保持一致）。 */
+        const val DB_NAME: String = "blitz_downloader.db"
 
         /**
          * v1 → v2：新增 `mediaType`（默认 'video'）和 `filePath`（默认空字符串）两列。
@@ -173,6 +174,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v8 → v9：新增 `createTime`（视频原始发布时间，Unix 秒级时间戳，来自接口 `create_time`）。
+         * 旧记录默认为 0（表示未知）。
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE downloaded_videos ADD COLUMN createTime INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        /**
+         * v9 → v10：新增 `diggCount`（点赞数）和 `collectCount`（收藏数，预留），
+         * 均来自接口 `statistics.digg_count` / `collect_count`。
+         * 旧记录默认为 0（不做历史回填）。
+         */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE downloaded_videos ADD COLUMN diggCount INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "ALTER TABLE downloaded_videos ADD COLUMN collectCount INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -183,11 +212,31 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     DB_NAME,
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                    .addMigrations(
+                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
+                        MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+                        MIGRATION_9_10,
+                    )
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }
             }
+        }
+
+        /**
+         * 关闭当前 Room 单例并释放底层文件句柄。
+         *
+         * 仅在「恢复备份」这种需要从磁盘替换 `.db` 文件的场景下调用：
+         * Room 的 SupportSQLiteOpenHelper 持有底层 fd，文件被替换后旧句柄仍可读
+         * 旧 inode，必须先 close。下次 [getInstance] 会重新打开新文件。
+         *
+         * 注：调用方持有的 Dao/Repository 引用在调用本方法后即失效，恢复流程结束后
+         * 通常会跟随进程重启，无需考虑复用问题。
+         */
+        @Synchronized
+        fun closeAndReset() {
+            instance?.close()
+            instance = null
         }
     }
 }

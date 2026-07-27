@@ -27,6 +27,19 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent">
 
+                <!-- 查看他人Post模式时出现的返回按钮 -->
+                <ImageButton
+                    android:id="@+id/btnBackToMyPage"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginEnd="4dp"
+                    android:src="@drawable/ic_back_arrow"
+                    android:contentDescription="@string/btn_back_to_my_page"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:scaleType="centerInside"
+                    android:tint="#555555"
+                    android:visibility="gone" />
+
                 <EditText
                     android:id="@+id/etUrlInput"
                     android:layout_width="0dp"

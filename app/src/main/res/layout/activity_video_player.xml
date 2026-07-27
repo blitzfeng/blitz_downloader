@@ -1,23 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/black">
 
-    <!--
-        TextureView 在 OpenGL 合成管线内渲染，不会出现 SurfaceView "有声无画" 问题。
-    -->
     <TextureView
         android:id="@+id/textureView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@null" />
 
-    <!--
-        顶部控制栏：白色背景，延伸至状态栏区域。
-        显示/隐藏由 Activity 通过 alpha 动画控制。
-    -->
+    <!-- 切换视频时的黑色遮罩，防止旧 Surface 内容闪现 -->
+    <View
+        android:id="@+id/vSwitchOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/black"
+        android:alpha="0"
+        android:visibility="gone" />
+
+    <!-- 顶部控制栏 -->
     <LinearLayout
         android:id="@+id/topControls"
         android:layout_width="match_parent"
@@ -25,7 +27,6 @@
         android:orientation="vertical"
         android:background="@color/white">
 
-        <!-- 占位：高度在代码中根据 WindowInsets 动态设置，填满状态栏区域 -->
         <View
             android:id="@+id/statusBarSpacer"
             android:layout_width="match_parent"
@@ -34,11 +35,81 @@
         <com.google.android.material.appbar.MaterialToolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
+            android:layout_height="wrap_content"
+            android:minHeight="?attr/actionBarSize"
             android:background="@android:color/transparent"
             android:theme="@style/ThemeOverlay.BlitzDownloader.Toolbar.PlayerLight"
             app:elevation="0dp"
-            app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light" />
+            app:subtitleTextAppearance="@style/TextAppearance.AppCompat.Small"
+            app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light"
+            xmlns:app="http://schemas.android.com/apk/res-auto" />
+
+        <!-- 列表模式下显示「当前/总数」位置徽章，单视频模式隐藏 -->
+        <TextView
+            android:id="@+id/tvVideoPosition"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:paddingEnd="16dp"
+            android:paddingBottom="6dp"
+            android:textSize="11sp"
+            android:textColor="#80000000"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+    <!-- 底部控制栏：进度条 + 时间显示 -->
+    <LinearLayout
+        android:id="@+id/bottomControls"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:background="@color/white"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="4dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvCurrentTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0:00"
+                android:textSize="12sp"
+                android:textColor="#444444"
+                android:minWidth="38dp" />
+
+            <SeekBar
+                android:id="@+id/seekBar"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="8dp"
+                android:max="1000" />
+
+            <TextView
+                android:id="@+id/tvTotalTime"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0:00"
+                android:textSize="12sp"
+                android:textColor="#444444"
+                android:minWidth="38dp"
+                android:gravity="end" />
+
+        </LinearLayout>
+
+        <!-- 导航栏占位，高度由代码根据 WindowInsets 动态设置 -->
+        <View
+            android:id="@+id/navigationBarSpacer"
+            android:layout_width="match_parent"
+            android:layout_height="8dp" />
 
     </LinearLayout>
 

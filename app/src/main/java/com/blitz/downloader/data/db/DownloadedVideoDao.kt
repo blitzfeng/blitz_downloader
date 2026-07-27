@@ -51,4 +51,12 @@ interface DownloadedVideoDao {
 
     @Query("SELECT * FROM downloaded_videos WHERE mediaType = :mediaType ORDER BY createdAtMillis DESC LIMIT :limit OFFSET :offset")
     suspend fun getPageByMediaType(mediaType: String, limit: Int, offset: Int): List<DownloadedVideoEntity>
+
+    /**
+     * 按作者昵称模糊搜索（管理页搜索栏使用）。
+     * [userNameLike] 由 Repository 拼为 `%query%`；空查询不应走此方法（让上层走分页路径）。
+     * 结果集预计不大，一次性返回；如未来体量增大再加 LIMIT 分页。
+     */
+    @Query("SELECT * FROM downloaded_videos WHERE mediaType = :mediaType AND userName LIKE :userNameLike ORDER BY createdAtMillis DESC")
+    suspend fun searchByMediaTypeAndUserName(mediaType: String, userNameLike: String): List<DownloadedVideoEntity>
 }

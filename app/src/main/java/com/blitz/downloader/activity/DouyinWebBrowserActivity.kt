@@ -236,7 +236,7 @@ class DouyinWebBrowserActivity : AppCompatActivity() {
         /** 为 true 时首屏使用移动 UA（与默认「电脑版」相反） */
         const val EXTRA_PREFER_MOBILE_UA = "extra_prefer_mobile_ua"
 
-        private const val DOUYIN_DEFAULT_HOME_URL = "https://www.douyin.com/user/MS4wLjABAAAA7ZinArXxNJlWd2iiRKUI3ruz4TwjqKN5F7iqF5nGKIAgCTDtscTfMCQMor1Fn9vr?from_tab_name=main"
+        const val DOUYIN_DEFAULT_HOME_URL = "https://www.douyin.com/user/MS4wLjABAAAA7ZinArXxNJlWd2iiRKUI3ruz4TwjqKN5F7iqF5nGKIAgCTDtscTfMCQMor1Fn9vr?from_tab_name=main"
 
         fun createIntent(context: Context, initialUrl: String?): Intent {
             return Intent(context, DouyinWebBrowserActivity::class.java).apply {

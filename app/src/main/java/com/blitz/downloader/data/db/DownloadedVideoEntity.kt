@@ -36,6 +36,11 @@ data class DownloadedVideoEntity(
      */
     val coverPath: String = "",
     /**
+     * 视频原始发布时间（Unix 秒级时间戳），来自接口 `create_time`。
+     * 旧记录默认为 0（表示未知）。
+     */
+    val createTime: Long = 0L,
+    /**
      * 视频/图集的文字描述（即作者发布时填写的文案/标题）。
      * 旧记录默认为空字符串。
      */
@@ -78,4 +83,15 @@ data class DownloadedVideoEntity(
      * 旧记录默认为空字符串。
      */
     val userRelation: String = "",
+    /**
+     * 视频点赞数，来自接口 `statistics.digg_count`（v10 新增）。
+     * 旧记录默认为 0（封面上不展示徽标）；当前不做历史回填。
+     */
+    val diggCount: Long = 0L,
+    /**
+     * 视频收藏数，来自接口 `statistics.collect_count`（v10 新增，预留字段）。
+     * 暂未在 UI 展示，但落库时一并写入，供后续排序/筛选使用。
+     * 旧记录默认为 0。
+     */
+    val collectCount: Long = 0L,
 )

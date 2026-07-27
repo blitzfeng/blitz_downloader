@@ -33,4 +33,13 @@ interface ManageTabFragment {
      * 默认空实现，有标签功能的 Tab 覆盖此方法。
      */
     fun handleSetTagsSelected() {}
+
+    /**
+     * 应用搜索关键词（按作者昵称模糊匹配）。
+     * - `query` 为 null 或空白：退出搜索，恢复正常分页/筛选；
+     * - 非空：按 `%query%` 在当前 Tab 的 mediaType 下全量查询并替换列表。
+     *
+     * 由 [com.blitz.downloader.activity.ManageActivity] 的 SearchView 监听器调用。
+     */
+    fun applySearchQuery(query: String?) {}
 }

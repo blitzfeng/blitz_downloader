@@ -7,7 +7,20 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"
         tools:ignore="ScopedStorage" />
+    <!-- API ≤ 32：旧权限模型，读图片/视频都用 READ_EXTERNAL_STORAGE -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!--
+        API 33+（Android 13+）：分离的媒体读权限。
+        封面图（.webp/.jpg）需要 READ_MEDIA_IMAGES；
+        视频缩略图/播放需要 READ_MEDIA_VIDEO。
+        签名变更后，原本由本 App 写入的 MediaStore 文件 owner 校验失败，
+        也必须依赖这两个权限才能访问，缺一个对应类型的封面就加载失败。
+    -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- Android 14+：用户在系统选择器里只授予部分媒体时需要此权限 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application

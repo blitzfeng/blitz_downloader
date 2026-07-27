@@ -40,6 +40,9 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
     /** 当前激活的标签过滤，null 或 TAG_ALL 表示不过滤。 */
     private var activeTag: String = TagFilterAdapter.TAG_ALL
 
+    /** 当前激活的搜索关键词（trim 后非空时启用搜索路径，忽略 [activeTag]）。 */
+    private var activeSearchQuery: String = ""
+
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
     override val supportsClearInvalid: Boolean get() = true
@@ -159,6 +162,9 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         // ── 标签过滤栏 ──────────────────────────────────────────────────────────
         val rvTagFilter: RecyclerView = view.findViewById(R.id.rvTagFilter)
         tagFilterAdapter = TagFilterAdapter { tag ->
+            // 选择标签时强制清掉搜索词；搜索路径优先级高于标签，
+            // 不清就会出现「点了标签但列表还按搜索筛」的迷之结果。
+            activeSearchQuery = ""
             activeTag = tag
             refreshList()
         }
@@ -225,30 +231,50 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
 
         viewLifecycleOwner.lifecycleScope.launch {
             val entities: List<DownloadedVideoEntity>
-            if (activeTag == TagFilterAdapter.TAG_ALL) {
-                // 全量分页
-                entities = withContext(Dispatchers.IO) {
-                    repo.getPageByMediaType(MEDIA_TYPE_VIDEO, PAGE_SIZE, currentOffset)
-                }
-                if (entities.size < PAGE_SIZE) hasMore = false
-                currentOffset += entities.size
-            } else {
-                // 按标签全量加载（标签结果集通常不大，不做额外分页）
-                entities = if (currentOffset == 0) {
-                    withContext(Dispatchers.IO) {
-                        tagRepo.getVideosByTag(activeTag)
-                            .filter { it.mediaType == MEDIA_TYPE_VIDEO }
+            when {
+                activeSearchQuery.isNotBlank() -> {
+                    // 搜索路径：按昵称全量查询，忽略标签过滤
+                    entities = if (currentOffset == 0) {
+                        withContext(Dispatchers.IO) {
+                            repo.searchByUserName(MEDIA_TYPE_VIDEO, activeSearchQuery)
+                        }
+                    } else {
+                        emptyList()
                     }
-                } else {
-                    emptyList()
+                    hasMore = false
+                    currentOffset += entities.size
                 }
-                hasMore = false
-                currentOffset += entities.size
+                activeTag == TagFilterAdapter.TAG_ALL -> {
+                    // 全量分页
+                    entities = withContext(Dispatchers.IO) {
+                        repo.getPageByMediaType(MEDIA_TYPE_VIDEO, PAGE_SIZE, currentOffset)
+                    }
+                    if (entities.size < PAGE_SIZE) hasMore = false
+                    currentOffset += entities.size
+                }
+                else -> {
+                    // 按标签全量加载（标签结果集通常不大，不做额外分页）
+                    entities = if (currentOffset == 0) {
+                        withContext(Dispatchers.IO) {
+                            tagRepo.getVideosByTag(activeTag)
+                                .filter { it.mediaType == MEDIA_TYPE_VIDEO }
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    hasMore = false
+                    currentOffset += entities.size
+                }
             }
 
             progress.visibility = View.GONE
 
             if (entities.isEmpty() && currentOffset == 0) {
+                tvEmpty.text = if (activeSearchQuery.isNotBlank()) {
+                    getString(R.string.manage_search_empty, activeSearchQuery)
+                } else {
+                    getString(R.string.manage_empty_videos)
+                }
                 tvEmpty.visibility = View.VISIBLE
             } else {
                 tvEmpty.visibility = View.GONE
@@ -258,6 +284,14 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
             }
             isLoading = false
         }
+    }
+
+    override fun applySearchQuery(query: String?) {
+        val q = query?.trim().orEmpty()
+        if (q == activeSearchQuery) return
+        activeSearchQuery = q
+        // 搜索/退出搜索都从头加载；activeTag 不动，退出搜索后仍回到之前选中的标签
+        refreshList()
     }
 
     /**
@@ -346,17 +380,26 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
             return
         }
         @Suppress("DEPRECATION")
-        val file = File(Environment.getExternalStorageDirectory(), entity.filePath)
-        if (!file.exists()) {
+        if (!File(Environment.getExternalStorageDirectory(), entity.filePath).exists()) {
             Toast.makeText(requireContext(), R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
             return
         }
-        val title = entity.desc.trim().ifBlank { entity.userName.ifBlank { entity.awemeId } }
-        val intent = Intent(requireContext(), VideoPlayerActivity::class.java).apply {
-            putExtra(VideoPlayerActivity.EXTRA_FILE_PATH, entity.filePath)
-            putExtra(VideoPlayerActivity.EXTRA_TITLE, title)
-        }
-        startActivity(intent)
+
+        // 构建当前已加载列表，传入播放器以支持上下滑动切换
+        val allItems = adapter.getItems().filter { it.entity.filePath.isNotBlank() }
+        val position = allItems.indexOfFirst { it.entity.awemeId == entity.awemeId }
+
+        startActivity(
+            VideoPlayerActivity.createListFileIntent(
+                context = requireContext(),
+                filePaths = ArrayList(allItems.map { it.entity.filePath }),
+                titles = ArrayList(allItems.map { item ->
+                    item.entity.desc.trim().ifBlank { item.entity.userName.ifBlank { item.entity.awemeId } }
+                }),
+                subtitles = ArrayList(allItems.map { item -> item.entity.userName }),
+                position = if (position >= 0) position else 0,
+            )
+        )
     }
 
     companion object {

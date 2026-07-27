@@ -32,6 +32,9 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
     private var isLoading = false
     private var hasMore = true
 
+    /** 当前激活的搜索关键词（trim 后非空时启用搜索路径）。 */
+    private var activeSearchQuery: String = ""
+
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
     override val supportsClearInvalid: Boolean get() = false
@@ -118,13 +121,27 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
 
         viewLifecycleOwner.lifecycleScope.launch {
             val entities = withContext(Dispatchers.IO) {
-                repo.getPageByMediaType(MEDIA_TYPE_IMAGE, PAGE_SIZE, currentOffset)
+                if (activeSearchQuery.isNotBlank()) {
+                    // 搜索路径：一次性返回匹配集，后续不再分页
+                    if (currentOffset == 0) repo.searchByUserName(MEDIA_TYPE_IMAGE, activeSearchQuery) else emptyList()
+                } else {
+                    repo.getPageByMediaType(MEDIA_TYPE_IMAGE, PAGE_SIZE, currentOffset)
+                }
             }
             progress.visibility = View.GONE
-            if (entities.size < PAGE_SIZE) hasMore = false
+            if (activeSearchQuery.isNotBlank()) {
+                hasMore = false
+            } else if (entities.size < PAGE_SIZE) {
+                hasMore = false
+            }
             currentOffset += entities.size
 
             if (entities.isEmpty() && currentOffset == 0) {
+                tvEmpty.text = if (activeSearchQuery.isNotBlank()) {
+                    getString(R.string.manage_search_empty, activeSearchQuery)
+                } else {
+                    getString(R.string.manage_empty_images)
+                }
                 tvEmpty.visibility = View.VISIBLE
             } else {
                 tvEmpty.visibility = View.GONE
@@ -132,6 +149,23 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
             }
             isLoading = false
         }
+    }
+
+    override fun applySearchQuery(query: String?) {
+        val q = query?.trim().orEmpty()
+        if (q == activeSearchQuery) return
+        activeSearchQuery = q
+        refreshList()
+    }
+
+    /** 从头加载（搜索切换 / 退出搜索时调用）。 */
+    private fun refreshList() {
+        currentOffset = 0
+        hasMore = true
+        adapter.clearItems()
+        val progress = view?.findViewById<ProgressBar>(R.id.progressManageImage) ?: return
+        val tvEmpty = view?.findViewById<TextView>(R.id.tvEmptyManageImage) ?: return
+        loadNextPage(progress, tvEmpty)
     }
 
     private fun openImageViewer(entity: DownloadedVideoEntity) {

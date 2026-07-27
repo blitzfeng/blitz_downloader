@@ -54,12 +54,15 @@ class DownloadedVideoRepository(context: Context) {
         mediaType: String = DownloadMediaType.VIDEO,
         filePath: String = "",
         coverPath: String = "",
+        createTime: Long = 0L,
         desc: String = "",
         collectionType: String = "",
         collectId: String = "",
         videoAuthorSecUserId: String = "",
         sourceOwnerSecUserId: String = "",
         userRelation: String = "",
+        diggCount: Long = 0L,
+        collectCount: Long = 0L,
     ) {
         dao.insert(
             DownloadedVideoEntity(
@@ -69,12 +72,15 @@ class DownloadedVideoRepository(context: Context) {
                 mediaType = mediaType,
                 filePath = filePath,
                 coverPath = coverPath,
+                createTime = createTime,
                 desc = desc,
                 collectionType = collectionType,
                 collectId = collectId,
                 videoAuthorSecUserId = videoAuthorSecUserId,
                 sourceOwnerSecUserId = sourceOwnerSecUserId,
                 userRelation = userRelation,
+                diggCount = diggCount,
+                collectCount = collectCount,
             ),
         )
     }
@@ -102,4 +108,20 @@ class DownloadedVideoRepository(context: Context) {
         dao.getPageByMediaType(mediaType, limit, offset)
 
     suspend fun countByMediaType(mediaType: String): Int = dao.countByMediaType(mediaType)
+
+    /**
+     * 管理页按作者昵称搜索：自动转义 LIKE 元字符（`%` / `_` / `\`）并加首尾 `%`。
+     * 传入空白时返回空列表（上层不应触发搜索路径）。
+     */
+    suspend fun searchByUserName(mediaType: String, query: String): List<DownloadedVideoEntity> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        val escaped = q
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        // 注：Room 默认不附带 ESCAPE 子句；当前 awemeId/userName 几乎不会出现这些字符，
+        // 双反斜杠转义已足够；如未来出现误匹配再切到自定义 @Query 加 `ESCAPE '\\'`。
+        return dao.searchByMediaTypeAndUserName(mediaType, "%$escaped%")
+    }
 }

@@ -2,6 +2,14 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <!-- 普通模式下可见：搜索框（按作者昵称模糊搜索） -->
+    <item
+        android:id="@+id/action_search"
+        android:icon="@drawable/ic_search_manage"
+        android:title="@string/manage_menu_search"
+        app:actionViewClass="androidx.appcompat.widget.SearchView"
+        app:showAsAction="always|collapseActionView" />
+
     <!-- 普通模式下可见：仅视频 Tab 生效 -->
     <item
         android:id="@+id/action_clear_invalid"
@@ -12,6 +20,18 @@
     <item
         android:id="@+id/action_manage_tags"
         android:title="@string/manage_menu_tags"
+        app:showAsAction="never" />
+
+    <!-- 普通模式下可见：备份数据库到 Download/bDouyin/backup -->
+    <item
+        android:id="@+id/action_backup_db"
+        android:title="@string/manage_menu_backup_db"
+        app:showAsAction="never" />
+
+    <!-- 普通模式下可见：从备份目录恢复数据库（恢复后会重启 App） -->
+    <item
+        android:id="@+id/action_restore_db"
+        android:title="@string/manage_menu_restore_db"
         app:showAsAction="never" />
 
     <!-- 多选模式下可见：图标形式常驻 Toolbar -->

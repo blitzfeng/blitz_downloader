@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v8**
+> **当前版本：v10**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -28,7 +28,9 @@
 | v5 | 重建表删除 `likeType`，新增 `videoAuthorSecUserId`、`sourceOwnerSecUserId` |
 | v6 | 新建 `video_tags` 表；新增 `collectId`、`userRelation` |
 | v7 | 新建 `tags` 独立标签名册；预插入 8 个默认标签 |
-| v8 | `tags` 表新增 `sortOrder` 列，支持用户自定义标签排列顺序 |
+| v8 | `tags` 表新增 `sortOrder` 列（展示顺序） |
+| v9 | `downloaded_videos` 新增 `createTime`（视频原始发布时间，Unix 秒） |
+| v10 | `downloaded_videos` 新增 `diggCount`（点赞数）、`collectCount`（收藏数，预留） |
 
 > **注意**：v4 的 `likeType` 与 `downloadType` 语义重叠，v5 通过重建表删除，**后续不要再加同类冗余字段**。
 
@@ -48,12 +50,15 @@
 | `mediaType` | TEXT | `"video"` | `"video"` 或 `"image"`（图集） |
 | `filePath` | TEXT | `""` | 本地文件路径（视频 mp4 或图集第一张图） |
 | `coverPath` | TEXT | `""` | 本地封面路径；图集与 `filePath` 相同 |
+| `createTime` | INTEGER | `0` | 视频原始发布时间（Unix 秒，接口字段 `create_time`；0 表示未知） |
 | `desc` | TEXT | `""` | 作者发布时的文案/标题（接口字段 `desc`） |
 | `collectionType` | TEXT | `""` | `downloadType="collects"` 时填收藏夹名称 |
 | `collectId` | TEXT | `""` | `downloadType="collects"` 时填收藏夹稳定 ID（与 `collectionType` 对应） |
 | `videoAuthorSecUserId` | TEXT | `""` | 视频创作者的稳定 `sec_user_id`（不受改名影响，用于管理页按作者过滤） |
 | `sourceOwnerSecUserId` | TEXT | `""` | 下载来源账户的 `sec_user_id`（见下方填写规则） |
 | `userRelation` | TEXT | `""` | 视频与账户所有者的关系标签（仅我的账户有效，见下方编码规则） |
+| `diggCount` | INTEGER | `0` | 视频点赞数，接口字段 `statistics.digg_count`（v10 新增） |
+| `collectCount` | INTEGER | `0` | 视频收藏数，接口字段 `statistics.collect_count`（v10 新增，UI 暂未展示，预留） |
 
 ### `downloadType` 枚举值
 
@@ -224,4 +229,4 @@ tags(tagName)          video_tags(awemeId, tagName)
 - **管理页展示**：`userRelation` 按 `|` 拆分渲染 chip；`videoAuthorSecUserId` 用于按作者分组/过滤。
 - **下载写入时**：调用 `DownloadedVideoRepository.recordSuccessfulDownload()`，`like` 场景传 `buildUserRelationFromLike(aweme.collectStat)`，`collects` 场景传 `buildUserRelationFromCollection(aweme.userDigged, folderName)`。
 - **标签功能**：通过 `VideoTagRepository` 操作，视频删除时标签自动级联删除，无需手动清理。
-- **新增数据库字段**：当前版本为 **v8**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_8_9` 并将 version 改为 9。
+- **新增数据库字段**：当前版本为 **v10**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_10_11` 并将 version 改为 11。

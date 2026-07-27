@@ -17,6 +17,7 @@ import com.blitz.downloader.databinding.ActivityMainBinding
 import com.blitz.downloader.ui.ListDownloadFragment
 import com.blitz.downloader.ui.SingleDownloadFragment
 import com.blitz.downloader.util.DouyinCookieStore
+import com.blitz.downloader.util.MediaPermissions
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 
@@ -26,6 +27,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 必须在 setContentView 之前注册 ActivityResultLauncher
+        MediaPermissions.registerAndRequestIfNeeded(this)
         DouyinCookieStore.init(this)
         DouyinCookieStore.restoreIntoClient()
 //        enableEdgeToEdge()

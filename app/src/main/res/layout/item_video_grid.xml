@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_margin="4dp"
@@ -39,11 +40,12 @@
                 android:layout_margin="4dp"
                 android:buttonTint="#2196F3" />
 
+            <!-- 「已下载」徽标：左上（让出左下给点赞数） -->
             <TextView
                 android:id="@+id/tvDownloadedBadge"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_gravity="bottom|start"
+                android:layout_gravity="top|start"
                 android:layout_margin="6dp"
                 android:background="#CC000000"
                 android:paddingHorizontal="6dp"
@@ -52,6 +54,21 @@
                 android:textColor="#FFFFFF"
                 android:textSize="10sp"
                 android:visibility="gone" />
+
+            <!-- 点赞数徽标：左下，文字格式 `♥ 1.2w`，diggCount<=0 时 GONE -->
+            <TextView
+                android:id="@+id/tvDiggCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|start"
+                android:layout_margin="6dp"
+                android:background="#99000000"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:visibility="gone"
+                tools:ignore="SmallSp" />
 
             <TextView
                 android:id="@+id/tvPhotoBadge"
@@ -75,7 +92,48 @@
             android:maxLines="2"
             android:ellipsize="end"
             android:textSize="12sp"
-            android:padding="6dp" />
+            android:paddingHorizontal="6dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="2dp" />
+
+        <!-- 操作栏：查看TA的Post / 预览 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:background="?attr/selectableItemBackground">
+
+            <ImageButton
+                android:id="@+id/btnAuthorPosts"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_author_posts"
+                android:contentDescription="@string/item_action_author_posts"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:scaleType="center"
+                android:tint="#9E9E9E"
+                android:padding="6dp" />
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="16dp"
+                android:layout_gravity="center_vertical"
+                android:background="#E0E0E0" />
+
+            <ImageButton
+                android:id="@+id/btnPreview"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_weight="1"
+                android:src="@drawable/ic_preview_eye"
+                android:contentDescription="@string/item_action_preview"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:scaleType="center"
+                android:tint="#9E9E9E"
+                android:padding="6dp" />
+
+        </LinearLayout>
 
     </LinearLayout>
 

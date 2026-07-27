@@ -11,6 +11,7 @@ import androidx.recyclerview.widget.RecyclerView
 import coil.load
 import coil.transform.RoundedCornersTransformation
 import com.blitz.downloader.R
+import com.blitz.downloader.util.NumberFormatUtils
 
 data class VideoItemUiModel(
     val id: String,
@@ -41,12 +42,43 @@ data class VideoItemUiModel(
      * 用于构建 [com.blitz.downloader.data.db.DownloadedVideoEntity.userRelation]。
      */
     val userDigged: Int = 0,
+    /**
+     * 视频发布时间，来自接口 `create_time`（Unix 秒级时间戳）。
+     * 写入 [com.blitz.downloader.data.db.DownloadedVideoEntity.createTime]。
+     */
+    val createTime: Long = 0L,
+    /**
+     * 视频点赞数（接口 `statistics.digg_count`）。<=0 时封面不展示徽标。
+     * 写入 [com.blitz.downloader.data.db.DownloadedVideoEntity.diggCount]。
+     */
+    val diggCount: Long = 0L,
+    /**
+     * 视频收藏数（接口 `statistics.collect_count`），预留字段。
+     * 写入 [com.blitz.downloader.data.db.DownloadedVideoEntity.collectCount]。
+     */
+    val collectCount: Long = 0L,
 )
 
 class VideoGridAdapter(
     private var items: List<VideoItemUiModel>,
-    private val onItemClicked: (VideoItemUiModel) -> Unit
+    private val onItemClicked: (VideoItemUiModel) -> Unit,
+    /** 点击「查看TA的Post」图标，后续实现时在 Fragment 中补充逻辑。 */
+    private val onAuthorPostsClicked: ((VideoItemUiModel) -> Unit)? = null,
+    /** 点击「预览」图标，后续实现时在 Fragment 中补充逻辑。 */
+    private val onPreviewClicked: ((VideoItemUiModel) -> Unit)? = null,
 ) : RecyclerView.Adapter<VideoGridAdapter.VideoViewHolder>() {
+
+    /**
+     * 当前列表处于 UserPost 模式时为 true。
+     * 此时「查看TA的Post」按钮置灰不可点击（已经在看 Post，无需重复触发）。
+     */
+    private var isUserPostMode: Boolean = false
+
+    fun setUserPostMode(active: Boolean) {
+        if (isUserPostMode == active) return
+        isUserPostMode = active
+        notifyItemRangeChanged(0, items.size, PAYLOAD_AUTHOR_BTN)
+    }
 
     fun submitList(newItems: List<VideoItemUiModel>) {
         val diff = DiffUtil.calculateDiff(VideoDiffCallback(items, newItems))
@@ -64,6 +96,14 @@ class VideoGridAdapter(
         holder.bind(items[position])
     }
 
+    override fun onBindViewHolder(holder: VideoViewHolder, position: Int, payloads: List<Any>) {
+        if (payloads.contains(PAYLOAD_AUTHOR_BTN)) {
+            holder.bindAuthorPostsButton(items[position])
+        } else {
+            super.onBindViewHolder(holder, position, payloads)
+        }
+    }
+
     override fun getItemCount(): Int = items.size
 
     inner class VideoViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -73,6 +113,9 @@ class VideoGridAdapter(
         private val overlay: View = itemView.findViewById(R.id.selectionOverlay)
         private val downloadedBadge: TextView = itemView.findViewById(R.id.tvDownloadedBadge)
         private val photoBadge: TextView = itemView.findViewById(R.id.tvPhotoBadge)
+        private val diggBadge: TextView = itemView.findViewById(R.id.tvDiggCount)
+        private val btnAuthorPosts: View = itemView.findViewById(R.id.btnAuthorPosts)
+        private val btnPreview: View = itemView.findViewById(R.id.btnPreview)
 
         fun bind(item: VideoItemUiModel) {
             title.text = item.title
@@ -95,6 +138,15 @@ class VideoGridAdapter(
                 photoBadge.visibility = View.GONE
             }
 
+            // 点赞数徽标：接口未下发或为 0 时直接隐藏
+            val diggText = NumberFormatUtils.formatChineseCount(item.diggCount)
+            if (diggText.isEmpty()) {
+                diggBadge.visibility = View.GONE
+            } else {
+                diggBadge.visibility = View.VISIBLE
+                diggBadge.text = "♥ $diggText"
+            }
+
             if (item.isDownloaded) {
                 downloadedBadge.visibility = View.VISIBLE
                 checkbox.isEnabled = false
@@ -114,7 +166,28 @@ class VideoGridAdapter(
                 itemView.setOnClickListener { onItemClicked(item) }
                 checkbox.setOnClickListener { onItemClicked(item) }
             }
+
+            // 操作栏按钮对所有 item（含已下载）均可点击
+            btnPreview.setOnClickListener {
+                onPreviewClicked?.invoke(item)
+            }
+
+            bindAuthorPostsButton(item)
         }
+
+        /** 单独刷新「查看TA的Post」按钮的可用状态，供 payload 局部更新复用。 */
+        fun bindAuthorPostsButton(item: VideoItemUiModel) {
+            val enabled = !isUserPostMode
+            btnAuthorPosts.isEnabled = enabled
+            btnAuthorPosts.alpha = if (enabled) 1f else 0.35f
+            btnAuthorPosts.setOnClickListener(
+                if (enabled) View.OnClickListener { onAuthorPostsClicked?.invoke(item) } else null
+            )
+        }
+    }
+
+    companion object {
+        private const val PAYLOAD_AUTHOR_BTN = "payload_author_btn"
     }
 
     private class VideoDiffCallback(

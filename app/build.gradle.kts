@@ -6,9 +6,7 @@ plugins {
 
 android {
     namespace = "com.blitz.downloader"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.blitz.downloader"
@@ -20,15 +18,35 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            keyAlias = "blitz"
+            keyPassword = "123456"
+            storeFile = file("../keystore")
+            storePassword = "123456"
+        }
+        create("release") {
+            keyAlias = "blitz"
+            keyPassword = "123456"
+            storeFile = file("../keystore")
+            storePassword = "123456"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
         }
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11

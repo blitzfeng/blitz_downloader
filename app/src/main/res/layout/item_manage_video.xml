@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_margin="4dp"
@@ -46,6 +47,21 @@
                 android:textSize="12sp"
                 android:textStyle="bold"
                 android:visibility="gone" />
+
+            <!-- 点赞数徽标：左下，diggCount<=0 时 GONE -->
+            <TextView
+                android:id="@+id/tvDiggCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|start"
+                android:layout_margin="6dp"
+                android:background="#99000000"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:visibility="gone"
+                tools:ignore="SmallSp" />
 
             <!-- 多选时的选中蒙层 -->
             <View
@@ -110,13 +126,17 @@
                 android:layout_marginTop="5dp"
                 android:orientation="horizontal" />
 
-            <!-- 用户自定义标签行（无标签时隐藏） -->
+            <!--
+                用户自定义标签行（无标签时隐藏）。
+                vertical 容器：由 ManageGridAdapter 在运行时把 chip 分到最多两行；
+                第二行放不下时尾部用「+N」概要 chip。
+            -->
             <LinearLayout
                 android:id="@+id/userTagContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="3dp"
-                android:orientation="horizontal"
+                android:orientation="vertical"
                 android:visibility="gone" />
 
         </LinearLayout>

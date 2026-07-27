@@ -78,6 +78,9 @@ object AwemeMapper {
             authorSecUserId = item.author?.secUid?.trim().orEmpty(),
             collectStat = item.collectStat,
             userDigged = item.userDigged,
+            createTime = item.createTime,
+            diggCount = item.statistics?.diggCount ?: 0L,
+            collectCount = item.statistics?.collectCount ?: 0L,
         )
     }
 
