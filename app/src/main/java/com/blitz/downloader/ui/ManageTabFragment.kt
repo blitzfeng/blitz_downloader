@@ -1,5 +1,7 @@
 package com.blitz.downloader.ui
 
+import com.blitz.downloader.data.db.DownloadedVideoEntity
+
 /**
  * 管理页各 Tab Fragment 的公共契约，由 [ManageActivity] 调用以驱动菜单行为。
  */
@@ -9,6 +11,9 @@ interface ManageTabFragment {
 
     /** 当前已选条数。 */
     val selectedCount: Int
+
+    /** 当前已加载条目是否已全部选中（决定全选按钮显示「全选」还是「取消全选」）。 */
+    val isAllSelected: Boolean get() = false
 
     /** 是否支持「清除已失效」（图片 Tab 不支持）。 */
     val supportsClearInvalid: Boolean
@@ -42,4 +47,24 @@ interface ManageTabFragment {
      * 由 [com.blitz.downloader.activity.ManageActivity] 的 SearchView 监听器调用。
      */
     fun applySearchQuery(query: String?) {}
+
+    /**
+     * 返回当前已选中条目的完整实体（含 `filePath`），供「导出选中」使用。
+     * 未初始化或未选中时返回空列表。
+     */
+    fun getSelectedEntities(): List<DownloadedVideoEntity> = emptyList()
+
+    /**
+     * 切换全选：已全选则取消全选（保持多选模式），否则全选当前已加载条目。
+     */
+    fun handleToggleSelectAll() {}
+
+    /** 当前激活的作者筛选昵称；未按作者筛选时为 null（供抽屉预选中当前作者）。 */
+    val activeAuthorName: String? get() = null
+
+    /**
+     * 按作者昵称筛选当前 Tab 列表；传 null / 空表示清除作者筛选。
+     * 作者筛选与搜索、标签互斥（设置作者时应清空后两者）。
+     */
+    fun applyAuthorFilter(userName: String?) {}
 }

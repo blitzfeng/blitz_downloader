@@ -1,40 +1,134 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:id="@+id/manageRoot"
+    android:id="@+id/drawerLayout"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@color/color_surface"
-    android:orientation="vertical">
+    android:layout_height="match_parent">
 
-    <com.google.android.material.appbar.MaterialToolbar
-        android:id="@+id/toolbar"
+    <!-- 主内容 -->
+    <LinearLayout
+        android:id="@+id/manageRoot"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:minHeight="?attr/actionBarSize"
-        android:background="@color/color_primary_dark"
-        android:theme="@style/ThemeOverlay.BlitzDownloader.Toolbar"
-        app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light"
-        app:title="@string/manage_title" />
+        android:layout_height="match_parent"
+        android:background="@color/color_surface"
+        android:orientation="vertical">
 
-    <com.google.android.material.tabs.TabLayout
-        android:id="@+id/tabLayout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        app:tabGravity="fill"
-        app:tabMode="fixed"
-        app:tabIndicator="@drawable/tab_selected"
-        app:tabIndicatorColor="@color/color_dopamine_pink"
-        app:tabIndicatorHeight="4dp"
-        app:tabIndicatorFullWidth="false"
-        app:tabSelectedTextColor="@color/color_dopamine_pink"
-        app:tabTextColor="@color/text_color_secondary"
-        app:tabRippleColor="@color/color_dopamine_pink" />
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="?attr/actionBarSize"
+            android:background="@color/color_primary_dark"
+            android:theme="@style/ThemeOverlay.BlitzDownloader.Toolbar"
+            app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light"
+            app:title="@string/manage_title" />
 
-    <androidx.viewpager2.widget.ViewPager2
-        android:id="@+id/viewPager"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
+        <com.google.android.material.tabs.TabLayout
+            android:id="@+id/tabLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:tabGravity="fill"
+            app:tabMode="fixed"
+            app:tabIndicator="@drawable/tab_selected"
+            app:tabIndicatorColor="@color/color_dopamine_pink"
+            app:tabIndicatorHeight="4dp"
+            app:tabIndicatorFullWidth="false"
+            app:tabSelectedTextColor="@color/color_dopamine_pink"
+            app:tabTextColor="@color/text_color_secondary"
+            app:tabRippleColor="@color/color_dopamine_pink" />
 
-</LinearLayout>
+        <androidx.viewpager2.widget.ViewPager2
+            android:id="@+id/viewPager"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+    </LinearLayout>
+
+    <!-- 右侧作者筛选抽屉 -->
+    <LinearLayout
+        android:id="@+id/authorDrawer"
+        android:layout_width="300dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:background="@color/color_surface"
+        android:clickable="true"
+        android:focusable="true"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="8dp"
+            android:text="@string/manage_author_drawer_title"
+            android:textColor="@color/text_color_primary"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/etAuthorSearch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="4dp"
+            android:hint="@string/manage_author_search_hint"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:maxLines="1"
+            android:textColor="@color/text_color_primary"
+            android:textColorHint="@color/text_color_secondary"
+            android:textSize="14sp"
+            android:autofillHints=""
+            tools:ignore="LabelFor"
+            xmlns:tools="http://schemas.android.com/tools" />
+
+        <TextView
+            android:id="@+id/btnAuthorClear"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:text="@string/manage_author_clear"
+            android:textColor="@color/color_dopamine_pink"
+            android:textSize="14sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#22000000" />
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvAuthorFilter"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scrollbars="vertical" />
+
+            <TextView
+                android:id="@+id/tvAuthorEmpty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="@string/manage_author_empty_list"
+                android:textColor="@color/text_color_secondary"
+                android:textSize="14sp"
+                android:visibility="gone" />
+
+        </FrameLayout>
+
+    </LinearLayout>
+
+</androidx.drawerlayout.widget.DrawerLayout>

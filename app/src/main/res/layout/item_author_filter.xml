@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="48dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:background="?attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp">
+
+    <TextView
+        android:id="@+id/tvAuthorName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:background="@android:color/transparent"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/text_color_primary"
+        android:textSize="15sp"
+        tools:text="某位作者昵称" />
+
+    <TextView
+        android:id="@+id/tvAuthorCount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="12dp"
+        android:minWidth="28dp"
+        android:background="@android:color/transparent"
+        android:gravity="center"
+        android:textColor="@color/text_color_secondary"
+        android:textSize="13sp"
+        tools:text="12" />
+
+</LinearLayout>

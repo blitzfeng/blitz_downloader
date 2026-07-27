@@ -10,6 +10,13 @@
         app:actionViewClass="androidx.appcompat.widget.SearchView"
         app:showAsAction="always|collapseActionView" />
 
+    <!-- 普通模式下可见：打开右侧「按作者筛选」抽屉 -->
+    <item
+        android:id="@+id/action_filter_author"
+        android:icon="@drawable/ic_author_manage"
+        android:title="@string/manage_menu_filter_author"
+        app:showAsAction="ifRoom" />
+
     <!-- 普通模式下可见：仅视频 Tab 生效 -->
     <item
         android:id="@+id/action_clear_invalid"
@@ -34,6 +41,13 @@
         android:title="@string/manage_menu_restore_db"
         app:showAsAction="never" />
 
+    <!-- 多选模式下可见：全选 / 取消全选（文字形式常驻 Toolbar，标题动态切换） -->
+    <item
+        android:id="@+id/action_select_all"
+        android:title="@string/manage_menu_select_all"
+        app:showAsAction="always|withText"
+        android:visible="false" />
+
     <!-- 多选模式下可见：图标形式常驻 Toolbar -->
     <item
         android:id="@+id/action_set_tags_selected"
@@ -47,6 +61,19 @@
         android:icon="@drawable/ic_delete_manage"
         android:title="@string/manage_menu_delete_selected"
         app:showAsAction="always"
+        android:visible="false" />
+
+    <!-- 多选模式下可见（溢出菜单）：导出选中项 -->
+    <item
+        android:id="@+id/action_export_zip"
+        android:title="@string/manage_menu_export_zip"
+        app:showAsAction="never"
+        android:visible="false" />
+
+    <item
+        android:id="@+id/action_export_lan"
+        android:title="@string/manage_menu_export_lan"
+        app:showAsAction="never"
         android:visible="false" />
 
 </menu>

@@ -43,12 +43,60 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
     /** 当前激活的搜索关键词（trim 后非空时启用搜索路径，忽略 [activeTag]）。 */
     private var activeSearchQuery: String = ""
 
+    /** 当前激活的作者昵称筛选（非空时优先于搜索/标签，精确匹配 userName）。 */
+    private var activeAuthor: String = ""
+
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
     override val supportsClearInvalid: Boolean get() = true
 
     override fun exitSelectionMode() {
         if (::adapter.isInitialized) adapter.exitSelectionMode()
+    }
+
+    override fun getSelectedEntities(): List<DownloadedVideoEntity> {
+        if (!::adapter.isInitialized) return emptyList()
+        val selected = adapter.getSelectedAwemeIds().toSet()
+        if (selected.isEmpty()) return emptyList()
+        return adapter.getItems().filter { it.entity.awemeId in selected }.map { it.entity }
+    }
+
+    // 「已全选」= 当前范围全部记录都已加载（无更多分页）且全部选中。
+    // 仅当满足此条件时按钮才显示「取消全选」，否则显示「全选」（点击会拉取全库该范围记录）。
+    override val isAllSelected: Boolean
+        get() = ::adapter.isInitialized && !hasMore && adapter.isAllSelected()
+
+    override fun handleToggleSelectAll() {
+        if (!::adapter.isInitialized) return
+        // 当前范围已全部加载：纯内存切换，不重建列表、不丢滚动位置。
+        if (!hasMore) {
+            if (adapter.isAllSelected()) adapter.deselectAll() else adapter.selectAll()
+            return
+        }
+        // 仍有未加载的分页：先把当前范围（搜索 / 标签 / 全部）在数据库中的全部记录拉齐再全选。
+        viewLifecycleOwner.lifecycleScope.launch {
+            val all = withContext(Dispatchers.IO) { loadFullScopeEntities() }
+            if (all.isEmpty()) return@launch
+            adapter.clearItems()
+            currentOffset = all.size
+            hasMore = false
+            isLoading = false
+            tvEmptyRef?.visibility = View.GONE
+            adapter.addItems(all.map { ManageGridItem(it) })
+            adapter.selectAll()
+            checkFileExistence(all)
+            loadAndApplyTags(all)
+        }
+    }
+
+    /** 当前范围（搜索 / 标签 / 全部）在数据库中的全部记录，供全选使用。 */
+    private suspend fun loadFullScopeEntities(): List<DownloadedVideoEntity> = withContext(Dispatchers.IO) {
+        when {
+            activeAuthor.isNotBlank() -> repo.getByMediaTypeAndUserName(MEDIA_TYPE_VIDEO, activeAuthor)
+            activeSearchQuery.isNotBlank() -> repo.searchByUserName(MEDIA_TYPE_VIDEO, activeSearchQuery)
+            activeTag == TagFilterAdapter.TAG_ALL -> repo.getAllByMediaType(MEDIA_TYPE_VIDEO)
+            else -> tagRepo.getVideosByTag(activeTag).filter { it.mediaType == MEDIA_TYPE_VIDEO }
+        }
     }
 
     override fun handleDeleteSelected() {
@@ -162,9 +210,10 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         // ── 标签过滤栏 ──────────────────────────────────────────────────────────
         val rvTagFilter: RecyclerView = view.findViewById(R.id.rvTagFilter)
         tagFilterAdapter = TagFilterAdapter { tag ->
-            // 选择标签时强制清掉搜索词；搜索路径优先级高于标签，
-            // 不清就会出现「点了标签但列表还按搜索筛」的迷之结果。
+            // 选择标签时强制清掉搜索词与作者筛选；标签与二者互斥，
+            // 不清就会出现「点了标签但列表还按搜索/作者筛」的迷之结果。
             activeSearchQuery = ""
+            activeAuthor = ""
             activeTag = tag
             refreshList()
         }
@@ -232,6 +281,18 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         viewLifecycleOwner.lifecycleScope.launch {
             val entities: List<DownloadedVideoEntity>
             when {
+                activeAuthor.isNotBlank() -> {
+                    // 作者筛选：精确匹配昵称，一次性返回全部，不再分页
+                    entities = if (currentOffset == 0) {
+                        withContext(Dispatchers.IO) {
+                            repo.getByMediaTypeAndUserName(MEDIA_TYPE_VIDEO, activeAuthor)
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    hasMore = false
+                    currentOffset += entities.size
+                }
                 activeSearchQuery.isNotBlank() -> {
                     // 搜索路径：按昵称全量查询，忽略标签过滤
                     entities = if (currentOffset == 0) {
@@ -270,10 +331,10 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
             progress.visibility = View.GONE
 
             if (entities.isEmpty() && currentOffset == 0) {
-                tvEmpty.text = if (activeSearchQuery.isNotBlank()) {
-                    getString(R.string.manage_search_empty, activeSearchQuery)
-                } else {
-                    getString(R.string.manage_empty_videos)
+                tvEmpty.text = when {
+                    activeAuthor.isNotBlank() -> getString(R.string.manage_author_empty, activeAuthor)
+                    activeSearchQuery.isNotBlank() -> getString(R.string.manage_search_empty, activeSearchQuery)
+                    else -> getString(R.string.manage_empty_videos)
                 }
                 tvEmpty.visibility = View.VISIBLE
             } else {
@@ -290,7 +351,24 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         val q = query?.trim().orEmpty()
         if (q == activeSearchQuery) return
         activeSearchQuery = q
-        // 搜索/退出搜索都从头加载；activeTag 不动，退出搜索后仍回到之前选中的标签
+        // 主搜索启用时清掉作者筛选（二者互斥）；activeTag 不动，退出搜索后仍回到之前选中的标签
+        if (q.isNotBlank()) activeAuthor = ""
+        refreshList()
+    }
+
+    override val activeAuthorName: String?
+        get() = activeAuthor.ifBlank { null }
+
+    override fun applyAuthorFilter(userName: String?) {
+        val name = userName?.trim().orEmpty()
+        if (name == activeAuthor) return
+        activeAuthor = name
+        if (name.isNotBlank()) {
+            // 作者筛选与搜索/标签互斥
+            activeSearchQuery = ""
+            activeTag = TagFilterAdapter.TAG_ALL
+            tagFilterAdapter.resetToAll()
+        }
         refreshList()
     }
 

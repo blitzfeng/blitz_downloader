@@ -102,6 +102,32 @@ class ManageGridAdapter(
 
     fun getSelectedAwemeIds(): List<String> = selectedIds.toList()
 
+    /** 当前已加载项是否已全部选中（无项时返回 false）。 */
+    fun isAllSelected(): Boolean = items.isNotEmpty() && selectedIds.size == items.size
+
+    /**
+     * 全选当前**已加载**的所有条目（分页未加载的不在内）。
+     * 若尚未进入多选模式则一并进入。
+     */
+    fun selectAll() {
+        if (items.isEmpty()) return
+        if (!inSelectionMode) inSelectionMode = true
+        selectedIds.clear()
+        items.forEach { selectedIds.add(it.entity.awemeId) }
+        notifyItemRangeChanged(0, items.size, PAYLOAD_SELECTION_STATE)
+        onSelectionChanged(true, selectedIds.size)
+    }
+
+    /**
+     * 取消全部选中，但**保持多选模式**（区别于 [exitSelectionMode]），便于用户重新挑选。
+     */
+    fun deselectAll() {
+        if (selectedIds.isEmpty()) return
+        selectedIds.clear()
+        notifyItemRangeChanged(0, items.size, PAYLOAD_SELECTION_STATE)
+        onSelectionChanged(inSelectionMode, 0)
+    }
+
     /** 更新某条目的用户标签，触发局部刷新（仅重绑标签行）。 */
     fun updateItemTags(awemeId: String, tags: List<String>) {
         val pos = indexByAwemeId[awemeId] ?: return

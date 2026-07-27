@@ -89,6 +89,34 @@
     <string name="manage_menu_delete_selected">删除选中</string>
     <string name="manage_menu_delete_selected_count">删除选中（%1$d）</string>
     <string name="manage_selected_count">已选 %1$d 项</string>
+    <string name="manage_menu_select_all">全选</string>
+    <string name="manage_menu_deselect_all">取消全选</string>
+    <!-- 按作者筛选抽屉 -->
+    <string name="manage_menu_filter_author">按作者筛选</string>
+    <string name="manage_author_drawer_title">按作者筛选</string>
+    <string name="manage_author_search_hint">搜索作者昵称</string>
+    <string name="manage_author_clear">显示全部（清除作者筛选）</string>
+    <string name="manage_author_empty_list">暂无作者</string>
+    <string name="manage_author_empty">作者「%1$s」暂无作品</string>
+    <string name="manage_author_unknown">（未知作者）</string>
+    <string name="manage_author_filtering">作者：%1$s</string>
+    <!-- 导出选中：ZIP 到 Download/bDouyin/export -->
+    <string name="manage_menu_export_zip">导出为压缩包</string>
+    <string name="manage_export_zip_confirm_title">导出为压缩包</string>
+    <string name="manage_export_zip_confirm_msg">将把选中的 %1$d 项打包到 Download/bDouyin/export 下的一个 zip 文件，手机连电脑后拷这一个文件即可。继续？</string>
+    <string name="manage_export_zip_doing">正在打包…</string>
+    <string name="manage_export_zip_done">已导出 %1$d 个文件：\n%2$s</string>
+    <string name="manage_export_zip_failed">导出失败：%1$s</string>
+    <string name="manage_export_none">没有可导出的文件（本地文件可能已被删除）</string>
+    <!-- 导出选中：局域网 HTTP 服务 -->
+    <string name="manage_menu_export_lan">发送到电脑（同一 WiFi）</string>
+    <string name="manage_export_lan_title">在电脑浏览器打开</string>
+    <string name="manage_export_lan_msg">确保电脑与手机连的是同一个 WiFi，用电脑浏览器打开下面的网址即可下载 %1$d 个文件：\n\n%2$s\n\n本页保持打开，下载完成后点「停止服务」。</string>
+    <string name="manage_export_lan_no_wifi">未检测到局域网地址，请先把手机连接到 WiFi 再试。</string>
+    <string name="manage_export_lan_failed">启动服务失败：%1$s</string>
+    <string name="manage_export_lan_copy">复制网址</string>
+    <string name="manage_export_lan_stop">停止服务</string>
+    <string name="manage_export_lan_copied">网址已复制</string>
     <string name="manage_clear_invalid_confirm">将扫描数据库中的视频记录，删除本地文件已不存在的条目，操作不可撤销。确认继续？</string>
     <string name="manage_clear_invalid_done">已清除 %1$d 条失效记录</string>
     <string name="manage_clear_invalid_none">未发现失效记录</string>

@@ -32,6 +32,14 @@ class DownloadedVideoRepository(context: Context) {
     suspend fun getAllByMediaType(mediaType: String): List<DownloadedVideoEntity> =
         dao.getAllByMediaType(mediaType)
 
+    /** 精确匹配某作者昵称的全部作品（管理页「按作者筛选」使用）。 */
+    suspend fun getByMediaTypeAndUserName(mediaType: String, userName: String): List<DownloadedVideoEntity> =
+        dao.getByMediaTypeAndUserName(mediaType, userName)
+
+    /** 按作者昵称聚合作品数，按作品数倒序返回（管理页作者抽屉使用）。 */
+    suspend fun getAuthorCounts(mediaType: String): List<com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount> =
+        dao.getAuthorCountsByMediaType(mediaType)
+
     /** 用于网格：是否存在本地已记录下载（按作品 id）。 */
     suspend fun getDownloadedAwemeIdSet(ids: Collection<String>): Set<String> {
         if (ids.isEmpty()) return emptySet()

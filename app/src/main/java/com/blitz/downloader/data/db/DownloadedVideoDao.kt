@@ -59,4 +59,21 @@ interface DownloadedVideoDao {
      */
     @Query("SELECT * FROM downloaded_videos WHERE mediaType = :mediaType AND userName LIKE :userNameLike ORDER BY createdAtMillis DESC")
     suspend fun searchByMediaTypeAndUserName(mediaType: String, userNameLike: String): List<DownloadedVideoEntity>
+
+    /** 精确匹配某作者昵称的全部作品（管理页「按作者筛选」使用）。 */
+    @Query("SELECT * FROM downloaded_videos WHERE mediaType = :mediaType AND userName = :userName ORDER BY createdAtMillis DESC")
+    suspend fun getByMediaTypeAndUserName(mediaType: String, userName: String): List<DownloadedVideoEntity>
+
+    /**
+     * 按作者昵称聚合作品数（管理页作者抽屉使用），按作品数倒序、同数量按昵称升序。
+     * 空昵称记录也会成组（分组键即空串），由上层决定是否展示。
+     */
+    @Query(
+        "SELECT userName AS name, COUNT(*) AS count FROM downloaded_videos " +
+            "WHERE mediaType = :mediaType GROUP BY userName ORDER BY count DESC, userName ASC"
+    )
+    suspend fun getAuthorCountsByMediaType(mediaType: String): List<AuthorCount>
+
+    /** 作者聚合投影：昵称 + 作品数。 */
+    data class AuthorCount(val name: String, val count: Int)
 }

@@ -31,8 +31,9 @@ ui (Fragments / Adapters)        activity (MainActivity, DouyinWebBrowserActivit
    │                                       ManageActivity, TagManageActivity,
    │                                       VideoPlayerActivity, ImageViewerActivity)
    ▼
-download (BatchDownloadCoordinator, DouyinVideoHttp)
+download (BatchDownloadCoordinator, DouyinVideoHttp, MediaExportManager)
    │
+   ├─▶ net (LanFileServer — 「发送到电脑」局域网导出)
    ▼
 api (DouyinApiClient, DouyinApiService, DouyinApiModels, DouyinParser, DouyinListApi,
      AwemeMapper, DouyinUrlParser, AwemeWebUrls)
@@ -45,7 +46,7 @@ api/signing (DouyinWebSigner, XBogusSigner, ABogusSigner, Sm3)
 util (DouyinCookieStore, DouyinCookieSync, DouyinTokenBootstrap, DouyinVerifyFpGenerator, UrlUtils)
 
 data + data/db (Room: AppDatabase, DownloadedVideoEntity/Dao, TagEntity/Dao, VideoTagEntity/Dao
-                + DownloadedVideoRepository, VideoTagRepository)
+                + DownloadedVideoRepository, VideoTagRepository, DatabaseBackupManager)
 
 config (AppConfig, BatchListDownloadScope, DefaultTags)
 ```
@@ -103,12 +104,22 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 
 文件命名约定为 `<userName>+<desc>`（截断/转义后）。下载成功后必须调用 `DownloadedVideoRepository.recordSuccessfulDownload(...)` 写入数据库，否则管理页角标无法识别为"已下载"。
 
+### 导出管道（管理页「导出选中」）
+
+多选后有两条导出路径，共用 `MediaExportManager.resolveExportFiles(...)` 把选中记录解析成磁盘文件：
+
+- **ZIP 导出**：`MediaExportManager.exportToZip(...)` 打包到 `Download/bDouyin/export/bDouyin_export_<时间戳>.zip`（`Deflater.NO_COMPRESSION` 只打包不二次压缩），完成后 `MediaScannerConnection.scanFile` 触发扫描,使其立刻能通过 MTP 看到。手机连电脑拷这一个文件。
+- **局域网导出**：`net.LanFileServer`（零依赖手写 HTTP/1.1，仅 GET）。电脑同 WiFi 用浏览器打开 `http://<ip>:<port>/` 逐个或 `/all.zip` 打包下载。服务生命周期由 `ManageActivity` 持有，`onDestroy` / 对话框 dismiss 时 `stop()`。
+
+关键约束：**图集的 `filePath` 只存了第一张图（`base_01.jpg`）**，导出时必须扫描同目录 `base_\d+.<ext>` 的全部兄弟文件——逻辑与 `ImageViewerActivity.findImageSet` 一致，改一处需同步。
+
 ### 持久化（Room）
 
 **数据库结构的权威文档是 `.cursor/rules/db-schema.md`，改 `data/db/` 之前先读它。** 要点：
 
-- `AppDatabase` 当前 **version = 9**。三张表：`downloaded_videos`、`video_tags`、`tags`。
-- 所有迁移 `MIGRATION_1_2 .. MIGRATION_8_9` 都在 `AppDatabase` 里显式列出。**不要**依赖 `fallbackToDestructiveMigration` 来"对付过去"。新增字段时：写 `MIGRATION_9_10` → `version = 10` → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。
+- `AppDatabase` 当前 **version = 10**。三张表：`downloaded_videos`、`video_tags`、`tags`。
+- 所有迁移 `MIGRATION_1_2 .. MIGRATION_9_10` 都在 `AppDatabase` 里显式列出。**不要**依赖 `fallbackToDestructiveMigration` 来"对付过去"。新增字段时：写 `MIGRATION_10_11` → `version = 11` → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。
+- 备份/恢复走 `DatabaseBackupManager`（管理页入口）——它直接操作 SQLite 文件，改库结构后要确认导入旧备份的兼容处理。
 - `userRelation` 是 `|` 分隔的多标签字符串（`"like"`、`"like|<夹名>"`、`"<夹名>"`）；写入时统一通过 `DownloadedVideoRepository.buildUserRelationFromLike(...)` / `buildUserRelationFromCollection(...)` 构造，**不要**手拼。
 - `DefaultTags.list` 是预设标签的唯一来源，也是 v6→v7 / v7→v8 迁移插入的内容；改 `DefaultTags.kt` 的同时检查迁移逻辑是否还一致。
 - `downloadType` 合法值见 `DownloadSourceType`；`mediaType` 见 `DownloadMediaType`（`"video"` / `"image"`）。
