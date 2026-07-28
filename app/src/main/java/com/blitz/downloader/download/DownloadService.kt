@@ -103,6 +103,7 @@ class DownloadService : Service() {
         // 下载成功项在服务内写库（含收藏夹标签关联），保证离开页面也不丢记录。
         val repo = BlitzApp.instance.downloadedVideoRepository
         val tagRepo = VideoTagRepository(applicationContext)
+        val recordedIds = mutableSetOf<String>()
         result.succeededItems.forEach { item ->
             val meta = job.metas[item.id] ?: return@forEach
             repo.recordSuccessfulDownload(
@@ -125,7 +126,11 @@ class DownloadService : Service() {
             if (meta.linkCollectFolderTag && meta.collectionType.isNotBlank()) {
                 tagRepo.ensureCollectFolderTagLinked(awemeId = item.id, folderName = meta.collectionType)
             }
+            recordedIds += item.id
         }
+
+        // 通知仍停留在批量下载页的界面：这些项已入库，可就地打「已下载」角标并取消勾选。
+        DownloadEvents.notifyRecorded(recordedIds)
 
         notifyComplete(result.success, result.failed)
     }

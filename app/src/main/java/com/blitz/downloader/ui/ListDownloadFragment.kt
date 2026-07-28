@@ -36,6 +36,7 @@ import com.blitz.downloader.api.DouyinPageKind
 import com.blitz.downloader.api.DouyinUrlParser
 import com.blitz.downloader.databinding.FragmentListDownloadBinding
 import com.blitz.downloader.download.BatchDownloadCoordinator
+import com.blitz.downloader.download.DownloadEvents
 import com.blitz.downloader.download.DownloadJob
 import com.blitz.downloader.download.DownloadRecordMeta
 import com.blitz.downloader.download.DownloadService
@@ -181,10 +182,52 @@ class ListDownloadFragment : Fragment() {
         binding.cbHideDownloaded.setOnCheckedChangeListener { _, checked ->
             hideDownloaded = checked
             videoAdapter.submitList(currentDisplayList())
+            updateSelectedCountText()
+            if (listApiMode != ListApiMode.None) refreshListStatusAfterOk()
+            // 打开开关后当前页可能被过滤到没剩几条：列表撑不满屏 → 滚动分页不会触发 → 看着像「什么都没加载出来」。
+            // 这里主动续拉后面的页。
+            if (checked && needsAutoFillMorePages()) {
+                listLoadJob?.cancel()
+                listLoadJob = viewLifecycleOwner.lifecycleScope.launch {
+                    fetchListPage(isFirstPage = false)
+                }
+            }
         }
 
         binding.btnDownloadSelected.setOnClickListener {
             startBatchDownload()
+        }
+
+        // 下载服务写库成功后就地刷新当前列表（打角标 + 取消勾选），不用离开页面再回来。
+        viewLifecycleOwner.lifecycleScope.launch {
+            DownloadEvents.recorded.collect { ids -> markItemsDownloaded(ids) }
+        }
+    }
+
+    /**
+     * 把刚下载完成的作品在当前列表里标记为已下载并取消勾选。
+     * 与当前列表没有交集（页面期间已经换成别的接口数据）时直接返回，不做任何刷新。
+     */
+    private fun markItemsDownloaded(awemeIds: Set<String>) {
+        if (videoItems.isEmpty() || awemeIds.isEmpty()) return
+        var changed = false
+        for (i in videoItems.indices) {
+            val v = videoItems[i]
+            if (v.id !in awemeIds) continue
+            if (v.isDownloaded && !v.isSelected) continue
+            videoItems[i] = v.copy(isDownloaded = true, isSelected = false)
+            changed = true
+        }
+        if (!changed) return
+        videoAdapter.submitList(currentDisplayList())
+        updateSelectedCountText()
+        if (listApiMode != ListApiMode.None) refreshListStatusAfterOk()
+        // 隐藏已下载时刚下完的项会立刻消失，可见项可能不够一屏 —— 沿用与加载时相同的续拉策略。
+        if (needsAutoFillMorePages()) {
+            listLoadJob?.cancel()
+            listLoadJob = viewLifecycleOwner.lifecycleScope.launch {
+                fetchListPage(isFirstPage = false)
+            }
         }
     }
 
@@ -348,7 +391,12 @@ class ListDownloadFragment : Fragment() {
     private fun updateSelectedCountText() {
         val c = videoItems.count { it.isSelected }
         binding.btnDownloadSelected.isEnabled = c > 0
-        binding.tvSelectedCount.text = "已选择 $c / ${videoItems.size}"
+        val hidden = if (hideDownloaded) videoItems.count { it.isDownloaded } else 0
+        binding.tvSelectedCount.text = if (hidden > 0) {
+            "已选择 $c / ${videoItems.size}（隐藏 $hidden）"
+        } else {
+            "已选择 $c / ${videoItems.size}"
+        }
     }
 
     private fun refreshCookieStatusUi() {
@@ -566,26 +614,56 @@ class ListDownloadFragment : Fragment() {
 
     private fun refreshListStatusAfterOk() {
         val tail = if (listHasMore) getString(R.string.list_api_has_more) else getString(R.string.list_api_no_more)
-        binding.tvStatus.text = getString(R.string.list_api_status_loaded, videoItems.size, tail)
+        val base = getString(R.string.list_api_status_loaded, videoItems.size, tail)
+        // 开了「隐藏已下载」时把过滤掉多少条说清楚，否则可见项为 0 会被误认为加载失败
+        val hidden = if (hideDownloaded) videoItems.count { it.isDownloaded } else 0
+        binding.tvStatus.text = if (hidden > 0) {
+            getString(R.string.list_api_status_hidden_suffix, base, hidden, videoItems.size - hidden)
+        } else {
+            base
+        }
     }
 
     private fun refreshListStatusError(msg: String?) {
         binding.tvStatus.text = getString(R.string.list_api_error, msg ?: "")
     }
 
+    /**
+     * 拉取列表页。开启「隐藏已下载」时，一页里可能整页都是已下载项，过滤后可见项为 0 —— 此时 RecyclerView
+     * 撑不满 NestedScrollView，滚动分页永远不会被触发，页面看上去就是「加载了但什么都没有」。
+     * 这里在单页加载完成后自动续拉，直到可见项够撑起一屏、没有更多数据，或达到 [AUTO_FILL_MAX_PAGES] 上限。
+     */
     private suspend fun fetchListPage(isFirstPage: Boolean) {
-        if (listLoadingMore) return
+        if (!fetchListPageOnce(isFirstPage)) return
+        var extraPages = 0
+        while (needsAutoFillMorePages() && extraPages < AUTO_FILL_MAX_PAGES) {
+            extraPages++
+            if (!fetchListPageOnce(isFirstPage = false)) return
+        }
+    }
+
+    /** 隐藏已下载后可见项不足一屏且还有下一页时，需要自动多拉几页。 */
+    private fun needsAutoFillMorePages(): Boolean =
+        hideDownloaded &&
+            listApiMode != ListApiMode.None &&
+            listHasMore &&
+            currentDisplayList().size < AUTO_FILL_MIN_VISIBLE
+
+    /** 拉取单页；返回 false 表示未加载（重入/参数缺失）或加载失败，调用方不应继续续拉。 */
+    private suspend fun fetchListPageOnce(isFirstPage: Boolean): Boolean {
+        if (listLoadingMore) return false
         listLoadingMore = true
+        var ok = false
         try {
             refreshListStatusLoading()
             val result = when (listApiMode) {
                 ListApiMode.UserPost -> {
-                    val sid = listSecUserId ?: return
+                    val sid = listSecUserId ?: return false
                     val cursor = if (isFirstPage) 0L else listNextCursor
                     DouyinListApi.fetchUserPostPage(secUserId = sid, maxCursor = cursor)
                 }
                 ListApiMode.UserLike -> {
-                    val sid = listSecUserId ?: return
+                    val sid = listSecUserId ?: return false
                     val maxC = if (isFirstPage) 0L else listNextCursor
                     DouyinListApi.fetchUserLikePage(secUserId = sid, maxCursor = maxC)
                 }
@@ -594,16 +672,16 @@ class ListDownloadFragment : Fragment() {
                     DouyinListApi.fetchUserCollectionPage(cursor = cursor)
                 }
                 ListApiMode.MixAweme -> {
-                    val mid = listMixId ?: return
+                    val mid = listMixId ?: return false
                     val cursor = if (isFirstPage) 0L else listNextCursor
                     DouyinListApi.fetchMixAwemePage(mixId = mid, cursor = cursor)
                 }
                 ListApiMode.CollectsVideo -> {
-                    val cid = listCollectsId ?: return
+                    val cid = listCollectsId ?: return false
                     val cursor = if (isFirstPage) 0L else listNextCursor
                     DouyinListApi.fetchCollectsVideoPage(collectsId = cid, cursor = cursor)
                 }
-                ListApiMode.None -> return
+                ListApiMode.None -> return false
             }
             result.fold(
                 onSuccess = { page ->
@@ -618,6 +696,7 @@ class ListDownloadFragment : Fragment() {
                     listHasMore = page.hasMore
                     reapplyDownloadedFlagsToList()
                     refreshListStatusAfterOk()
+                    ok = true
                 },
                 onFailure = { e ->
                     handleListLoadError(e) { fetchListPage(isFirstPage) }
@@ -626,6 +705,7 @@ class ListDownloadFragment : Fragment() {
         } finally {
             listLoadingMore = false
         }
+        return ok
     }
 
     /**
@@ -771,4 +851,11 @@ class ListDownloadFragment : Fragment() {
         )
     }
 
+    companion object {
+        /** 「隐藏已下载」时，可见项少于这个数就自动续拉下一页（3 列网格约一屏）。 */
+        private const val AUTO_FILL_MIN_VISIBLE = 9
+
+        /** 单次加载最多为「隐藏已下载」自动续拉的额外页数，防止整个列表都已下载时无限翻页。 */
+        private const val AUTO_FILL_MAX_PAGES = 5
+    }
 }

@@ -55,7 +55,7 @@
                 android:textSize="10sp"
                 android:visibility="gone" />
 
-            <!-- 点赞数徽标：左下，文字格式 `♥ 1.2w`，diggCount<=0 时 GONE -->
+            <!-- 点赞数徽标：左下，心形图标 + 数字；心形白色，我点赞过的着抖音红；diggCount<=0 时 GONE -->
             <TextView
                 android:id="@+id/tvDiggCount"
                 android:layout_width="wrap_content"
@@ -63,6 +63,9 @@
                 android:layout_gravity="bottom|start"
                 android:layout_margin="6dp"
                 android:background="#99000000"
+                android:drawableStart="@drawable/ic_heart_solid"
+                android:drawablePadding="3dp"
+                android:gravity="center_vertical"
                 android:paddingHorizontal="6dp"
                 android:paddingVertical="2dp"
                 android:textColor="#FFFFFF"

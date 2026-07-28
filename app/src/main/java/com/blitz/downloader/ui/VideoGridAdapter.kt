@@ -138,13 +138,14 @@ class VideoGridAdapter(
                 photoBadge.visibility = View.GONE
             }
 
-            // 点赞数徽标：接口未下发或为 0 时直接隐藏
+            // 点赞数徽标：接口未下发或为 0 时直接隐藏；心形默认白色，接口 user_digged=1（我点赞过）着抖音红
             val diggText = NumberFormatUtils.formatChineseCount(item.diggCount)
             if (diggText.isEmpty()) {
                 diggBadge.visibility = View.GONE
             } else {
                 diggBadge.visibility = View.VISIBLE
-                diggBadge.text = "♥ $diggText"
+                diggBadge.text = diggText
+                DiggBadgeStyle.tintHeart(diggBadge, item.userDigged == 1)
             }
 
             if (item.isDownloaded) {

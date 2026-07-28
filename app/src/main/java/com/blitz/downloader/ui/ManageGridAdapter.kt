@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.RecyclerView
 import coil.load
 import coil.transform.RoundedCornersTransformation
 import com.blitz.downloader.R
+import com.blitz.downloader.data.DownloadedVideoRepository
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.util.NumberFormatUtils
 import java.io.File
@@ -230,13 +231,17 @@ class ManageGridAdapter(
                     tagContainer.addView(makeChip(ctx, labelForRelation(part), colorForRelation(part)))
                 }
 
-            // 点赞数徽标：旧记录或接口未带 → 0 → 隐藏
+            // 点赞数徽标：旧记录或接口未带 → 0 → 隐藏；心形默认白色，userRelation 含 like（我点赞过）着抖音红
             val diggText = NumberFormatUtils.formatChineseCount(entity.diggCount)
             if (diggText.isEmpty()) {
                 diggBadge.visibility = View.GONE
             } else {
                 diggBadge.visibility = View.VISIBLE
-                diggBadge.text = "♥ $diggText"
+                diggBadge.text = diggText
+                DiggBadgeStyle.tintHeart(
+                    diggBadge,
+                    DownloadedVideoRepository.hasLikeRelation(entity.userRelation),
+                )
             }
 
             bindInvalidState(item.fileExists)

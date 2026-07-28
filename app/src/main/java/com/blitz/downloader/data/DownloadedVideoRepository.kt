@@ -115,6 +115,15 @@ class DownloadedVideoRepository(context: Context) {
          */
         fun buildUserRelationFromCollection(userDigged: Int, folderName: String): String =
             if (userDigged == 1) "like|$folderName" else folderName
+
+        /**
+         * [DownloadedVideoEntity.userRelation] 是否含「我点赞过」。
+         * 按 `|` 拆分后逐段比对，避免收藏夹名里带 "like" 子串被误判。
+         */
+        fun hasLikeRelation(userRelation: String?): Boolean =
+            userRelation
+                ?.split('|')
+                ?.any { it.trim().equals(DownloadSourceType.LIKE, ignoreCase = true) } == true
     }
 
     suspend fun getPageByMediaType(mediaType: String, limit: Int, offset: Int): List<DownloadedVideoEntity> =

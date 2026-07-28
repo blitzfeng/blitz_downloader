@@ -29,6 +29,7 @@
     <string name="toast_cookie_paste_ok">已从剪贴板导入 Cookie</string>
     <string name="toast_cookie_paste_invalid">剪贴板内容不是有效的 Cookie（需形如 a=b; c=d）</string>
     <string name="list_api_status_loaded">已加载 %1$d 条 · %2$s</string>
+    <string name="list_api_status_hidden_suffix">%1$s · 已隐藏 %2$d 条已下载，可见 %3$d 条</string>
     <string name="list_api_has_more">可继续下滑加载</string>
     <string name="list_api_no_more">已全部加载</string>
     <string name="list_api_loading">正在请求列表…</string>
