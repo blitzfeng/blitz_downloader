@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v10**
+> **当前版本：v11**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -31,6 +31,7 @@
 | v8 | `tags` 表新增 `sortOrder` 列（展示顺序） |
 | v9 | `downloaded_videos` 新增 `createTime`（视频原始发布时间，Unix 秒） |
 | v10 | `downloaded_videos` 新增 `diggCount`（点赞数）、`collectCount`（收藏数，预留） |
+| v11 | `downloaded_videos` 新增 `exportCount`（已成功导出到电脑的次数） |
 
 > **注意**：v4 的 `likeType` 与 `downloadType` 语义重叠，v5 通过重建表删除，**后续不要再加同类冗余字段**。
 
@@ -59,6 +60,7 @@
 | `userRelation` | TEXT | `""` | 视频与账户所有者的关系标签（仅我的账户有效，见下方编码规则） |
 | `diggCount` | INTEGER | `0` | 视频点赞数，接口字段 `statistics.digg_count`（v10 新增） |
 | `collectCount` | INTEGER | `0` | 视频收藏数，接口字段 `statistics.collect_count`（v10 新增，UI 暂未展示，预留） |
+| `exportCount` | INTEGER | `0` | 已成功导出到电脑的次数（v11 新增，见下方规则） |
 
 ### `downloadType` 枚举值
 
@@ -106,6 +108,23 @@ DownloadedVideoRepository.buildUserRelationFromCollection(userDigged: Int, folde
 ```
 
 **管理页展示：** 按 `|` 拆分后渲染为多个标签 chip。
+
+### `exportCount` 累加规则（v11）
+
+**只有局域网导出会累加**。`LanFileServer` 把某条记录的字节完整写出 socket 且未报错时回调
+`TransferEvent`，由 `DownloadedVideoRepository.incrementExportCount(awemeIds)` 做 `SET exportCount = exportCount + 1` 的原子累加（不要走"读实体→改→整行 update"，会覆盖并发写）。
+
+| 场景 | 是否累加 |
+|------|---------|
+| 局域网单文件下载（`/f?i=N`）完整发出 | ✅ +1（图集的多张图共享同一 `awemeId`，仍只 +1） |
+| 局域网整包下载（`/all.zip`）完整发出 | ✅ 包内每条记录各 +1 |
+| 整包中途被取消 / 断连 | ❌ 不累加（半个包对电脑不可用） |
+| `HEAD` 探测请求 | ❌ 不累加（只回响应头，不写 body） |
+| ZIP 导出到 `Download/bDouyin/export/` | ❌ 不累加（只是生成了包，还没到电脑） |
+
+**语义边界**：它表示"手机已把数据完整发出"，**不代表电脑确认落盘**——HTTP 没有反向通道，浏览器取消保存、写盘失败都探知不到。因此只做提示与二次确认依据，别当权威状态用。
+
+**UI 用法**：`exportCount > 0` 时，管理页**多选态**在封面左上角显示「已导出」标记（多次显示 `已导出 ×N`）；点「发送到电脑」时若选中项含已导出记录，先弹三选一确认：**取消** / **过滤已导出**（只把 `exportCount == 0` 的记录挂到服务上）/ **确认**（全部导出，允许重复）。
 
 ### 索引
 
@@ -229,4 +248,4 @@ tags(tagName)          video_tags(awemeId, tagName)
 - **管理页展示**：`userRelation` 按 `|` 拆分渲染 chip；`videoAuthorSecUserId` 用于按作者分组/过滤。
 - **下载写入时**：调用 `DownloadedVideoRepository.recordSuccessfulDownload()`，`like` 场景传 `buildUserRelationFromLike(aweme.collectStat)`，`collects` 场景传 `buildUserRelationFromCollection(aweme.userDigged, folderName)`。
 - **标签功能**：通过 `VideoTagRepository` 操作，视频删除时标签自动级联删除，无需手动清理。
-- **新增数据库字段**：当前版本为 **v10**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_10_11` 并将 version 改为 11。
+- **新增数据库字段**：当前版本为 **v11**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_11_12` 并将 version 改为 12。

@@ -66,6 +66,26 @@
                 android:visibility="gone"
                 tools:ignore="SmallSp" />
 
+            <!--
+                「已导出」标记（左上角）：exportCount > 0 且处于多选态时显示。
+                只在多选态出现，因为它服务于"这批要不要再导一次"的判断。
+            -->
+            <TextView
+                android:id="@+id/tvExportedBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|start"
+                android:layout_margin="4dp"
+                android:background="#CC00875A"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:text="@string/manage_exported_label"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:ignore="SmallSp" />
+
             <!-- 多选时的选中蒙层 -->
             <View
                 android:id="@+id/viewSelectedOverlay"

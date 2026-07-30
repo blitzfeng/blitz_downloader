@@ -94,4 +94,16 @@ data class DownloadedVideoEntity(
      * 旧记录默认为 0。
      */
     val collectCount: Long = 0L,
+    /**
+     * 已成功导出到电脑的次数（v11 新增）。
+     *
+     * 当前**只有局域网导出**会累加：`LanFileServer` 把该记录的字节完整写出 socket 后回调
+     * （单文件下载 / `all.zip` 整包下载各算一次），由
+     * [com.blitz.downloader.data.DownloadedVideoRepository.incrementExportCount] 写入。
+     * 注意这是"服务端已发完"而非"电脑确认落盘"——HTTP 没有回传通道，属于提示性计数。
+     *
+     * ZIP 导出（落到 `Download/bDouyin/export/`）不计入，因为那只是生成了包，还没到电脑。
+     * `> 0` 时管理页多选态在封面左上角显示「已导出」标记。旧记录默认为 0。
+     */
+    val exportCount: Int = 0,
 )

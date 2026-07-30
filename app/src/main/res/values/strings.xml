@@ -110,6 +110,14 @@
     <string name="manage_sort_download_time">下载时间（最新）</string>
     <string name="manage_sort_publish_time">发布时间（最新）</string>
     <string name="manage_sort_digg">点赞数（最多）</string>
+    <!-- 按归属筛选（userRelation + collectionType 都为空 = 「无归属」） -->
+    <string name="manage_menu_filter_relation">按归属筛选</string>
+    <string name="manage_menu_filter_relation_active">按归属筛选：%1$s</string>
+    <string name="manage_relation_title">按归属筛选</string>
+    <string name="manage_relation_off">不筛选（全部）</string>
+    <string name="manage_relation_exclude">排除无归属（无点赞/收藏关系）</string>
+    <string name="manage_relation_only">仅看无归属（无点赞/收藏关系）</string>
+    <string name="manage_relation_empty">当前归属筛选下没有内容</string>
     <!-- 统计面板 -->
     <string name="manage_menu_stats">统计</string>
     <string name="manage_stats_title">数据统计</string>
@@ -148,12 +156,24 @@
     <!-- 导出选中：局域网 HTTP 服务 -->
     <string name="manage_menu_export_lan">发送到电脑（同一 WiFi）</string>
     <string name="manage_export_lan_title">在电脑浏览器打开</string>
-    <string name="manage_export_lan_msg">确保电脑与手机连的是同一个 WiFi，用电脑浏览器打开下面的网址即可下载 %1$d 个文件：\n\n%2$s\n\n本页保持打开，下载完成后点「停止服务」。</string>
     <string name="manage_export_lan_no_wifi">未检测到局域网地址，请先把手机连接到 WiFi 再试。</string>
     <string name="manage_export_lan_failed">启动服务失败：%1$s</string>
     <string name="manage_export_lan_copy">复制网址</string>
     <string name="manage_export_lan_stop">停止服务</string>
     <string name="manage_export_lan_copied">网址已复制</string>
+    <!-- 局域网导出：传输状态与「已导出」标记 -->
+    <string name="manage_exported_label">已导出</string>
+    <string name="manage_exported_label_n">已导出 ×%1$d</string>
+    <string name="manage_export_lan_reexport_title">有已导出过的内容</string>
+    <string name="manage_export_lan_reexport_msg">选中的 %1$d 项里有 %2$d 项之前已成功导出到电脑。\n\n「确认」全部导出（重复导出已导出的）；「过滤已导出」只导出剩下的 %3$d 项。</string>
+    <string name="manage_export_lan_reexport_filter">过滤已导出</string>
+    <string name="manage_export_lan_reexport_confirm">确认</string>
+    <string name="manage_export_lan_reexport_none">选中的项都已导出过，过滤后没有可导出的内容</string>
+    <string name="manage_export_lan_hint">确保电脑与手机连的是同一个 WiFi，用电脑浏览器打开下面的网址即可下载 %1$d 个文件。本页保持打开，下载完成后点「停止服务」。</string>
+    <string name="manage_export_lan_status_idle">等待电脑下载…</string>
+    <string name="manage_export_lan_status_zip">✅ 整包已发送完成（%1$d 项），共 %2$d 次</string>
+    <string name="manage_export_lan_status_file">✅ 已发送：%1$s（共 %2$d 次）</string>
+    <string name="manage_export_lan_status_note">注：这里显示的是手机已把数据完整发出，电脑侧是否保存成功无法探知。</string>
     <string name="manage_clear_invalid_confirm">将扫描数据库中的视频记录，删除本地文件已不存在的条目，操作不可撤销。确认继续？</string>
     <string name="manage_clear_invalid_done">已清除 %1$d 条失效记录</string>
     <string name="manage_clear_invalid_none">未发现失效记录</string>

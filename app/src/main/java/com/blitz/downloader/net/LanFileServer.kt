@@ -30,8 +30,32 @@ import kotlin.concurrent.thread
  *
  * 生命周期由调用方（[com.blitz.downloader.activity.ManageActivity]）持有：[start] 后务必在
  * 页面销毁 / 用户停止时调用 [stop]，否则监听线程与端口会泄漏。
+ *
+ * @param onTransfer 传输完成回调，见 [TransferEvent]。**在连接线程触发**，调用方负责切线程。
  */
-class LanFileServer(private val files: List<MediaExportManager.ExportFile>) {
+class LanFileServer(
+    private val files: List<MediaExportManager.ExportFile>,
+    private val onTransfer: ((TransferEvent) -> Unit)? = null,
+) {
+
+    /**
+     * 一次「已完整发出」的传输。
+     *
+     * 语义边界要清楚：它表示**服务端已把全部字节写出 socket 且未报错**，
+     * 不代表电脑确认落盘——HTTP 没有反向通道，浏览器取消保存、写盘失败等都看不到。
+     * 因此它适合做提示与计数，不适合当权威状态。
+     *
+     * 中途被取消 / 断网会在 `copyTo` 抛 `IOException`（EPIPE / ECONNRESET），此时**不**回调。
+     * `all.zip` 只在整包完整写完时回调一次（半个包对电脑是不可用的，不该计数）。
+     *
+     * @param awemeIds 本次传输涉及的记录 id 集合（单文件 1 个；整包为所有成功写入的记录）。
+     * @param label    用于 UI 展示的名称（文件名或 `all.zip`）。
+     */
+    data class TransferEvent(
+        val awemeIds: Set<String>,
+        val label: String,
+        val isZip: Boolean,
+    )
 
     @Volatile private var running = false
     private var serverSocket: ServerSocket? = null
@@ -113,18 +137,26 @@ class LanFileServer(private val files: List<MediaExportManager.ExportFile>) {
             writeText(out, "405 Method Not Allowed", "only GET supported")
             return
         }
+        // HEAD 只回响应头、不写 body，也不算一次传输（否则浏览器/下载器的探测请求会虚增导出计数）
+        val writeBody = method == "GET"
 
         val path = target.substringBefore("?")
         val query = target.substringAfter("?", "")
         when {
-            path == "/" -> serveIndex(out)
-            path == "/all.zip" -> serveZip(out)
-            path == "/f" -> serveFile(out, parseIntParam(query, "i"))
+            path == "/" -> serveIndex(out, writeBody)
+            path == "/all.zip" -> serveZip(out, writeBody)
+            path == "/f" -> serveFile(out, parseIntParam(query, "i"), writeBody)
             else -> writeText(out, "404 Not Found", "not found")
         }
     }
 
-    private fun serveIndex(out: OutputStream) {
+    /** 回调隔离：业务回调抛异常不应该弄死连接线程。 */
+    private fun notifyTransfer(event: TransferEvent) {
+        val cb = onTransfer ?: return
+        runCatching { cb(event) }.onFailure { Log.w(TAG, "onTransfer callback failed", it) }
+    }
+
+    private fun serveIndex(out: OutputStream, writeBody: Boolean) {
         val totalBytes = files.sumOf { it.file.length() }
         val sb = StringBuilder()
         sb.append("<!doctype html><html lang=\"zh\"><head><meta charset=\"utf-8\">")
@@ -165,11 +197,11 @@ class LanFileServer(private val files: List<MediaExportManager.ExportFile>) {
                 "Connection" to "close",
             ),
         )
-        out.write(body)
+        if (writeBody) out.write(body)
         out.flush()
     }
 
-    private fun serveFile(out: OutputStream, index: Int) {
+    private fun serveFile(out: OutputStream, index: Int, writeBody: Boolean) {
         val ef = files.getOrNull(index)
         if (ef == null || !ef.file.isFile) {
             writeText(out, "404 Not Found", "file not found")
@@ -184,11 +216,22 @@ class LanFileServer(private val files: List<MediaExportManager.ExportFile>) {
                 "Connection" to "close",
             ),
         )
-        FileInputStream(ef.file).use { it.copyTo(out, STREAM_BUFFER) }
-        out.flush()
+        if (!writeBody) {
+            out.flush()
+            return
+        }
+        try {
+            FileInputStream(ef.file).use { it.copyTo(out, STREAM_BUFFER) }
+            out.flush()
+        } catch (e: Exception) {
+            // 对端取消 / 断网：字节没发完，不算一次成功传输
+            Log.w(TAG, "transfer aborted: ${ef.entryName}", e)
+            return
+        }
+        notifyTransfer(TransferEvent(setOf(ef.awemeId), ef.entryName, isZip = false))
     }
 
-    private fun serveZip(out: OutputStream) {
+    private fun serveZip(out: OutputStream, writeBody: Boolean) {
         // zip 长度未知：不发 Content-Length，靠 Connection: close 通知浏览器传输结束。
         writeHeader(
             out, "200 OK",
@@ -198,21 +241,35 @@ class LanFileServer(private val files: List<MediaExportManager.ExportFile>) {
                 "Connection" to "close",
             ),
         )
+        if (!writeBody) {
+            out.flush()
+            return
+        }
         val zos = ZipOutputStream(out)
         zos.setLevel(Deflater.NO_COMPRESSION) // 视频/图片已压缩，仅打包
+        // 整包语义：任一条目失败（客户端断开等）即整包不可用，不计数
+        val sentIds = LinkedHashSet<String>()
+        var aborted = false
         for (ef in files) {
             if (!ef.file.isFile) continue
             try {
                 zos.putNextEntry(ZipEntry(ef.entryName))
                 FileInputStream(ef.file).use { it.copyTo(zos, STREAM_BUFFER) }
                 zos.closeEntry()
+                sentIds.add(ef.awemeId)
             } catch (e: Exception) {
                 Log.w(TAG, "zip entry failed: ${ef.entryName}", e)
+                aborted = true
                 break // 客户端断开等：停止即可
             }
         }
-        runCatching { zos.finish() }
-        out.flush()
+        val finished = runCatching {
+            zos.finish()
+            out.flush()
+        }.isSuccess
+        if (!aborted && finished && sentIds.isNotEmpty()) {
+            notifyTransfer(TransferEvent(sentIds, ZIP_LABEL, isZip = true))
+        }
     }
 
     // ── HTTP 辅助 ──────────────────────────────────────────────────────────────
@@ -303,6 +360,9 @@ class LanFileServer(private val files: List<MediaExportManager.ExportFile>) {
         private const val PORT_RETRY_RANGE = 20
         private const val STREAM_BUFFER = 64 * 1024
         private const val MAX_LINE = 8 * 1024
+
+        /** 整包传输事件的展示名。 */
+        const val ZIP_LABEL = "all.zip"
 
         /**
          * 取本机在 WiFi/局域网下的 IPv4 站点本地地址（192.168.x / 10.x / 172.16-31.x）。

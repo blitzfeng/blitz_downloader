@@ -129,6 +129,22 @@ class ManageGridAdapter(
         onSelectionChanged(inSelectionMode, 0)
     }
 
+    /**
+     * 局域网导出成功后把这些条目的 `exportCount` 就地 +1，刷新左上角「已导出」标记。
+     * 与数据库侧的原子累加是两笔独立更新——这里只为让当前列表立刻显示正确，
+     * 下次重新查询时以数据库为准。
+     */
+    fun markExported(awemeIds: Set<String>) {
+        if (awemeIds.isEmpty()) return
+        awemeIds.forEach { awemeId ->
+            val pos = indexByAwemeId[awemeId] ?: return@forEach
+            if (pos >= items.size || items[pos].entity.awemeId != awemeId) return@forEach
+            val entity = items[pos].entity
+            items[pos] = items[pos].copy(entity = entity.copy(exportCount = entity.exportCount + 1))
+            notifyItemChanged(pos, PAYLOAD_EXPORTED)
+        }
+    }
+
     /** 更新某条目的用户标签，触发局部刷新（仅重绑标签行）。 */
     fun updateItemTags(awemeId: String, tags: List<String>) {
         val pos = indexByAwemeId[awemeId] ?: return
@@ -167,7 +183,12 @@ class ManageGridAdapter(
         val item = items[position]
         val isSelected = item.entity.awemeId in selectedIds
         if (PAYLOAD_FILE_EXISTS in payloads) holder.bindInvalidState(item.fileExists)
-        if (PAYLOAD_SELECTION_STATE in payloads) holder.bindSelectionState(inSelectionMode, isSelected)
+        if (PAYLOAD_SELECTION_STATE in payloads) {
+            holder.bindSelectionState(inSelectionMode, isSelected)
+            // 「已导出」标记只在多选态显示，故随多选状态一起重绑
+            holder.bindExportedState(inSelectionMode, item.entity.exportCount)
+        }
+        if (PAYLOAD_EXPORTED in payloads) holder.bindExportedState(inSelectionMode, item.entity.exportCount)
         if (PAYLOAD_TAGS in payloads) holder.bindUserTags(item.userTags)
     }
 
@@ -180,6 +201,7 @@ class ManageGridAdapter(
         private val invalidOverlay: View = itemView.findViewById(R.id.viewInvalidOverlay)
         private val invalidBadge: TextView = itemView.findViewById(R.id.tvInvalidBadge)
         private val diggBadge: TextView = itemView.findViewById(R.id.tvDiggCount)
+        private val exportedBadge: TextView = itemView.findViewById(R.id.tvExportedBadge)
         private val selectedOverlay: View = itemView.findViewById(R.id.viewSelectedOverlay)
         private val checkbox: CheckBox = itemView.findViewById(R.id.cbManageSelect)
         private val username: TextView = itemView.findViewById(R.id.tvUsername)
@@ -246,6 +268,7 @@ class ManageGridAdapter(
 
             bindInvalidState(item.fileExists)
             bindSelectionState(selectionMode, isSelected)
+            bindExportedState(selectionMode, entity.exportCount)
             bindUserTags(item.userTags)
             bindClickListeners(entity.awemeId)
         }
@@ -355,6 +378,24 @@ class ManageGridAdapter(
         fun bindInvalidState(fileExists: Boolean) {
             invalidOverlay.visibility = if (fileExists) View.GONE else View.VISIBLE
             invalidBadge.visibility = if (fileExists) View.GONE else View.VISIBLE
+        }
+
+        /**
+         * 左上角「已导出」标记：仅多选态且 [exportCount] > 0 时显示（导出多次时带次数）。
+         * 计数来源见 [com.blitz.downloader.data.db.DownloadedVideoEntity.exportCount]。
+         */
+        fun bindExportedState(selectionMode: Boolean, exportCount: Int) {
+            if (!selectionMode || exportCount <= 0) {
+                exportedBadge.visibility = View.GONE
+                return
+            }
+            val ctx = itemView.context
+            exportedBadge.text = if (exportCount > 1) {
+                ctx.getString(R.string.manage_exported_label_n, exportCount)
+            } else {
+                ctx.getString(R.string.manage_exported_label)
+            }
+            exportedBadge.visibility = View.VISIBLE
         }
 
         fun bindSelectionState(selectionMode: Boolean, isSelected: Boolean) {
@@ -475,6 +516,7 @@ class ManageGridAdapter(
         private const val PAYLOAD_FILE_EXISTS = "file_exists"
         private const val PAYLOAD_SELECTION_STATE = "selection_state"
         private const val PAYLOAD_TAGS = "tags"
+        private const val PAYLOAD_EXPORTED = "exported"
 
         /** 用户自定义标签的背景色（深蓝紫，与系统 chip 区分）。 */
         private val USER_TAG_COLOR = 0xFF5C6BC0.toInt()  // Indigo 400

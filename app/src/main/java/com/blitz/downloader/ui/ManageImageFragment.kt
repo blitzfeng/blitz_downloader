@@ -51,6 +51,12 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
     /** 当前排序方式（默认下载时间倒序）。 */
     private var activeSort: ManageSortOrder = ManageSortOrder.DEFAULT
 
+    /**
+     * 当前「按归属筛选」状态（默认不筛选）。与搜索 / 作者筛选**叠加**而非互斥，
+     * 因此所有取数路径都要再过一遍它：分页路径下沉到 SQL，其余路径走 [ManageRelationFilter.apply]。
+     */
+    private var activeRelation: ManageRelationFilter = ManageRelationFilter.DEFAULT
+
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
     override val supportsClearInvalid: Boolean get() = false
@@ -69,6 +75,10 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
     // 「已全选」= 当前范围全部记录都已加载（无更多分页）且全部选中；否则按钮显示「全选」。
     override val isAllSelected: Boolean
         get() = ::adapter.isInitialized && !hasMore && adapter.isAllSelected()
+
+    override fun markExported(awemeIds: Set<String>) {
+        if (::adapter.isInitialized) adapter.markExported(awemeIds)
+    }
 
     override fun handleToggleSelectAll() {
         if (!::adapter.isInitialized) return
@@ -98,8 +108,15 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
             activeSearchQuery.isNotBlank() -> repo.searchByUserName(MEDIA_TYPE_IMAGE, activeSearchQuery)
             else -> repo.getAllByMediaType(MEDIA_TYPE_IMAGE)
         }
-        sortEntities(list)
+        postProcess(list)
     }
+
+    /**
+     * 非分页路径（搜索 / 作者 / 全选）的统一后处理：先过「按归属筛选」这一层，再按当前排序倒排。
+     * 分页路径的归属筛选下沉到 SQL，不走这里。
+     */
+    private fun postProcess(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> =
+        sortEntities(activeRelation.apply(list))
 
     /** 按当前 [activeSort] 对内存中的实体列表倒序排序。 */
     private fun sortEntities(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> = when (activeSort) {
@@ -113,6 +130,15 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
     override fun applySort(sort: ManageSortOrder) {
         if (sort == activeSort) return
         activeSort = sort
+        refreshList()
+    }
+
+    override val activeRelationFilter: ManageRelationFilter get() = activeRelation
+
+    override fun applyRelationFilter(filter: ManageRelationFilter) {
+        if (filter == activeRelation) return
+        // 只切这一层，保留搜索 / 作者筛选：筛选是叠加关系。
+        activeRelation = filter
         refreshList()
     }
 
@@ -197,10 +223,17 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
                 when {
                     // 作者筛选 / 搜索：一次性返回匹配集，后续不再分页
                     hasAuthorFilter() ->
-                        if (currentOffset == 0) sortEntities(loadAuthorEntities(MEDIA_TYPE_IMAGE)) else emptyList()
+                        if (currentOffset == 0) postProcess(loadAuthorEntities(MEDIA_TYPE_IMAGE)) else emptyList()
                     activeSearchQuery.isNotBlank() ->
-                        if (currentOffset == 0) sortEntities(repo.searchByUserName(MEDIA_TYPE_IMAGE, activeSearchQuery)) else emptyList()
-                    else -> repo.getPageByMediaTypeSorted(MEDIA_TYPE_IMAGE, activeSort.column, PAGE_SIZE, currentOffset)
+                        if (currentOffset == 0) postProcess(repo.searchByUserName(MEDIA_TYPE_IMAGE, activeSearchQuery)) else emptyList()
+                    // 分页路径：归属筛选下沉到 SQL，保证 LIMIT 前生效、分页计数正确
+                    else -> repo.getPageByMediaTypeSorted(
+                        MEDIA_TYPE_IMAGE,
+                        activeSort.column,
+                        PAGE_SIZE,
+                        currentOffset,
+                        activeRelation.unassignedOnly,
+                    )
                 }
             }
             progress.visibility = View.GONE
@@ -215,6 +248,8 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
                 tvEmpty.text = when {
                     hasAuthorFilter() -> getString(R.string.manage_author_empty, activeAuthorName)
                     activeSearchQuery.isNotBlank() -> getString(R.string.manage_search_empty, activeSearchQuery)
+                    // 归属筛选放在其他条件之后判断：有更具体的筛选时优先显示那条文案
+                    activeRelation != ManageRelationFilter.OFF -> getString(R.string.manage_relation_empty)
                     else -> getString(R.string.manage_empty_images)
                 }
                 tvEmpty.visibility = View.VISIBLE

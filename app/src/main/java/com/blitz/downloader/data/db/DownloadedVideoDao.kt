@@ -30,6 +30,14 @@ interface DownloadedVideoDao {
     @Query("DELETE FROM downloaded_videos WHERE awemeId IN (:awemeIds)")
     suspend fun deleteByAwemeIds(awemeIds: List<String>): Int
 
+    /**
+     * 导出成功计数 +1（局域网导出的传输完成信号触发）。
+     * 单条 SQL 原子累加，避免"读实体→改→整行 update"覆盖并发写。
+     * [awemeIds] 由 Repository 分批传入（SQLite 变量上限）。
+     */
+    @Query("UPDATE downloaded_videos SET exportCount = exportCount + 1 WHERE awemeId IN (:awemeIds)")
+    suspend fun incrementExportCount(awemeIds: List<String>): Int
+
     @Query("SELECT * FROM downloaded_videos WHERE id = :rowId LIMIT 1")
     suspend fun getByRowId(rowId: Long): DownloadedVideoEntity?
 

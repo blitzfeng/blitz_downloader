@@ -23,6 +23,12 @@
         android:title="@string/manage_menu_clear_invalid"
         app:showAsAction="never" />
 
+    <!-- 普通模式下可见：按归属筛选（叠加在 Tab / 标签 / 搜索 / 作者筛选之上） -->
+    <item
+        android:id="@+id/action_filter_relation"
+        android:title="@string/manage_menu_filter_relation"
+        app:showAsAction="never" />
+
     <!-- 普通模式下可见：列表排序 -->
     <item
         android:id="@+id/action_sort"

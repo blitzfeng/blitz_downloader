@@ -60,6 +60,13 @@ interface ManageTabFragment {
     fun handleToggleSelectAll() {}
 
     /**
+     * 局域网导出成功后，把这些条目的导出计数在**当前列表**里 +1（数据库侧由
+     * [com.blitz.downloader.data.DownloadedVideoRepository.incrementExportCount] 独立累加）。
+     * 用于立刻刷新左上角「已导出」标记，必须在主线程调用。
+     */
+    fun markExported(awemeIds: Set<String>) {}
+
+    /**
      * 当前作者筛选的分组键（`secUserId` 优先，无则昵称）；未按作者筛选时为 null。
      * 供作者抽屉预选中当前作者。
      */
@@ -77,4 +84,15 @@ interface ManageTabFragment {
 
     /** 切换排序方式并从头刷新列表。 */
     fun applySort(sort: ManageSortOrder) {}
+
+    /** 当前「按归属筛选」状态（供筛选对话框预选中、菜单标题回显）。 */
+    val activeRelationFilter: ManageRelationFilter get() = ManageRelationFilter.DEFAULT
+
+    /**
+     * 切换「按归属筛选」并从头刷新列表。
+     *
+     * 与搜索 / 标签 / 作者筛选**不互斥**——它是叠加的一层，实现里不要清空其他筛选状态，
+     * 而要保证每条取数路径（分页 / 搜索 / 标签 / 作者 / 全选）都再过一遍这层筛选。
+     */
+    fun applyRelationFilter(filter: ManageRelationFilter) {}
 }

@@ -15,6 +15,7 @@ import android.text.TextWatcher
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
@@ -43,12 +44,15 @@ import com.blitz.downloader.download.MediaExportManager
 import com.blitz.downloader.net.LanFileServer
 import com.blitz.downloader.ui.AuthorFilterAdapter
 import com.blitz.downloader.ui.ManageImageFragment
+import com.blitz.downloader.ui.ManageRelationFilter
 import com.blitz.downloader.ui.ManageSortOrder
 import com.blitz.downloader.ui.ManageTabFragment
 import com.blitz.downloader.ui.ManageVideoFragment
 import java.io.File
 import com.google.android.material.tabs.TabLayoutMediator
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.system.exitProcess
@@ -69,6 +73,21 @@ class ManageActivity : AppCompatActivity() {
 
     /** 「发送到电脑」局域网服务，页面销毁 / 用户停止时关闭。 */
     private var lanServer: LanFileServer? = null
+
+    /** 局域网对话框里的传输状态行；对话框关闭后置空（服务运行期间才有效）。 */
+    private var lanStatusView: TextView? = null
+
+    /** 本次局域网服务已完成的传输次数（单文件下载 / 整包各算一次）。 */
+    private var lanTransferCount = 0
+
+    /**
+     * 导出计数落库用的独立 scope。
+     *
+     * 传输完成事件可能在用户刚点「停止服务」/ 页面即将销毁时到达，用 `lifecycleScope` 会被
+     * 取消掉导致计数丢失；作用域内只有一次短 UPDATE，且只持有 application 级的 dao，
+     * 不会泄漏 Activity，故不做取消。
+     */
+    private val exportCountScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** 作者筛选抽屉的列表 Adapter。 */
     private lateinit var authorAdapter: AuthorFilterAdapter
@@ -223,6 +242,38 @@ class ManageActivity : AppCompatActivity() {
             .show()
     }
 
+    // ── 按归属筛选 ─────────────────────────────────────────────────────────────
+
+    /**
+     * 「按归属筛选」是三态：不筛选 / 排除无归属 / 仅看无归属（反选）。
+     * 它叠加在当前 Tab 已有的搜索、标签、作者筛选之上，因此这里只切状态，不清其他筛选。
+     */
+    private fun showRelationFilterDialog() {
+        val fragment = getCurrentTabFragment() ?: return
+        val filters = ManageRelationFilter.values()
+        val labels = filters.map { getString(it.labelRes) }.toTypedArray()
+        val checked = filters.indexOf(fragment.activeRelationFilter)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manage_relation_title)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                fragment.applyRelationFilter(filters[which])
+                dialog.dismiss()
+                invalidateOptionsMenu() // 菜单标题回显当前筛选状态
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** 菜单标题：未筛选时用原文案，筛选中则附上当前模式，避免"筛了但看不出来"。 */
+    private fun relationMenuTitle(): String {
+        val filter = getCurrentTabFragment()?.activeRelationFilter ?: ManageRelationFilter.DEFAULT
+        return if (filter == ManageRelationFilter.OFF) {
+            getString(R.string.manage_menu_filter_relation)
+        } else {
+            getString(R.string.manage_menu_filter_relation_active, getString(filter.labelRes))
+        }
+    }
+
     // ── 统计面板 ───────────────────────────────────────────────────────────────
 
     private fun showStatsDialog() {
@@ -324,6 +375,7 @@ class ManageActivity : AppCompatActivity() {
         val backup = menu.findItem(R.id.action_backup_db)
         val restore = menu.findItem(R.id.action_restore_db)
         val filterAuthor = menu.findItem(R.id.action_filter_author)
+        val filterRelation = menu.findItem(R.id.action_filter_relation)
         val sort = menu.findItem(R.id.action_sort)
         val stats = menu.findItem(R.id.action_stats)
 
@@ -338,6 +390,7 @@ class ManageActivity : AppCompatActivity() {
             backup?.isVisible = false
             restore?.isVisible = false
             filterAuthor?.isVisible = false
+            filterRelation?.isVisible = false
             sort?.isVisible = false
             stats?.isVisible = false
             deleteSelected?.isVisible = true
@@ -361,6 +414,8 @@ class ManageActivity : AppCompatActivity() {
             backup?.isVisible = true
             restore?.isVisible = true
             filterAuthor?.isVisible = true
+            filterRelation?.isVisible = true
+            filterRelation?.title = relationMenuTitle()
             sort?.isVisible = true
             stats?.isVisible = true
             deleteSelected?.isVisible = false
@@ -457,6 +512,10 @@ class ManageActivity : AppCompatActivity() {
             }
             R.id.action_filter_author -> {
                 openAuthorDrawer()
+                true
+            }
+            R.id.action_filter_relation -> {
+                showRelationFilterDialog()
                 true
             }
             R.id.action_sort -> {
@@ -711,10 +770,51 @@ class ManageActivity : AppCompatActivity() {
         }
     }
 
-    /** 方案③：起局域网 HTTP 服务，电脑同 WiFi 用浏览器下载，无需数据线 / 第三方 App。 */
+    /**
+     * 方案③：起局域网 HTTP 服务，电脑同 WiFi 用浏览器下载，无需数据线 / 第三方 App。
+     *
+     * 选中项里有导出过的（`exportCount > 0`）时先三选一确认：
+     * 取消 / 过滤已导出（只导出 `exportCount == 0` 的）/ 确认（全部导出，允许重复）。
+     */
     private fun handleExportLan() {
         val entities = getCurrentTabFragment()?.getSelectedEntities().orEmpty()
         if (entities.isEmpty()) return
+        val notExported = entities.filter { it.exportCount <= 0 }
+        val exportedCount = entities.size - notExported.size
+        if (exportedCount > 0) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.manage_export_lan_reexport_title)
+                .setMessage(
+                    getString(
+                        R.string.manage_export_lan_reexport_msg,
+                        entities.size,
+                        exportedCount,
+                        notExported.size,
+                    )
+                )
+                .setPositiveButton(R.string.manage_export_lan_reexport_confirm) { _, _ ->
+                    startLanExport(entities)
+                }
+                // 中间键 = 过滤已导出：全都导出过时过滤结果为空，只提示不起服务
+                .setNeutralButton(R.string.manage_export_lan_reexport_filter) { _, _ ->
+                    if (notExported.isEmpty()) {
+                        Toast.makeText(
+                            this,
+                            R.string.manage_export_lan_reexport_none,
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    } else {
+                        startLanExport(notExported)
+                    }
+                }
+                .setNegativeButton(R.string.manage_confirm_cancel, null)
+                .show()
+            return
+        }
+        startLanExport(entities)
+    }
+
+    private fun startLanExport(entities: List<DownloadedVideoEntity>) {
         val ip = LanFileServer.localIpv4()
         if (ip == null) {
             Toast.makeText(this, R.string.manage_export_lan_no_wifi, Toast.LENGTH_LONG).show()
@@ -727,7 +827,7 @@ class ManageActivity : AppCompatActivity() {
                 return@launch
             }
             stopLanServer() // 若已有服务在跑，先停掉
-            val server = LanFileServer(files)
+            val server = LanFileServer(files) { event -> onLanTransferComplete(event) }
             val port = try {
                 server.start()
             } catch (e: Exception) {
@@ -743,10 +843,23 @@ class ManageActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 局域网导出对话框。用自定义 View 而不是 `setMessage`，因为传输状态行要在服务运行期间
+     * 随 [onLanTransferComplete] 实时刷新（`setMessage` 在 `show()` 之后改不动）。
+     */
     private fun showLanDialog(url: String, count: Int) {
+        val content = layoutInflater.inflate(R.layout.dialog_lan_export, null)
+        content.findViewById<TextView>(R.id.tvLanHint).text =
+            getString(R.string.manage_export_lan_hint, count)
+        content.findViewById<TextView>(R.id.tvLanUrl).text = url
+        val status = content.findViewById<TextView>(R.id.tvLanStatus)
+        status.setText(R.string.manage_export_lan_status_idle)
+        lanStatusView = status
+        lanTransferCount = 0
+
         val dialog = AlertDialog.Builder(this)
             .setTitle(R.string.manage_export_lan_title)
-            .setMessage(getString(R.string.manage_export_lan_msg, count, url))
+            .setView(content)
             .setPositiveButton(R.string.manage_export_lan_stop, null)
             .setNeutralButton(R.string.manage_export_lan_copy, null)
             .setOnDismissListener { stopLanServer() }
@@ -760,9 +873,34 @@ class ManageActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 传输完成回调：**在 [LanFileServer] 的连接线程触发**，这里负责分流——
+     * 计数落库走 [exportCountScope]（IO），UI 刷新切主线程。
+     *
+     * 语义只到"手机已把字节完整发出"；电脑侧是否保存成功探知不到（HTTP 无反向通道），
+     * 所以这是提示性计数，不是权威状态。
+     */
+    private fun onLanTransferComplete(event: LanFileServer.TransferEvent) {
+        exportCountScope.launch {
+            runCatching { downloadedRepo.incrementExportCount(event.awemeIds) }
+        }
+        runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
+            lanTransferCount += 1
+            // 当前列表里的对应条目立刻显示「已导出」标记
+            getCurrentTabFragment()?.markExported(event.awemeIds)
+            lanStatusView?.text = if (event.isZip) {
+                getString(R.string.manage_export_lan_status_zip, event.awemeIds.size, lanTransferCount)
+            } else {
+                getString(R.string.manage_export_lan_status_file, event.label, lanTransferCount)
+            }
+        }
+    }
+
     private fun stopLanServer() {
         lanServer?.stop()
         lanServer = null
+        lanStatusView = null
     }
 
     override fun onDestroy() {

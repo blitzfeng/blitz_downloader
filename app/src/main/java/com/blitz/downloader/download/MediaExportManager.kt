@@ -36,8 +36,15 @@ object MediaExportManager {
 
     private const val COPY_BUFFER = 64 * 1024
 
-    /** 待导出的单个文件：磁盘文件 + 在 ZIP / URL 中使用的（去重后）展示名。 */
-    data class ExportFile(val file: File, val entryName: String)
+    /**
+     * 待导出的单个文件：磁盘文件 + 在 ZIP / URL 中使用的（去重后）展示名 +
+     * 它所属记录的 [DownloadedVideoEntity.awemeId]。
+     *
+     * [awemeId] 是导出计数的回溯键：局域网导出传输完成后据它给
+     * `downloaded_videos.exportCount` 累加。图集会解析成多个 [ExportFile]，
+     * 它们共享同一个 [awemeId]（计数按记录算，不按文件算）。
+     */
+    data class ExportFile(val file: File, val entryName: String, val awemeId: String)
 
     /** ZIP 导出结果。 */
     data class ZipResult(val zipFile: File, val fileCount: Int)
@@ -64,7 +71,7 @@ object MediaExportManager {
             val files = if (e.mediaType.equals("image", ignoreCase = true)) findImageSet(first) else listOf(first)
             for (f in files) {
                 if (!f.isFile) continue
-                out.add(ExportFile(f, uniqueName(f.name, usedNames)))
+                out.add(ExportFile(f, uniqueName(f.name, usedNames), e.awemeId))
             }
         }
         return out

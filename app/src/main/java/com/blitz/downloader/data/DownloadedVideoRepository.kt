@@ -45,6 +45,23 @@ class DownloadedVideoRepository(context: Context) {
     suspend fun getAuthorCounts(mediaType: String): List<com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount> =
         dao.getAuthorCountsByMediaType(mediaType)
 
+    /**
+     * 导出成功计数 +1（局域网导出传输完成时调用），按 500 一批避免 SQLite 变量上限。
+     * @return 实际更新的行数。
+     */
+    suspend fun incrementExportCount(awemeIds: Collection<String>): Int {
+        if (awemeIds.isEmpty()) return 0
+        val asList = awemeIds.distinct()
+        var updated = 0
+        var i = 0
+        while (i < asList.size) {
+            val part = asList.subList(i, (i + 500).coerceAtMost(asList.size))
+            updated += dao.incrementExportCount(part)
+            i += 500
+        }
+        return updated
+    }
+
     /** 用于网格：是否存在本地已记录下载（按作品 id）。 */
     suspend fun getDownloadedAwemeIdSet(ids: Collection<String>): Set<String> {
         if (ids.isEmpty()) return emptySet()
@@ -132,16 +149,33 @@ class DownloadedVideoRepository(context: Context) {
     /**
      * 指定排序列的分页查询（管理页排序）。[orderColumn] 仅接受来自
      * [com.blitz.downloader.ui.ManageSortOrder] 的固定列名，无注入风险；一律倒序。
+     *
+     * [unassignedOnly] 为管理页「按归属筛选」（见
+     * [com.blitz.downloader.ui.ManageRelationFilter]）的 SQL 侧参数：`null` 不筛选，
+     * `true` 只留「无归属」，`false` 排除「无归属」。筛选发生在 LIMIT 之前，故分页计数仍正确。
      */
     suspend fun getPageByMediaTypeSorted(
         mediaType: String,
         orderColumn: String,
         limit: Int,
         offset: Int,
+        unassignedOnly: Boolean? = null,
     ): List<DownloadedVideoEntity> {
-        val sql = "SELECT * FROM downloaded_videos WHERE mediaType = ? " +
-            "ORDER BY $orderColumn DESC, createdAtMillis DESC LIMIT ? OFFSET ?"
+        val sql = "SELECT * FROM downloaded_videos WHERE mediaType = ?" +
+            unassignedClause(unassignedOnly) +
+            " ORDER BY $orderColumn DESC, createdAtMillis DESC LIMIT ? OFFSET ?"
         return dao.getPageRawSorted(SimpleSQLiteQuery(sql, arrayOf(mediaType, limit, offset)))
+    }
+
+    /**
+     * 「无归属」（`userRelation` 与 `collectionType` 均为空）的 SQL 片段，含前导 ` AND `。
+     * 判定必须与 [com.blitz.downloader.ui.ManageRelationFilter.isUnassigned] 的内存实现等价：
+     * 那边用 `isBlank()`，这边用 `TRIM(...) = ''`；`IFNULL` 兼容迁移前可能残留的 NULL。
+     */
+    private fun unassignedClause(unassignedOnly: Boolean?): String {
+        if (unassignedOnly == null) return ""
+        val cond = "(TRIM(IFNULL(userRelation, '')) = '' AND TRIM(IFNULL(collectionType, '')) = '')"
+        return if (unassignedOnly) " AND $cond" else " AND NOT $cond"
     }
 
     suspend fun countByMediaType(mediaType: String): Int = dao.countByMediaType(mediaType)
