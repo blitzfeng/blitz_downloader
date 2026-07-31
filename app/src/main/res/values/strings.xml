@@ -68,6 +68,31 @@
     <string name="manage_search_empty">没有匹配「%1$s」的结果</string>
     <string name="manage_menu_clear_invalid">清除已失效</string>
     <string name="manage_menu_tags">标签管理</string>
+    <!-- 设置页（MainActivity Toolbar 入口），承载数据库备份 / 恢复 -->
+    <string name="settings_title">设置</string>
+    <string name="settings_group_data">数据管理</string>
+    <string name="settings_backup_db_summary">复制到 Download/bDouyin/backup，卸载后仍保留</string>
+    <string name="settings_restore_db_summary">用备份覆盖当前数据库，完成后自动重启</string>
+    <string name="settings_group_filter">筛选</string>
+    <string name="settings_tag_filter_mode">标签多选匹配方式</string>
+    <string name="settings_tag_filter_mode_all">交集：只显示同时含全部所选标签的视频</string>
+    <string name="settings_tag_filter_mode_any">并集：显示含任一所选标签的视频</string>
+    <string name="settings_tag_filter_mode_all_short">交集（同时满足全部标签）</string>
+    <string name="settings_tag_filter_mode_any_short">并集（满足任一标签）</string>
+    <string name="manage_tag_filter_empty_all">没有同时含「%1$s」的视频</string>
+    <string name="manage_tag_filter_empty_any">没有含「%1$s」中任一标签的视频</string>
+    <!-- 按标签数量筛选（仅视频 Tab） -->
+    <string name="manage_menu_filter_tag_count">按标签数量筛选</string>
+    <string name="manage_menu_filter_tag_count_active">按标签数量筛选（%1$s）</string>
+    <string name="manage_tag_count_title">按标签数量筛选</string>
+    <string name="manage_tag_count_off">不限</string>
+    <string name="manage_tag_count_0">0 个标签（未打标签）</string>
+    <string name="manage_tag_count_1">1 个标签</string>
+    <string name="manage_tag_count_2">2 个标签</string>
+    <string name="manage_tag_count_3">3 个标签</string>
+    <string name="manage_tag_count_4">4 个标签</string>
+    <string name="manage_tag_count_5_plus">5 个及以上标签</string>
+    <string name="manage_tag_count_empty">没有「%1$s」的视频</string>
     <string name="manage_menu_backup_db">备份数据库</string>
     <string name="manage_menu_restore_db">恢复备份</string>
     <string name="manage_backup_confirm_title">备份数据库</string>

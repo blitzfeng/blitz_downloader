@@ -73,6 +73,10 @@ class MainActivity : AppCompatActivity() {
                 onManageClicked()
                 true
             }
+            R.id.action_settings -> {
+                startActivity(Intent(this, SettingsActivity::class.java))
+                true
+            }
             else -> super.onOptionsItemSelected(item)
         }
     }

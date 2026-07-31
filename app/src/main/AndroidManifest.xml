@@ -54,6 +54,11 @@
             android:exported="false"
             android:label="@string/manage_title" />
         <activity
+            android:name=".activity.SettingsActivity"
+            android:exported="false"
+            android:label="@string/settings_title"
+            android:parentActivityName=".activity.MainActivity" />
+        <activity
             android:name=".activity.TagManageActivity"
             android:exported="false"
             android:label="@string/manage_menu_tags"

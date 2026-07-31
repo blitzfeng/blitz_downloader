@@ -16,6 +16,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.ManageActivity
 import com.blitz.downloader.activity.VideoPlayerActivity
+import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.DownloadedVideoRepository
 import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.data.db.DownloadedVideoEntity
@@ -37,10 +38,19 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
     private var isLoading = false
     private var hasMore = true
 
-    /** 当前激活的标签过滤，null 或 TAG_ALL 表示不过滤。 */
-    private var activeTag: String = TagFilterAdapter.TAG_ALL
+    /**
+     * 当前激活的标签过滤，空集合表示不过滤（标签栏上的「全部」）。
+     * 多个标签之间取交集还是并集由设置页决定，见 [tagMatchAll]。
+     */
+    private var activeTags: Set<String> = emptySet()
 
-    /** 当前激活的搜索关键词（trim 后非空时启用搜索路径，忽略 [activeTag]）。 */
+    /**
+     * 标签多选的匹配方式，每次取数时现读设置——设置页在另一个 Activity 里，
+     * 现读即可拿到最新值，不需要跨页变更通知。
+     */
+    private fun tagMatchAll(): Boolean = AppSettings.isTagFilterMatchAll(requireContext())
+
+    /** 当前激活的搜索关键词（trim 后非空时启用搜索路径，忽略 [activeTags]）。 */
     private var activeSearchQuery: String = ""
 
     /**
@@ -65,9 +75,19 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
      */
     private var activeRelation: ManageRelationFilter = ManageRelationFilter.DEFAULT
 
+    /**
+     * 当前「按标签数量筛选」状态（默认不筛选）。叠加在其他筛选之上，但**位于归属筛选之下**
+     * ——激活时只在有归属（点赞 / 收藏 / 收藏夹）的记录里数标签，详见 [filterByTagCount]。
+     *
+     * 判定只在内存里做（[postProcess]），因此它一激活就退出 SQL 分页路径改为全量加载，
+     * 否则「一页 20 条筛剩 2 条、列表撑不满不触发滚动加载」会看起来像数据没了。
+     */
+    private var activeTagCount: ManageTagCountFilter = ManageTagCountFilter.DEFAULT
+
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
     override val supportsClearInvalid: Boolean get() = true
+    override val supportsTagCountFilter: Boolean get() = true
 
     override fun exitSelectionMode() {
         if (::adapter.isInitialized) adapter.exitSelectionMode()
@@ -113,22 +133,48 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
     }
 
     /** 当前范围（搜索 / 标签 / 全部）在数据库中的全部记录，供全选使用。 */
-    private suspend fun loadFullScopeEntities(): List<DownloadedVideoEntity> = withContext(Dispatchers.IO) {
-        val list = when {
-            hasAuthorFilter() -> loadAuthorEntities(MEDIA_TYPE_VIDEO)
-            activeSearchQuery.isNotBlank() -> repo.searchByUserName(MEDIA_TYPE_VIDEO, activeSearchQuery)
-            activeTag == TagFilterAdapter.TAG_ALL -> repo.getAllByMediaType(MEDIA_TYPE_VIDEO)
-            else -> tagRepo.getVideosByTag(activeTag).filter { it.mediaType == MEDIA_TYPE_VIDEO }
+    private suspend fun loadFullScopeEntities(): List<DownloadedVideoEntity> {
+        val matchAll = tagMatchAll()
+        return withContext(Dispatchers.IO) {
+            val list = when {
+                hasAuthorFilter() -> loadAuthorEntities(MEDIA_TYPE_VIDEO)
+                activeSearchQuery.isNotBlank() -> repo.searchByUserName(MEDIA_TYPE_VIDEO, activeSearchQuery)
+                activeTags.isEmpty() -> repo.getAllByMediaType(MEDIA_TYPE_VIDEO)
+                else -> tagRepo.getVideosByTags(activeTags, matchAll)
+                    .filter { it.mediaType == MEDIA_TYPE_VIDEO }
+            }
+            postProcess(list)
         }
-        postProcess(list)
     }
 
     /**
-     * 非分页路径（搜索 / 标签 / 作者 / 全选）的统一后处理：先过「按归属筛选」这一层，
-     * 再按当前排序倒排。分页路径的归属筛选下沉到 SQL，不走这里。
+     * 非分页路径（搜索 / 标签 / 作者 / 全选）的统一后处理：依次过「按归属筛选」
+     * 「按标签数量筛选」两层，再按当前排序倒排。分页路径的归属筛选下沉到 SQL，不走这里；
+     * 标签数量筛选没有 SQL 侧实现，激活时取数路径本身就会切成全量加载。
      */
-    private fun postProcess(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> =
-        sortEntities(activeRelation.apply(list))
+    private suspend fun postProcess(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> =
+        sortEntities(filterByTagCount(activeRelation.apply(list)))
+
+    /**
+     * 按 [activeTagCount] 过滤：标签数来自 `video_tags` 聚合，查不到的记录算 0 个。
+     *
+     * 这一层**隶属于归属筛选**：无归属记录（既无点赞/收藏关系、也不属于收藏夹，通常是从
+     * 他人主页 post 下载的）绝大多数没打过标签，不排掉的话「0 个标签」会被它们淹没，
+     * 看不到真正待整理的点赞/收藏视频。因此归属筛选为 OFF 时，这里仍按
+     * [ManageRelationFilter.EXCLUDE_UNASSIGNED] 收窄；只有用户显式选了「仅看无归属」
+     * 才以用户的选择为准（否则结果必然为空，等于把那个选项废掉）。
+     */
+    private suspend fun filterByTagCount(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> {
+        if (!activeTagCount.isActive || list.isEmpty()) return list
+        val scoped = if (activeRelation == ManageRelationFilter.ONLY_UNASSIGNED) {
+            list
+        } else {
+            list.filterNot { ManageRelationFilter.isUnassigned(it) }
+        }
+        if (scoped.isEmpty()) return scoped
+        val counts = tagRepo.getTagCountMap()
+        return scoped.filter { activeTagCount.matches(counts[it.awemeId] ?: 0) }
+    }
 
     /** 按当前 [activeSort] 对内存中的实体列表倒序排序（用于非分页的筛选/全选路径）。 */
     private fun sortEntities(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> = when (activeSort) {
@@ -149,8 +195,17 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
 
     override fun applyRelationFilter(filter: ManageRelationFilter) {
         if (filter == activeRelation) return
-        // 只切这一层，保留 activeTag / activeSearchQuery / 作者筛选：筛选是叠加关系。
+        // 只切这一层，保留 activeTags / activeSearchQuery / 作者筛选：筛选是叠加关系。
         activeRelation = filter
+        refreshList()
+    }
+
+    override val activeTagCountFilter: ManageTagCountFilter get() = activeTagCount
+
+    override fun applyTagCountFilter(filter: ManageTagCountFilter) {
+        if (filter == activeTagCount) return
+        // 同样只切这一层，其他筛选原样保留
+        activeTagCount = filter
         refreshList()
     }
 
@@ -264,12 +319,12 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
 
         // ── 标签过滤栏 ──────────────────────────────────────────────────────────
         val rvTagFilter: RecyclerView = view.findViewById(R.id.rvTagFilter)
-        tagFilterAdapter = TagFilterAdapter { tag ->
+        tagFilterAdapter = TagFilterAdapter { tags ->
             // 选择标签时强制清掉搜索词与作者筛选；标签与二者互斥，
             // 不清就会出现「点了标签但列表还按搜索/作者筛」的迷之结果。
             activeSearchQuery = ""
             clearAuthorFilterState()
-            activeTag = tag
+            activeTags = tags
             refreshList()
         }
         rvTagFilter.layoutManager = LinearLayoutManager(
@@ -358,7 +413,17 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                     hasMore = false
                     currentOffset += entities.size
                 }
-                activeTag == TagFilterAdapter.TAG_ALL -> {
+                activeTags.isEmpty() && activeTagCount.isActive -> {
+                    // 标签数量筛选只有内存实现，走分页会出现「整页被筛空」，故一次性全量加载
+                    entities = if (currentOffset == 0) {
+                        withContext(Dispatchers.IO) { postProcess(repo.getAllByMediaType(MEDIA_TYPE_VIDEO)) }
+                    } else {
+                        emptyList()
+                    }
+                    hasMore = false
+                    currentOffset += entities.size
+                }
+                activeTags.isEmpty() -> {
                     // 全量分页（按当前排序）；归属筛选下沉到 SQL，保证 LIMIT 前生效、分页计数正确
                     entities = withContext(Dispatchers.IO) {
                         repo.getPageByMediaTypeSorted(
@@ -373,11 +438,14 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                     currentOffset += entities.size
                 }
                 else -> {
-                    // 按标签全量加载（标签结果集通常不大，不做额外分页）
+                    // 按标签全量加载（标签结果集通常不大，不做额外分页）；
+                    // 多选时按设置取交集 / 并集
+                    val matchAll = tagMatchAll()
                     entities = if (currentOffset == 0) {
                         withContext(Dispatchers.IO) {
                             postProcess(
-                                tagRepo.getVideosByTag(activeTag).filter { it.mediaType == MEDIA_TYPE_VIDEO }
+                                tagRepo.getVideosByTags(activeTags, matchAll)
+                                    .filter { it.mediaType == MEDIA_TYPE_VIDEO }
                             )
                         }
                     } else {
@@ -394,6 +462,17 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                 tvEmpty.text = when {
                     hasAuthorFilter() -> getString(R.string.manage_author_empty, activeAuthorName)
                     activeSearchQuery.isNotBlank() -> getString(R.string.manage_search_empty, activeSearchQuery)
+                    // 标签多选取交集时很容易筛空，说清是「哪几个标签的什么组合」没结果
+                    activeTags.isNotEmpty() -> {
+                        val names = activeTags.joinToString("、")
+                        if (tagMatchAll()) {
+                            getString(R.string.manage_tag_filter_empty_all, names)
+                        } else {
+                            getString(R.string.manage_tag_filter_empty_any, names)
+                        }
+                    }
+                    activeTagCount.isActive ->
+                        getString(R.string.manage_tag_count_empty, getString(activeTagCount.labelRes))
                     // 归属筛选放在其他条件之后判断：有更具体的筛选时优先显示那条文案
                     activeRelation != ManageRelationFilter.OFF -> getString(R.string.manage_relation_empty)
                     else -> getString(R.string.manage_empty_videos)
@@ -430,7 +509,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         if (sec.isNotBlank() || name.isNotBlank()) {
             // 作者筛选与搜索/标签互斥
             activeSearchQuery = ""
-            activeTag = TagFilterAdapter.TAG_ALL
+            activeTags = emptySet()
             tagFilterAdapter.resetToAll()
         }
         refreshList()

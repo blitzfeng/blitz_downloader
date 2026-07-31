@@ -54,6 +54,40 @@ interface VideoTagDao {
     )
     suspend fun getVideosByTag(tagName: String): List<DownloadedVideoEntity>
 
+    /**
+     * 多标签**并集**筛选：打了 [tagNames] 中任一标签即命中，按下载时间倒序。
+     * 用子查询而非 JOIN，避免一条视频命中多个标签时出现重复行。
+     */
+    @Query(
+        """
+        SELECT v.* FROM downloaded_videos v
+        WHERE v.awemeId IN (SELECT awemeId FROM video_tags WHERE tagName IN (:tagNames))
+        ORDER BY v.createdAtMillis DESC
+        """,
+    )
+    suspend fun getVideosByAnyTag(tagNames: List<String>): List<DownloadedVideoEntity>
+
+    /**
+     * 多标签**交集**筛选：同时打了 [tagNames] 全部标签才命中，按下载时间倒序。
+     *
+     * [tagCount] 必须等于 `tagNames.size`（去重后）；`video_tags` 主键是
+     * (awemeId, tagName)，同一视频不会重复计同一标签，故 `COUNT(DISTINCT tagName)`
+     * 达到 [tagCount] 即代表全部命中。
+     */
+    @Query(
+        """
+        SELECT v.* FROM downloaded_videos v
+        WHERE v.awemeId IN (
+            SELECT awemeId FROM video_tags
+            WHERE tagName IN (:tagNames)
+            GROUP BY awemeId
+            HAVING COUNT(DISTINCT tagName) = :tagCount
+        )
+        ORDER BY v.createdAtMillis DESC
+        """,
+    )
+    suspend fun getVideosByAllTags(tagNames: List<String>, tagCount: Int): List<DownloadedVideoEntity>
+
     /** 删除某标签在所有视频上的关联行（标签被删除时使用）。 */
     @Query("DELETE FROM video_tags WHERE tagName = :tagName")
     suspend fun deleteTagFromAllVideos(tagName: String)
@@ -69,6 +103,16 @@ interface VideoTagDao {
     @Query("SELECT tagName, COUNT(*) AS count FROM video_tags GROUP BY tagName ORDER BY count DESC")
     suspend fun getTagsWithCount(): List<TagCount>
 
+    /**
+     * 统计每条视频身上打了几个标签（供管理页「按标签数量筛选」用）。
+     * 只返回**有标签**的视频；结果里查不到的 awemeId 即 0 个标签。
+     */
+    @Query("SELECT awemeId, COUNT(*) AS count FROM video_tags GROUP BY awemeId")
+    suspend fun getTagCountPerVideo(): List<VideoTagCount>
+
     /** 标签与其对应视频数的聚合结果。 */
     data class TagCount(val tagName: String, val count: Int)
+
+    /** 单条视频与其标签数的聚合结果。 */
+    data class VideoTagCount(val awemeId: String, val count: Int)
 }

@@ -29,6 +29,12 @@
         android:title="@string/manage_menu_filter_relation"
         app:showAsAction="never" />
 
+    <!-- 普通模式下可见：按标签数量筛选（仅视频 Tab；同样叠加在其他筛选之上） -->
+    <item
+        android:id="@+id/action_filter_tag_count"
+        android:title="@string/manage_menu_filter_tag_count"
+        app:showAsAction="never" />
+
     <!-- 普通模式下可见：列表排序 -->
     <item
         android:id="@+id/action_sort"
@@ -47,17 +53,7 @@
         android:title="@string/manage_menu_tags"
         app:showAsAction="never" />
 
-    <!-- 普通模式下可见：备份数据库到 Download/bDouyin/backup -->
-    <item
-        android:id="@+id/action_backup_db"
-        android:title="@string/manage_menu_backup_db"
-        app:showAsAction="never" />
-
-    <!-- 普通模式下可见：从备份目录恢复数据库（恢复后会重启 App） -->
-    <item
-        android:id="@+id/action_restore_db"
-        android:title="@string/manage_menu_restore_db"
-        app:showAsAction="never" />
+    <!-- 备份 / 恢复数据库已移到「设置」页（MainActivity Toolbar 入口）。 -->
 
     <!-- 多选模式下可见：全选 / 取消全选（文字形式常驻 Toolbar，标题动态切换） -->
     <item

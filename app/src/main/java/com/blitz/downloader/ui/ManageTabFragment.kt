@@ -95,4 +95,17 @@ interface ManageTabFragment {
      * 而要保证每条取数路径（分页 / 搜索 / 标签 / 作者 / 全选）都再过一遍这层筛选。
      */
     fun applyRelationFilter(filter: ManageRelationFilter) {}
+
+    /** 是否支持「按标签数量筛选」（只有带标签功能的视频 Tab 支持）。 */
+    val supportsTagCountFilter: Boolean get() = false
+
+    /** 当前「按标签数量筛选」状态（供筛选对话框预选中、菜单标题回显）。 */
+    val activeTagCountFilter: ManageTagCountFilter get() = ManageTagCountFilter.DEFAULT
+
+    /**
+     * 切换「按标签数量筛选」并从头刷新列表。
+     *
+     * 与 [applyRelationFilter] 一样是叠加的一层，实现里不要清空其他筛选状态。
+     */
+    fun applyTagCountFilter(filter: ManageTagCountFilter) {}
 }

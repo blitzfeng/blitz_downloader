@@ -5,11 +5,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.drawable.Drawable
-import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
-import android.os.Process
-import androidx.activity.result.contract.ActivityResultContracts
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.Menu
@@ -36,7 +33,6 @@ import androidx.core.view.WindowInsetsCompat
 import com.blitz.downloader.R
 import com.blitz.downloader.data.DownloadedVideoRepository
 import com.blitz.downloader.data.VideoTagRepository
-import com.blitz.downloader.data.db.DatabaseBackupManager
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.databinding.ActivityManageBinding
 import com.blitz.downloader.download.BatchDownloadCoordinator
@@ -46,6 +42,7 @@ import com.blitz.downloader.ui.AuthorFilterAdapter
 import com.blitz.downloader.ui.ManageImageFragment
 import com.blitz.downloader.ui.ManageRelationFilter
 import com.blitz.downloader.ui.ManageSortOrder
+import com.blitz.downloader.ui.ManageTagCountFilter
 import com.blitz.downloader.ui.ManageTabFragment
 import com.blitz.downloader.ui.ManageVideoFragment
 import java.io.File
@@ -55,7 +52,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.system.exitProcess
 
 class ManageActivity : AppCompatActivity() {
 
@@ -92,12 +88,6 @@ class ManageActivity : AppCompatActivity() {
     /** 作者筛选抽屉的列表 Adapter。 */
     private lateinit var authorAdapter: AuthorFilterAdapter
     private val downloadedRepo by lazy { DownloadedVideoRepository(this) }
-
-    /** SAF 文件选择器：选中备份 .db 后经授权 Uri 恢复，绕过 MediaStore 归属限制（重装后可用）。 */
-    private val restoreFilePickerLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) confirmAndRestoreUri(uri)
-        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -274,6 +264,39 @@ class ManageActivity : AppCompatActivity() {
         }
     }
 
+    // ── 按标签数量筛选 ─────────────────────────────────────────────────────────
+
+    /**
+     * 「按标签数量筛选」：不限 / 0 个 …… / 5 个及以上（上限见
+     * [ManageTagCountFilter.MAX_COUNT]）。与归属筛选一样是叠加的一层，只切状态。
+     */
+    private fun showTagCountFilterDialog() {
+        val fragment = getCurrentTabFragment() ?: return
+        if (!fragment.supportsTagCountFilter) return
+        val filters = ManageTagCountFilter.values()
+        val labels = filters.map { getString(it.labelRes) }.toTypedArray()
+        val checked = filters.indexOf(fragment.activeTagCountFilter)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manage_tag_count_title)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                fragment.applyTagCountFilter(filters[which])
+                dialog.dismiss()
+                invalidateOptionsMenu() // 菜单标题回显当前筛选状态
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** 菜单标题：未筛选时用原文案，筛选中则附上当前档位。 */
+    private fun tagCountMenuTitle(): String {
+        val filter = getCurrentTabFragment()?.activeTagCountFilter ?: ManageTagCountFilter.DEFAULT
+        return if (!filter.isActive) {
+            getString(R.string.manage_menu_filter_tag_count)
+        } else {
+            getString(R.string.manage_menu_filter_tag_count_active, getString(filter.labelRes))
+        }
+    }
+
     // ── 统计面板 ───────────────────────────────────────────────────────────────
 
     private fun showStatsDialog() {
@@ -372,10 +395,9 @@ class ManageActivity : AppCompatActivity() {
         val selectAll = menu.findItem(R.id.action_select_all)
         val manageTags = menu.findItem(R.id.action_manage_tags)
 
-        val backup = menu.findItem(R.id.action_backup_db)
-        val restore = menu.findItem(R.id.action_restore_db)
         val filterAuthor = menu.findItem(R.id.action_filter_author)
         val filterRelation = menu.findItem(R.id.action_filter_relation)
+        val filterTagCount = menu.findItem(R.id.action_filter_tag_count)
         val sort = menu.findItem(R.id.action_sort)
         val stats = menu.findItem(R.id.action_stats)
 
@@ -383,14 +405,13 @@ class ManageActivity : AppCompatActivity() {
         val exportLan = menu.findItem(R.id.action_export_lan)
 
         if (isInSelectionMode) {
-            // 多选模式：让出 Toolbar 给删除/标签按钮，且搜索/备份在多选状态下都无意义
+            // 多选模式：让出 Toolbar 给删除/标签按钮，其余入口在多选状态下都无意义
             search?.isVisible = false
             clearInvalid?.isVisible = false
             manageTags?.isVisible = false
-            backup?.isVisible = false
-            restore?.isVisible = false
             filterAuthor?.isVisible = false
             filterRelation?.isVisible = false
+            filterTagCount?.isVisible = false
             sort?.isVisible = false
             stats?.isVisible = false
             deleteSelected?.isVisible = true
@@ -411,11 +432,13 @@ class ManageActivity : AppCompatActivity() {
             val onVideoTab = binding.viewPager.currentItem == 0
             clearInvalid?.isVisible = onVideoTab
             manageTags?.isVisible = true
-            backup?.isVisible = true
-            restore?.isVisible = true
             filterAuthor?.isVisible = true
             filterRelation?.isVisible = true
             filterRelation?.title = relationMenuTitle()
+            // 「按标签数量筛选」只在有标签功能的 Tab（视频）下显示
+            val supportsTagCount = getCurrentTabFragment()?.supportsTagCountFilter == true
+            filterTagCount?.isVisible = supportsTagCount
+            if (supportsTagCount) filterTagCount?.title = tagCountMenuTitle()
             sort?.isVisible = true
             stats?.isVisible = true
             deleteSelected?.isVisible = false
@@ -518,6 +541,10 @@ class ManageActivity : AppCompatActivity() {
                 showRelationFilterDialog()
                 true
             }
+            R.id.action_filter_tag_count -> {
+                showTagCountFilterDialog()
+                true
+            }
             R.id.action_sort -> {
                 showSortDialog()
                 true
@@ -526,192 +553,8 @@ class ManageActivity : AppCompatActivity() {
                 showStatsDialog()
                 true
             }
-            R.id.action_backup_db -> {
-                confirmAndBackup()
-                true
-            }
-            R.id.action_restore_db -> {
-                pickAndRestoreBackup()
-                true
-            }
             else -> super.onOptionsItemSelected(item)
         }
-    }
-
-    // ── 备份 / 恢复 ────────────────────────────────────────────────────────────
-
-    /** 二次确认后在 IO 线程执行 [DatabaseBackupManager.backupNow]，结果用 Toast 提示。 */
-    private fun confirmAndBackup() {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.manage_backup_confirm_title)
-            .setMessage(R.string.manage_backup_confirm_msg)
-            .setPositiveButton(android.R.string.ok) { _, _ -> doBackup() }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    private fun doBackup() {
-        @Suppress("DEPRECATION")
-        val progress = ProgressDialog(this).apply {
-            setMessage(getString(R.string.manage_backup_doing))
-            setCancelable(false)
-            show()
-        }
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { DatabaseBackupManager.backupNow(applicationContext) }
-            }
-            progress.dismiss()
-            result.fold(
-                onSuccess = { file ->
-                    Toast.makeText(
-                        this@ManageActivity,
-                        getString(R.string.manage_backup_done, file.absolutePath),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                },
-                onFailure = { e ->
-                    Toast.makeText(
-                        this@ManageActivity,
-                        getString(R.string.manage_backup_failed, e.message ?: e.javaClass.simpleName),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                },
-            )
-        }
-    }
-
-    /**
-     * 列出已有备份让用户选；首项固定为「从文件选择」（SAF），用于重装后备份文件被孤儿化、
-     * 无法直接 File 读取的场景。选定后二次确认并执行恢复。
-     */
-    private fun pickAndRestoreBackup() {
-        lifecycleScope.launch {
-            val backups = withContext(Dispatchers.IO) { DatabaseBackupManager.listBackups() }
-            if (backups.isEmpty()) {
-                // 没有可列出的备份：直接走文件选择（备份可能存在但已孤儿化，列不出/读不了）
-                Toast.makeText(this@ManageActivity, R.string.manage_restore_no_backups, Toast.LENGTH_LONG).show()
-                launchRestoreFilePicker()
-                return@launch
-            }
-            val labels = (listOf(getString(R.string.manage_restore_from_file)) +
-                backups.map { it.displayLabel() }).toTypedArray()
-            AlertDialog.Builder(this@ManageActivity)
-                .setTitle(R.string.manage_restore_pick_title)
-                .setItems(labels) { _, which ->
-                    if (which == 0) launchRestoreFilePicker() else confirmAndRestore(backups[which - 1])
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-    }
-
-    private fun launchRestoreFilePicker() {
-        // db 文件 MIME 不稳定，用 */* 让用户自由选取；SAF 授权 Uri 可绕过归属校验
-        runCatching { restoreFilePickerLauncher.launch(arrayOf("*/*")) }
-            .onFailure {
-                Toast.makeText(this, R.string.manage_restore_picker_unavailable, Toast.LENGTH_LONG).show()
-            }
-    }
-
-    private fun confirmAndRestoreUri(uri: Uri) {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.manage_restore_confirm_title)
-            .setMessage(R.string.manage_restore_confirm_msg)
-            .setPositiveButton(android.R.string.ok) { _, _ -> doRestoreUri(uri) }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    private fun doRestoreUri(uri: Uri) {
-        @Suppress("DEPRECATION")
-        val progress = ProgressDialog(this).apply {
-            setMessage(getString(R.string.manage_restore_doing))
-            setCancelable(false)
-            show()
-        }
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    contentResolver.openInputStream(uri)?.use { input ->
-                        DatabaseBackupManager.restoreFromStream(applicationContext, input)
-                    } ?: throw java.io.IOException("无法打开所选文件")
-                }
-            }
-            progress.dismiss()
-            result.fold(
-                onSuccess = { restartApp() },
-                onFailure = { e ->
-                    Toast.makeText(
-                        this@ManageActivity,
-                        getString(R.string.manage_restore_failed, e.message ?: e.javaClass.simpleName),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                },
-            )
-        }
-    }
-
-    private fun confirmAndRestore(entry: DatabaseBackupManager.BackupEntry) {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.manage_restore_confirm_title)
-            .setMessage(R.string.manage_restore_confirm_msg)
-            .setPositiveButton(android.R.string.ok) { _, _ -> doRestore(entry) }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    private fun doRestore(entry: DatabaseBackupManager.BackupEntry) {
-        @Suppress("DEPRECATION")
-        val progress = ProgressDialog(this).apply {
-            setMessage(getString(R.string.manage_restore_doing))
-            setCancelable(false)
-            show()
-        }
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { DatabaseBackupManager.restoreFrom(applicationContext, entry) }
-            }
-            progress.dismiss()
-            result.fold(
-                onSuccess = { restartApp() },
-                onFailure = { e ->
-                    if (e is SecurityException) {
-                        // 备份文件被孤儿化（重装/换签名），File 读取被拒 → 引导改用文件选择器
-                        AlertDialog.Builder(this@ManageActivity)
-                            .setTitle(R.string.manage_restore_confirm_title)
-                            .setMessage(R.string.manage_restore_denied_hint)
-                            .setPositiveButton(R.string.manage_restore_from_file) { _, _ -> launchRestoreFilePicker() }
-                            .setNegativeButton(android.R.string.cancel, null)
-                            .show()
-                    } else {
-                        Toast.makeText(
-                            this@ManageActivity,
-                            getString(R.string.manage_restore_failed, e.message ?: e.javaClass.simpleName),
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                },
-            )
-        }
-    }
-
-    /**
-     * 恢复完成后必须重启进程：Room/SQLite 在进程内可能残留页缓存或仓库层引用，
-     * 重启是最干净的兜底（也避免 UI 显示恢复前已加载的旧数据）。
-     */
-    private fun restartApp() {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-            ?: Intent(this, MainActivity::class.java)
-        launchIntent.addFlags(
-            Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP
-        )
-        startActivity(launchIntent)
-        finishAffinity()
-        Process.killProcess(Process.myPid())
-        exitProcess(0)
     }
 
     // ── 导出选中 ───────────────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ Android 应用（Kotlin），用于批量下载抖音视频与图集。实现思
 ```
 ui (Fragments / Adapters)        activity (MainActivity, DouyinWebBrowserActivity,
    │                                       ManageActivity, TagManageActivity,
+   │                                       SettingsActivity,
    │                                       VideoPlayerActivity, ImageViewerActivity)
    ▼
 download (BatchDownloadCoordinator, DouyinVideoHttp, MediaExportManager,
@@ -123,7 +124,7 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 
 - `AppDatabase` 当前 **version = 10**。三张表：`downloaded_videos`、`video_tags`、`tags`。
 - 所有迁移 `MIGRATION_1_2 .. MIGRATION_9_10` 都在 `AppDatabase` 里显式列出。**不要**依赖 `fallbackToDestructiveMigration` 来"对付过去"。新增字段时：写 `MIGRATION_10_11` → `version = 11` → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。
-- 备份/恢复走 `DatabaseBackupManager`（管理页入口）——它直接操作 SQLite 文件，改库结构后要确认导入旧备份的兼容处理。备份写到公共 `Download/bDouyin/backup`（存活于卸载、可 MTP 看到）。**恢复有两条路径**：`restoreFrom(entry)` 直接 File 读取，但**重装/换签名后备份文件在 MediaStore 被孤儿化**（owner 清空 + `.db` 属非媒体，`READ_MEDIA_*` 不覆盖）会抛 `SecurityException`；此时 UI 引导改用 SAF（`ACTION_OPEN_DOCUMENT` → `restoreFromStream`），授权 Uri 绕过归属校验。别把恢复退回成"只 File 读取"。
+- 备份/恢复走 `DatabaseBackupManager`（入口在 `SettingsActivity` 设置页，由 MainActivity Toolbar 的设置图标进入；UI 逻辑都在 `SettingsActivity` 里，管理页菜单已不再有这两项）——它直接操作 SQLite 文件，改库结构后要确认导入旧备份的兼容处理。备份写到公共 `Download/bDouyin/backup`（存活于卸载、可 MTP 看到）。**恢复有两条路径**：`restoreFrom(entry)` 直接 File 读取，但**重装/换签名后备份文件在 MediaStore 被孤儿化**（owner 清空 + `.db` 属非媒体，`READ_MEDIA_*` 不覆盖）会抛 `SecurityException`；此时 UI 引导改用 SAF（`ACTION_OPEN_DOCUMENT` → `restoreFromStream`），授权 Uri 绕过归属校验。别把恢复退回成"只 File 读取"。
 - `userRelation` 是 `|` 分隔的多标签字符串（`"like"`、`"like|<夹名>"`、`"<夹名>"`）；写入时统一通过 `DownloadedVideoRepository.buildUserRelationFromLike(...)` / `buildUserRelationFromCollection(...)` 构造，**不要**手拼。
 - `DefaultTags.list` 是预设标签的唯一来源，也是 v6→v7 / v7→v8 迁移插入的内容；改 `DefaultTags.kt` 的同时检查迁移逻辑是否还一致。
 - `downloadType` 合法值见 `DownloadSourceType`；`mediaType` 见 `DownloadMediaType`（`"video"` / `"image"`）。

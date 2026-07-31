@@ -142,7 +142,36 @@ class VideoTagRepository(context: Context) {
     suspend fun getVideosByTag(tagName: String): List<DownloadedVideoEntity> =
         videoTagDao.getVideosByTag(tagName)
 
+    /**
+     * 按多个标签筛选视频（管理页标签栏多选），按下载时间倒序。
+     *
+     * @param matchAll true = 交集（同时含全部标签），false = 并集（含任一标签）。
+     *                 匹配方式由用户在设置页决定，见 `AppSettings.isTagFilterMatchAll`。
+     * @return [tagNames] 为空时返回空列表——「没选标签」由调用方走不筛选的路径，不该落到这里。
+     */
+    suspend fun getVideosByTags(
+        tagNames: Collection<String>,
+        matchAll: Boolean,
+    ): List<DownloadedVideoEntity> {
+        val distinct = tagNames.distinct()
+        if (distinct.isEmpty()) return emptyList()
+        if (distinct.size == 1) return videoTagDao.getVideosByTag(distinct.first())
+        return if (matchAll) {
+            videoTagDao.getVideosByAllTags(distinct, distinct.size)
+        } else {
+            videoTagDao.getVideosByAnyTag(distinct)
+        }
+    }
+
     /** 统计每个标签对应的视频数，按数量倒序。 */
     suspend fun getTagsWithCount(): List<VideoTagDao.TagCount> =
         videoTagDao.getTagsWithCount()
+
+    /**
+     * 每条视频的标签数映射（awemeId → 标签数），供管理页「按标签数量筛选」使用。
+     * 只包含**有标签**的视频；map 里查不到的 awemeId 表示 0 个标签，
+     * 调用方用 `map[id] ?: 0` 取值即可，不必先查全库 id。
+     */
+    suspend fun getTagCountMap(): Map<String, Int> =
+        videoTagDao.getTagCountPerVideo().associate { it.awemeId to it.count }
 }
