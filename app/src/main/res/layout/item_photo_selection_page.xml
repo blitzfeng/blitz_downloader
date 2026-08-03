@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    图集选图弹窗的单页：图片 + 图片下方的勾选框。
+    ViewPager2 要求页面根布局是 match_parent × match_parent。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:paddingHorizontal="20dp">
+
+    <ImageView
+        android:id="@+id/ivPhotoPage"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:scaleType="fitCenter"
+        android:contentDescription="@string/photo_pick_title" />
+
+    <CheckBox
+        android:id="@+id/cbPhotoPage"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="6dp"
+        android:minHeight="40dp"
+        android:textSize="14sp" />
+
+</LinearLayout>

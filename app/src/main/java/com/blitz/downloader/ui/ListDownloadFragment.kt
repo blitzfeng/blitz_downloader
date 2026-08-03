@@ -245,7 +245,8 @@ class ListDownloadFragment : Fragment() {
             Toast.makeText(requireContext(), R.string.batch_download_none_selected, Toast.LENGTH_SHORT).show()
             return
         }
-        val downloadable = selected.filter { !it.downloadUrl.isNullOrBlank() || it.imageUrls.isNotEmpty() }
+        // 图集按用户在选图弹窗里的勾选结果算（downloadImageUrls），没选图的图集不算可下载
+        val downloadable = selected.filter { !it.downloadUrl.isNullOrBlank() || it.downloadImageUrls.isNotEmpty() }
         if (downloadable.isEmpty()) {
             Toast.makeText(requireContext(), R.string.batch_download_no_play_url, Toast.LENGTH_LONG).show()
             return
@@ -352,12 +353,59 @@ class ListDownloadFragment : Fragment() {
 
     private fun toggleSelection(id: String) {
         val index = videoItems.indexOfFirst { it.id == id }
-        if (index != -1) {
-            val current = videoItems[index]
-            if (current.isDownloaded) return
-            videoItems[index] = current.copy(isSelected = !current.isSelected)
-            videoAdapter.submitList(currentDisplayList())
-            updateSelectedCountText()
+        if (index == -1) return
+        val current = videoItems[index]
+        if (current.isDownloaded) return
+        val nowSelected = !current.isSelected
+        videoItems[index] = current.copy(
+            isSelected = nowSelected,
+            // 取消勾选时顺手清掉子选择：下次再勾选回到"默认全选"，不残留上一次的选图
+            selectedImageIndices = if (nowSelected) current.selectedImageIndices else null,
+        )
+        videoAdapter.submitList(currentDisplayList())
+        updateSelectedCountText()
+
+        // 勾选图集时弹出选图弹窗（默认全选）；一张都不选则连这条的勾选一起取消
+        if (nowSelected && current.isPhoto && current.imageUrls.isNotEmpty()) {
+            showPhotoSelection(current.id, editable = true)
+        }
+    }
+
+    /**
+     * 打开图集选图弹窗。
+     *
+     * @param editable false 时是纯预览（未勾选的、或已下载的图集），关闭后不改动列表状态——
+     * 否则"只是想看看"会因为默认全选而把这条静默勾上。
+     */
+    private fun showPhotoSelection(id: String, editable: Boolean) {
+        val item = videoItems.firstOrNull { it.id == id } ?: return
+        if (item.imageUrls.isEmpty()) return
+        PhotoSelectionBottomSheet.show(
+            context = requireContext(),
+            imageUrls = item.imageUrls,
+            initialSelection = item.selectedImageIndices,
+            editable = editable,
+        ) { result -> applyPhotoSelection(id, result) }
+    }
+
+    /**
+     * 选图弹窗关闭后回写列表：`null` = 全选，空集合 = 一张都没选（视为放弃这条，连勾选一起取消）。
+     */
+    private fun applyPhotoSelection(id: String, result: Set<Int>?) {
+        // 弹窗关闭回调可能晚于 onDestroyView（如返回上一页时被 dismiss）
+        if (_binding == null) return
+        val index = videoItems.indexOfFirst { it.id == id }
+        if (index == -1) return
+        val item = videoItems[index]
+        val keepSelected = result == null || result.isNotEmpty()
+        videoItems[index] = item.copy(
+            isSelected = keepSelected,
+            selectedImageIndices = if (keepSelected) result else null,
+        )
+        videoAdapter.submitList(currentDisplayList())
+        updateSelectedCountText()
+        if (!keepSelected) {
+            Toast.makeText(requireContext(), R.string.photo_pick_none_selected, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -825,7 +873,12 @@ class ListDownloadFragment : Fragment() {
      */
     private fun onPreviewClicked(item: VideoItemUiModel) {
         if (item.isPhoto) {
-            Toast.makeText(requireContext(), "图集预览功能即将上线", Toast.LENGTH_SHORT).show()
+            if (item.imageUrls.isEmpty()) {
+                Toast.makeText(requireContext(), R.string.batch_download_no_play_url, Toast.LENGTH_SHORT).show()
+                return
+            }
+            // 已勾选的图集可在预览里顺手改选图；未勾选 / 已下载的只看不改
+            showPhotoSelection(item.id, editable = item.isSelected && !item.isDownloaded)
             return
         }
 

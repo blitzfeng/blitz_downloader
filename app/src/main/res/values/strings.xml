@@ -52,6 +52,7 @@
     <string name="batch_download_done">批量下载结束：成功 %1$d，失败 %2$d（视频→下载/bDouyin/videos，图集→下载/bDouyin/images）</string>
     <string name="grid_badge_downloaded">已下载</string>
     <string name="grid_badge_photo">图集 %1$d张</string>
+    <string name="grid_badge_photo_partial">图集 %1$d/%2$d张</string>
     <string name="item_action_author_posts">查看TA的Post</string>
     <string name="item_action_preview">预览</string>
     <string name="btn_back_to_my_page">返回我的主页</string>
@@ -214,4 +215,15 @@
     <string name="player_play_error">视频播放失败，请检查文件是否完整</string>
     <string name="player_first_video">已经是第一个视频了</string>
     <string name="player_last_video">已经是最后一个视频了</string>
+
+    <!-- 图集选图弹窗 -->
+    <string name="photo_pick_title">选择要下载的图片</string>
+    <string name="photo_pick_title_preview">图集预览</string>
+    <string name="photo_pick_count">已选 %1$d / %2$d</string>
+    <string name="photo_pick_page_indicator">第 %1$d / %2$d 张</string>
+    <string name="photo_pick_item_checkbox">下载这张</string>
+    <string name="photo_pick_select_all">全选</string>
+    <string name="photo_pick_deselect_all">全不选</string>
+    <string name="photo_pick_done">完成</string>
+    <string name="photo_pick_none_selected">一张都没选，已取消勾选该图集</string>
 </resources>

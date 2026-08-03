@@ -110,6 +110,17 @@ class ManageActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         defaultNavIcon = binding.toolbar.navigationIcon
 
+        // 多选时标题可能被右侧菜单挤到省略，点一下 Toolbar 用 Toast 把数量完整弹出来
+        binding.toolbar.setOnClickListener {
+            if (isInSelectionMode) {
+                Toast.makeText(
+                    this,
+                    getString(R.string.manage_selected_count, currentSelectionCount),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+
         binding.viewPager.adapter = ManagePagerAdapter(this)
 
         TabLayoutMediator(binding.tabLayout, binding.viewPager) { tab, position ->

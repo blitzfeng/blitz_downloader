@@ -91,7 +91,8 @@ object BatchDownloadCoordinator {
     ): BatchResult = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         val videoTargets = items.filter { it.isSelected && !it.isPhoto && !it.downloadUrl.isNullOrBlank() }
-        val photoTargets = items.filter { it.isSelected && it.isPhoto && it.imageUrls.isNotEmpty() }
+        // 图集只下用户在选图弹窗里勾中的那几张（未做子选择时 downloadImageUrls 即全部）
+        val photoTargets = items.filter { it.isSelected && it.isPhoto && it.downloadImageUrls.isNotEmpty() }
         val total = videoTargets.size + photoTargets.size
         if (total == 0) {
             return@withContext BatchResult(total = 0, success = 0, failed = 0, succeededItems = emptyList())
@@ -169,8 +170,14 @@ object BatchDownloadCoordinator {
     }
 
     /**
-     * 下载图集中的全部图片；全部成功才视为整体成功（与视频重试逻辑对齐）。
+     * 下载图集中**待下载的**图片（[VideoItemUiModel.downloadImageUrls]，用户选图后可能只是其中几张）；
+     * 全部成功才视为整体成功（与视频重试逻辑对齐）。
      * 文件名：`{作者}_{描述}_{序号}.jpg`（序号从 01 起，两位补零）。
+     *
+     * 序号按**实际下载的这几张**连续编号，而不是沿用原图集里的下标——`_01` 必须存在，
+     * 因为入库的 `filePath` 就是第一张图，`ImageViewerActivity.findImageSet` 与导出时的
+     * 兄弟文件扫描都依赖 `base_\d+` 这套连续命名。
+     *
      * @return 第一张图片的存储路径（供数据库记录），任意一张失败则返回 null。
      */
     private suspend fun downloadPhotoGalleryWithRetries(
@@ -179,11 +186,12 @@ object BatchDownloadCoordinator {
         maxRetries: Int,
     ): String? {
         val base = buildFileNameBase(item)
-        val total = item.imageUrls.size
+        val urls = item.downloadImageUrls
+        val total = urls.size
         var firstPath: String? = null
         var allOk = true
-        for (idx in item.imageUrls.indices) {
-            val url = item.imageUrls[idx]
+        for (idx in urls.indices) {
+            val url = urls[idx]
             val ext = extractImageExtension(url)
             val displayName = "${base}_${(idx + 1).toString().padStart(2, '0')}.$ext"
             val path = downloadImageToMediaStoreWithRetries(

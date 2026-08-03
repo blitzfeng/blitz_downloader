@@ -30,6 +30,16 @@ data class VideoItemUiModel(
     val isPhoto: Boolean = false,
     /** 图集所有图片的最优下载 URL 列表（[isPhoto]=true 时非空）。 */
     val imageUrls: List<String> = emptyList(),
+    /**
+     * 用户在图集选图弹窗（[PhotoSelectionBottomSheet]）里勾选的图片下标（相对 [imageUrls]）。
+     *
+     * `null` = 没做过子选择，按**全选**处理——批量「全选」按钮勾中的图集就是这个状态，
+     * 不会因此弹窗。全选完成时也归一化回 `null`，保证"全选"只有一种表示。
+     *
+     * 空集合是**非法停留状态**：一张都不选等于不下载这条，[ListDownloadFragment] 会连同
+     * `isSelected` 一起取消，不会把空集合留在列表里。
+     */
+    val selectedImageIndices: Set<Int>? = null,
     /** 视频创作者的稳定 `sec_user_id`，来自 [com.blitz.downloader.api.Author.secUid]。写入 DB 时用。 */
     val authorSecUserId: String = "",
     /**
@@ -57,7 +67,21 @@ data class VideoItemUiModel(
      * 写入 [com.blitz.downloader.data.db.DownloadedVideoEntity.collectCount]。
      */
     val collectCount: Long = 0L,
-)
+) {
+    /**
+     * 实际参与下载的图集图片 URL：做过子选择时只留勾中的那几张，否则是全部。
+     * 下载链路（[com.blitz.downloader.download.BatchDownloadCoordinator]）一律走这个属性，
+     * **不要**直接用 [imageUrls]，否则用户的选图会被忽略。
+     */
+    val downloadImageUrls: List<String>
+        get() = selectedImageIndices
+            ?.let { sel -> imageUrls.filterIndexed { index, _ -> index in sel } }
+            ?: imageUrls
+
+    /** 是否只选了图集里的一部分图片（用于网格徽标显示 `3/9张`）。 */
+    val hasPartialImageSelection: Boolean
+        get() = selectedImageIndices != null && selectedImageIndices.size < imageUrls.size
+}
 
 class VideoGridAdapter(
     private var items: List<VideoItemUiModel>,
@@ -133,7 +157,16 @@ class VideoGridAdapter(
 
             if (item.isPhoto && item.imageUrls.isNotEmpty()) {
                 photoBadge.visibility = View.VISIBLE
-                photoBadge.text = itemView.context.getString(R.string.grid_badge_photo, item.imageUrls.size)
+                // 只选了部分图片时徽标改成 `3/9张`，避免"选完就看不出选了几张"
+                photoBadge.text = if (item.hasPartialImageSelection) {
+                    itemView.context.getString(
+                        R.string.grid_badge_photo_partial,
+                        item.selectedImageIndices?.size ?: item.imageUrls.size,
+                        item.imageUrls.size,
+                    )
+                } else {
+                    itemView.context.getString(R.string.grid_badge_photo, item.imageUrls.size)
+                }
             } else {
                 photoBadge.visibility = View.GONE
             }

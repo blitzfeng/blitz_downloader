@@ -87,7 +87,10 @@ class DownloadService : Service() {
     }
 
     private suspend fun processJob(job: DownloadJob) {
-        val total = job.items.count { it.isSelected && (!it.downloadUrl.isNullOrBlank() || it.imageUrls.isNotEmpty()) }
+        // 与 BatchDownloadCoordinator 的目标筛选口径保持一致（图集看选图后的 downloadImageUrls）
+        val total = job.items.count {
+            it.isSelected && (!it.downloadUrl.isNullOrBlank() || it.downloadImageUrls.isNotEmpty())
+        }
         if (total == 0) return
 
         updateProgress(done = 0, total = total, running = total, indeterminate = false)
