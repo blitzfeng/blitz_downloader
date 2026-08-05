@@ -17,12 +17,21 @@ import com.blitz.downloader.data.db.VideoTagEntity
  * 2. [addTag] / [setTags] 为视频打标签（写入 `video_tags` 表）
  * 3. [getAvailableTags] 展示所有可用标签（含未使用的预设标签）
  * 4. [getVideosByTag] 按标签筛选视频
+ *
+ * ### 打标签的两组入口（别混用）
+ * - **程序自动**：[addTag] / [addTags] / [setTags] / [ensureCollectFolderTagLinked]，只写 `video_tags`。
+ * - **用户手动编辑**：[setTagsAsUserEdit] / [addTagsAsUserEdit]，除写 `video_tags` 外还给
+ *   `downloaded_videos.tagEditCount` 累加。UI 层的标签编辑一律走这两个，
+ *   否则「用户改过几次标签」的统计会漏计；反过来下载流程走它们则会虚增。
  */
 class VideoTagRepository(context: Context) {
 
     private val db = AppDatabase.getInstance(context)
     private val videoTagDao = db.videoTagDao()
     private val tagDao = db.tagDao()
+
+    /** 仅用于给 `downloaded_videos.tagEditCount` 累加，标签本身的读写不经过它。 */
+    private val downloadedVideoDao = db.downloadedVideoDao()
 
     // ──────────────────── 标签名册管理（tags 表） ────────────────────
 
@@ -106,6 +115,61 @@ class VideoTagRepository(context: Context) {
     suspend fun setTags(awemeId: String, tagNames: Collection<String>) {
         videoTagDao.deleteAllForVideo(awemeId)
         videoTagDao.insertAll(tagNames.map { VideoTagEntity(awemeId = awemeId, tagName = it.trim()) })
+    }
+
+    // ──────────────── 用户编辑标签（额外累加 tagEditCount） ────────────────
+
+    /**
+     * **用户编辑入口**：用 [tagNames] 覆盖某视频的标签，并在集合确实变化时把
+     * [DownloadedVideoEntity.tagEditCount] +1（一次编辑算一次，与增删了几个标签无关）。
+     *
+     * 与 [setTags] 的区别只在计数：程序自动打标签（如下载时关联收藏夹同名标签）
+     * 走 [setTags]/[addTags]，不该污染"用户改过几次"的统计。
+     *
+     * @return true 表示标签集合发生了变化（已计数），false 表示原样确认（未计数）。
+     */
+    suspend fun setTagsAsUserEdit(awemeId: String, tagNames: Collection<String>): Boolean {
+        val normalized = tagNames.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        val before = videoTagDao.getTagsForVideo(awemeId).toSet()
+        setTags(awemeId, normalized)
+        val changed = before != normalized
+        if (changed) incrementTagEditCount(listOf(awemeId))
+        return changed
+    }
+
+    /**
+     * **用户编辑入口**：给 [awemeIds] 批量追加 [tagNames]（多选后「设置标签」），
+     * 并对**真的多出了新标签**的那些视频把 [DownloadedVideoEntity.tagEditCount] +1。
+     *
+     * 已经全部持有这些标签的视频不计数（这次操作对它没有实际改动）。
+     *
+     * @return 实际被计数（标签有变化）的视频条数。
+     */
+    suspend fun addTagsAsUserEdit(awemeIds: Collection<String>, tagNames: Collection<String>): Int {
+        val normalized = tagNames.map { it.trim() }.filter { it.isNotEmpty() }
+        if (normalized.isEmpty()) return 0
+        val changedIds = mutableListOf<String>()
+        awemeIds.distinct().forEach { awemeId ->
+            // 逐条比对而非一次 IN 查询：批量选择可能上千条，避开 SQLite 变量上限。
+            val before = videoTagDao.getTagsForVideo(awemeId).toSet()
+            if (normalized.any { it !in before }) changedIds += awemeId
+            addTags(awemeId, normalized)
+        }
+        if (changedIds.isNotEmpty()) incrementTagEditCount(changedIds)
+        return changedIds.size
+    }
+
+    /**
+     * `tagEditCount` 的原子累加（`SET tagEditCount = tagEditCount + 1`），
+     * 按 500 一批规避 SQLite 变量上限。不要改成"读实体→改→整行 update"。
+     */
+    private suspend fun incrementTagEditCount(awemeIds: List<String>) {
+        var i = 0
+        while (i < awemeIds.size) {
+            val part = awemeIds.subList(i, (i + 500).coerceAtMost(awemeIds.size))
+            downloadedVideoDao.incrementTagEditCount(part)
+            i += 500
+        }
     }
 
     /** 删除某视频的某个标签。 */

@@ -106,4 +106,19 @@ data class DownloadedVideoEntity(
      * `> 0` 时管理页多选态在封面左上角显示「已导出」标记。旧记录默认为 0。
      */
     val exportCount: Int = 0,
+    /**
+     * 用户修改标签的次数（v12 新增）。
+     *
+     * 计数单位是**一次编辑操作**而非标签个数：一次弹窗确认里新增 3 个标签也只 +1，
+     * 下次再改再 +1。只有编辑后标签集合**真的发生变化**才累加——点开弹窗原样确认
+     * （没勾没取消）不计数。
+     *
+     * 累加入口只有管理页的两处用户操作（单条标签行编辑、多选后「设置标签」），
+     * 由 [com.blitz.downloader.data.VideoTagRepository.setTagsAsUserEdit] /
+     * [com.blitz.downloader.data.VideoTagRepository.addTagsAsUserEdit] 写入。
+     * 下载时自动关联收藏夹同名标签（`ensureCollectFolderTagLinked`）**不算**用户修改，不累加。
+     *
+     * 旧记录默认为 0（不做历史回填）。
+     */
+    val tagEditCount: Int = 0,
 )

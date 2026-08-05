@@ -35,6 +35,12 @@
         android:title="@string/manage_menu_filter_tag_count"
         app:showAsAction="never" />
 
+    <!-- 普通模式下可见：按标签修改次数筛选（仅视频 Tab；同样叠加在其他筛选之上） -->
+    <item
+        android:id="@+id/action_filter_tag_edit_count"
+        android:title="@string/manage_menu_filter_tag_edit_count"
+        app:showAsAction="never" />
+
     <!-- 普通模式下可见：列表排序 -->
     <item
         android:id="@+id/action_sort"

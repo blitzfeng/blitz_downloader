@@ -129,7 +129,7 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 
 ### 管理页的筛选栈
 
-`ManageActivity` 只管 Toolbar / 菜单 / 抽屉，取数与筛选都在 `ManageTabFragment` 的两个实现（`ManageVideoFragment`、`ManageImageFragment`）里。五层筛选是**叠加**关系，不是互斥的单选：
+`ManageActivity` 只管 Toolbar / 菜单 / 抽屉，取数与筛选都在 `ManageTabFragment` 的两个实现（`ManageVideoFragment`、`ManageImageFragment`）里。六层筛选是**叠加**关系，不是互斥的单选：
 
 | 层 | 状态载体 | 生效位置 |
 |----|----------|----------|
@@ -138,22 +138,24 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 | 标签多选 | `activeTags` + `AppSettings.isTagFilterMatchAll` | SQL（`getVideosByTags(tags, matchAll)`） |
 | 归属（点赞 / 收藏 / 收藏夹 / 无归属） | `ManageRelationFilter` | 分页路径下沉 SQL，其余走 `apply()` |
 | 标签数量（0..5+） | `ManageTagCountFilter` | 只在内存（`postProcess`） |
+| 标签修改次数（0..5 / >5） | `ManageTagEditCountFilter` | 只在内存（`postProcess`，读 `tagEditCount`） |
 
 几条别踩的规则：
 
 - 标签多选默认取**交集**（`AppSettings.isTagFilterMatchAll` 默认 true，设置页可切并集）。`AppSettings` 是运行时偏好、每次 getter 直读 SharedPreferences 不做内存缓存——**别加缓存**，否则设置页改完别的页面拿到旧值。
-- 「标签数量筛选」没有 SQL 实现，一激活就必须切成全量加载：否则"一页 20 条筛剩 2 条、撑不满屏幕不触发滚动加载"看起来就像数据丢了。
-- 标签数量筛选**隶属于归属筛选之下**：归属为 OFF 时仍按 `EXCLUDE_UNASSIGNED` 收窄，只有用户显式选「仅看无归属」才听用户的。原因是他人主页 post 记录基本没打过标签，不排掉「0 个标签」就全是它们。
+- 「标签数量筛选」「标签修改次数筛选」都没有 SQL 实现，任一激活就必须切成全量加载（`hasMemoryOnlyFilter()`）：否则"一页 20 条筛剩 2 条、撑不满屏幕不触发滚动加载"看起来就像数据丢了。
+- 这两层都**隶属于归属筛选之下**（共用 `scopeByRelation`）：归属为 OFF 时仍按 `EXCLUDE_UNASSIGNED` 收窄，只有用户显式选「仅看无归属」才听用户的。原因是他人主页 post 记录基本没打过标签、更没改过，不排掉「0 个标签」「改过 0 次」就全是它们。
 - 非分页路径（搜索 / 标签 / 作者 / 全选）统一走 `postProcess(...)` = 归属 → 标签数 → 排序。新增取数入口别绕过它，否则筛选会"漏一层"。
 
 ### 持久化（Room）
 
 **数据库结构的权威文档是 `.cursor/rules/db-schema.md`，改 `data/db/` 之前先读它。** 要点：
 
-- `AppDatabase` 当前 **version = 11**（v11 新增 `exportCount`）。三张表：`downloaded_videos`、`video_tags`、`tags`。
-- 所有迁移 `MIGRATION_1_2 .. MIGRATION_10_11` 都在 `AppDatabase` 里显式列出。builder 上虽然还挂着 `fallbackToDestructiveMigration()` 作兜底，但**不要**依赖它来"对付过去"——漏写迁移 = 用户数据被清空。新增字段时：写 `MIGRATION_11_12` → `version = 12` → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。
+- `AppDatabase` 当前 **version = 12**（v12 新增 `tagEditCount`）。三张表：`downloaded_videos`、`video_tags`、`tags`。
+- 所有迁移 `MIGRATION_1_2 .. MIGRATION_11_12` 都在 `AppDatabase` 里显式列出。builder 上虽然还挂着 `fallbackToDestructiveMigration()` 作兜底，但**不要**依赖它来"对付过去"——漏写迁移 = 用户数据被清空。新增字段时：写 `MIGRATION_12_13` → `version = 13` → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。
 - 备份/恢复走 `DatabaseBackupManager`（入口在 `SettingsActivity` 设置页，由 MainActivity Toolbar 的设置图标进入；UI 逻辑都在 `SettingsActivity` 里，管理页菜单已不再有这两项）——它直接操作 SQLite 文件，改库结构后要确认导入旧备份的兼容处理。备份写到公共 `Download/bDouyin/backup`（存活于卸载、可 MTP 看到）。**恢复有两条路径**：`restoreFrom(entry)` 直接 File 读取，但**重装/换签名后备份文件在 MediaStore 被孤儿化**（owner 清空 + `.db` 属非媒体，`READ_MEDIA_*` 不覆盖）会抛 `SecurityException`；此时 UI 引导改用 SAF（`ACTION_OPEN_DOCUMENT` → `restoreFromStream`），授权 Uri 绕过归属校验。别把恢复退回成"只 File 读取"。
 - `userRelation` 是 `|` 分隔的多标签字符串（`"like"`、`"like|<夹名>"`、`"<夹名>"`）；写入时统一通过 `DownloadedVideoRepository.buildUserRelationFromLike(...)` / `buildUserRelationFromCollection(...)` 构造，**不要**手拼。
+- 打标签有**两组入口**，别混用：程序自动用 `VideoTagRepository.setTags` / `addTags` / `ensureCollectFolderTagLinked`（只写 `video_tags`）；**UI 上的用户编辑一律走 `setTagsAsUserEdit` / `addTagsAsUserEdit`**，它们额外给 `downloaded_videos.tagEditCount` 累加（一次编辑算一次，集合没变化不计）。新增标签编辑入口时用错会让「改过几次」的统计漏计或虚增。
 - `DefaultTags.list` 是预设标签的唯一来源，也是 v6→v7 / v7→v8 迁移插入的内容；改 `DefaultTags.kt` 的同时检查迁移逻辑是否还一致。
 - `downloadType` 合法值见 `DownloadSourceType`；`mediaType` 见 `DownloadMediaType`（`"video"` / `"image"`）。
 - 管理页排序走 `getPageByMediaTypeSorted(...)`（`@RawQuery` + `SimpleSQLiteQuery`），排序列名来自固定枚举 `ManageSortOrder`（`createdAtMillis`/`createTime`/`diggCount`），**非用户输入，不接受任意字符串**，别改成拼用户串。筛选/全选等非分页路径在内存里按同一 `ManageSortOrder` 重排。统计面板用 `getAuthorCountsAll()` 与 `VideoTagDao.getTagsWithCount()` 聚合，占用空间由 `dirSize` 遍历 `Download/bDouyin/{videos,images,covers}` 求和。
@@ -178,3 +180,6 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 - `.cursor/rules/db-schema.md`：数据库结构参考（见上）。
 
 完成对应 todo 的任务后，更新 plan 文件 frontmatter 的 `status`，必要时同步刷新 `.cursor/CONTINUATION.md`。
+
+## 注意项
+- 每次新增需求开发完代码后，都要完善文档

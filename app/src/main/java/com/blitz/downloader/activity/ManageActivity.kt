@@ -43,6 +43,7 @@ import com.blitz.downloader.ui.ManageImageFragment
 import com.blitz.downloader.ui.ManageRelationFilter
 import com.blitz.downloader.ui.ManageSortOrder
 import com.blitz.downloader.ui.ManageTagCountFilter
+import com.blitz.downloader.ui.ManageTagEditCountFilter
 import com.blitz.downloader.ui.ManageTabFragment
 import com.blitz.downloader.ui.ManageVideoFragment
 import java.io.File
@@ -308,6 +309,39 @@ class ManageActivity : AppCompatActivity() {
         }
     }
 
+    // ── 按标签修改次数筛选 ─────────────────────────────────────────────────────
+
+    /**
+     * 「按标签修改次数筛选」：不限 / 改过 0 次 …… / 改过 5 次以上（逐档上限见
+     * [ManageTagEditCountFilter.MAX_COUNT]）。与归属筛选一样是叠加的一层，只切状态。
+     */
+    private fun showTagEditCountFilterDialog() {
+        val fragment = getCurrentTabFragment() ?: return
+        if (!fragment.supportsTagEditCountFilter) return
+        val filters = ManageTagEditCountFilter.values()
+        val labels = filters.map { getString(it.labelRes) }.toTypedArray()
+        val checked = filters.indexOf(fragment.activeTagEditCountFilter)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manage_tag_edit_count_title)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                fragment.applyTagEditCountFilter(filters[which])
+                dialog.dismiss()
+                invalidateOptionsMenu() // 菜单标题回显当前筛选状态
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** 菜单标题：未筛选时用原文案，筛选中则附上当前档位。 */
+    private fun tagEditCountMenuTitle(): String {
+        val filter = getCurrentTabFragment()?.activeTagEditCountFilter ?: ManageTagEditCountFilter.DEFAULT
+        return if (!filter.isActive) {
+            getString(R.string.manage_menu_filter_tag_edit_count)
+        } else {
+            getString(R.string.manage_menu_filter_tag_edit_count_active, getString(filter.labelRes))
+        }
+    }
+
     // ── 统计面板 ───────────────────────────────────────────────────────────────
 
     private fun showStatsDialog() {
@@ -409,6 +443,7 @@ class ManageActivity : AppCompatActivity() {
         val filterAuthor = menu.findItem(R.id.action_filter_author)
         val filterRelation = menu.findItem(R.id.action_filter_relation)
         val filterTagCount = menu.findItem(R.id.action_filter_tag_count)
+        val filterTagEditCount = menu.findItem(R.id.action_filter_tag_edit_count)
         val sort = menu.findItem(R.id.action_sort)
         val stats = menu.findItem(R.id.action_stats)
 
@@ -423,6 +458,7 @@ class ManageActivity : AppCompatActivity() {
             filterAuthor?.isVisible = false
             filterRelation?.isVisible = false
             filterTagCount?.isVisible = false
+            filterTagEditCount?.isVisible = false
             sort?.isVisible = false
             stats?.isVisible = false
             deleteSelected?.isVisible = true
@@ -450,6 +486,10 @@ class ManageActivity : AppCompatActivity() {
             val supportsTagCount = getCurrentTabFragment()?.supportsTagCountFilter == true
             filterTagCount?.isVisible = supportsTagCount
             if (supportsTagCount) filterTagCount?.title = tagCountMenuTitle()
+            // 「按标签修改次数筛选」同样只在有标签功能的 Tab（视频）下显示
+            val supportsTagEditCount = getCurrentTabFragment()?.supportsTagEditCountFilter == true
+            filterTagEditCount?.isVisible = supportsTagEditCount
+            if (supportsTagEditCount) filterTagEditCount?.title = tagEditCountMenuTitle()
             sort?.isVisible = true
             stats?.isVisible = true
             deleteSelected?.isVisible = false
@@ -554,6 +594,10 @@ class ManageActivity : AppCompatActivity() {
             }
             R.id.action_filter_tag_count -> {
                 showTagCountFilterDialog()
+                true
+            }
+            R.id.action_filter_tag_edit_count -> {
+                showTagEditCountFilterDialog()
                 true
             }
             R.id.action_sort -> {

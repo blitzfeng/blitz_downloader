@@ -38,6 +38,14 @@ interface DownloadedVideoDao {
     @Query("UPDATE downloaded_videos SET exportCount = exportCount + 1 WHERE awemeId IN (:awemeIds)")
     suspend fun incrementExportCount(awemeIds: List<String>): Int
 
+    /**
+     * 标签修改次数 +1（用户在管理页改完标签且集合确实变化时触发）。
+     * 与 [incrementExportCount] 同样走单条 SQL 原子累加，别退化成"读实体→改→整行 update"。
+     * [awemeIds] 由调用方分批传入（SQLite 变量上限）。
+     */
+    @Query("UPDATE downloaded_videos SET tagEditCount = tagEditCount + 1 WHERE awemeId IN (:awemeIds)")
+    suspend fun incrementTagEditCount(awemeIds: List<String>): Int
+
     @Query("SELECT * FROM downloaded_videos WHERE id = :rowId LIMIT 1")
     suspend fun getByRowId(rowId: Long): DownloadedVideoEntity?
 

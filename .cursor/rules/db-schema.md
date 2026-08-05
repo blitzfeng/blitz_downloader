@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v11**
+> **当前版本：v12**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -32,6 +32,7 @@
 | v9 | `downloaded_videos` 新增 `createTime`（视频原始发布时间，Unix 秒） |
 | v10 | `downloaded_videos` 新增 `diggCount`（点赞数）、`collectCount`（收藏数，预留） |
 | v11 | `downloaded_videos` 新增 `exportCount`（已成功导出到电脑的次数） |
+| v12 | `downloaded_videos` 新增 `tagEditCount`（用户修改标签的次数） |
 
 > **注意**：v4 的 `likeType` 与 `downloadType` 语义重叠，v5 通过重建表删除，**后续不要再加同类冗余字段**。
 
@@ -61,6 +62,7 @@
 | `diggCount` | INTEGER | `0` | 视频点赞数，接口字段 `statistics.digg_count`（v10 新增） |
 | `collectCount` | INTEGER | `0` | 视频收藏数，接口字段 `statistics.collect_count`（v10 新增，UI 暂未展示，预留） |
 | `exportCount` | INTEGER | `0` | 已成功导出到电脑的次数（v11 新增，见下方规则） |
+| `tagEditCount` | INTEGER | `0` | 用户修改标签的次数（v12 新增，见下方规则） |
 
 ### `downloadType` 枚举值
 
@@ -125,6 +127,27 @@ DownloadedVideoRepository.buildUserRelationFromCollection(userDigged: Int, folde
 **语义边界**：它表示"手机已把数据完整发出"，**不代表电脑确认落盘**——HTTP 没有反向通道，浏览器取消保存、写盘失败都探知不到。因此只做提示与二次确认依据，别当权威状态用。
 
 **UI 用法**：`exportCount > 0` 时，管理页**多选态**在封面左上角显示「已导出」标记（多次显示 `已导出 ×N`）；点「发送到电脑」时若选中项含已导出记录，先弹三选一确认：**取消** / **过滤已导出**（只把 `exportCount == 0` 的记录挂到服务上）/ **确认**（全部导出，允许重复）。
+
+### `tagEditCount` 累加规则（v12）
+
+计数单位是**一次编辑操作**，不是标签个数：一次弹窗确认里新增 3 个标签也只 +1，下次再改再 +1。
+只有编辑后标签集合**确实发生变化**才累加——点开弹窗原样确认不计数。
+
+累加走 `VideoTagRepository` 的两个**用户编辑入口**，内部用
+`DownloadedVideoDao.incrementTagEditCount` 做 `SET tagEditCount = tagEditCount + 1` 的原子累加
+（与 `exportCount` 同理，不要改成"读实体→改→整行 update"）：
+
+| 入口 | 场景 | 计数 |
+|------|------|------|
+| `VideoTagRepository.setTagsAsUserEdit(awemeId, tags)` | 管理页点标签行，弹窗覆盖式编辑单条 | ✅ 集合有变化才 +1 |
+| `VideoTagRepository.addTagsAsUserEdit(awemeIds, tags)` | 管理页多选后「设置标签」批量追加 | ✅ 只对真的多出新标签的记录 +1 |
+| `setTags` / `addTag` / `addTags`（程序侧原始方法） | — | ❌ 不累加 |
+| `ensureCollectFolderTagLinked`（下载时关联收藏夹同名标签） | 下载流程自动打标签 | ❌ 不累加（不是用户改的） |
+
+**UI 层新增标签编辑入口时必须走 `*AsUserEdit` 版本**，否则统计漏计；反过来下载 / 导入这类
+程序自动打标签的流程若误用它们，会把计数虚增。
+
+**筛选**：管理页「按标签修改次数筛选」（`ManageTagEditCountFilter`，档位 0/1/2/3/4/5/>5）读的就是这个字段。
 
 ### 索引
 
@@ -248,4 +271,4 @@ tags(tagName)          video_tags(awemeId, tagName)
 - **管理页展示**：`userRelation` 按 `|` 拆分渲染 chip；`videoAuthorSecUserId` 用于按作者分组/过滤。
 - **下载写入时**：调用 `DownloadedVideoRepository.recordSuccessfulDownload()`，`like` 场景传 `buildUserRelationFromLike(aweme.collectStat)`，`collects` 场景传 `buildUserRelationFromCollection(aweme.userDigged, folderName)`。
 - **标签功能**：通过 `VideoTagRepository` 操作，视频删除时标签自动级联删除，无需手动清理。
-- **新增数据库字段**：当前版本为 **v11**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_11_12` 并将 version 改为 12。
+- **新增数据库字段**：当前版本为 **v12**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_12_13` 并将 version 改为 13。

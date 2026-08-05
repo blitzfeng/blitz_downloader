@@ -84,10 +84,21 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
      */
     private var activeTagCount: ManageTagCountFilter = ManageTagCountFilter.DEFAULT
 
+    /**
+     * 当前「按标签修改次数筛选」状态（默认不筛选）。与 [activeTagCount] 同一层级：叠加在其他
+     * 筛选之上、**位于归属筛选之下**（见 [scopeByRelation]），判定只在内存里做（[postProcess]），
+     * 因此激活时同样要退出 SQL 分页路径改为全量加载。
+     */
+    private var activeTagEditCount: ManageTagEditCountFilter = ManageTagEditCountFilter.DEFAULT
+
+    /** 有没有只能在内存里判定的筛选层激活——有则取数路径必须切成全量加载。 */
+    private fun hasMemoryOnlyFilter(): Boolean = activeTagCount.isActive || activeTagEditCount.isActive
+
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
     override val supportsClearInvalid: Boolean get() = true
     override val supportsTagCountFilter: Boolean get() = true
+    override val supportsTagEditCountFilter: Boolean get() = true
 
     override fun exitSelectionMode() {
         if (::adapter.isInitialized) adapter.exitSelectionMode()
@@ -149,31 +160,46 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
 
     /**
      * 非分页路径（搜索 / 标签 / 作者 / 全选）的统一后处理：依次过「按归属筛选」
-     * 「按标签数量筛选」两层，再按当前排序倒排。分页路径的归属筛选下沉到 SQL，不走这里；
-     * 标签数量筛选没有 SQL 侧实现，激活时取数路径本身就会切成全量加载。
+     * 「按标签数量筛选」「按标签修改次数筛选」三层，再按当前排序倒排。分页路径的归属筛选
+     * 下沉到 SQL，不走这里；后两层没有 SQL 侧实现，激活时取数路径本身就会切成全量加载。
      */
     private suspend fun postProcess(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> =
-        sortEntities(filterByTagCount(activeRelation.apply(list)))
+        sortEntities(filterByTagEditCount(filterByTagCount(activeRelation.apply(list))))
 
     /**
-     * 按 [activeTagCount] 过滤：标签数来自 `video_tags` 聚合，查不到的记录算 0 个。
+     * 「标签数量」「标签修改次数」两层筛选共用的归属收窄。
      *
-     * 这一层**隶属于归属筛选**：无归属记录（既无点赞/收藏关系、也不属于收藏夹，通常是从
-     * 他人主页 post 下载的）绝大多数没打过标签，不排掉的话「0 个标签」会被它们淹没，
-     * 看不到真正待整理的点赞/收藏视频。因此归属筛选为 OFF 时，这里仍按
+     * 这两层**隶属于归属筛选**：无归属记录（既无点赞/收藏关系、也不属于收藏夹，通常是从
+     * 他人主页 post 下载的）绝大多数没打过标签、更没改过，不排掉的话「0 个标签」「改过 0 次」
+     * 会被它们淹没，看不到真正待整理的点赞/收藏视频。因此归属筛选为 OFF 时仍按
      * [ManageRelationFilter.EXCLUDE_UNASSIGNED] 收窄；只有用户显式选了「仅看无归属」
      * 才以用户的选择为准（否则结果必然为空，等于把那个选项废掉）。
      */
-    private suspend fun filterByTagCount(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> {
-        if (!activeTagCount.isActive || list.isEmpty()) return list
-        val scoped = if (activeRelation == ManageRelationFilter.ONLY_UNASSIGNED) {
+    private fun scopeByRelation(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> =
+        if (activeRelation == ManageRelationFilter.ONLY_UNASSIGNED) {
             list
         } else {
             list.filterNot { ManageRelationFilter.isUnassigned(it) }
         }
+
+    /** 按 [activeTagCount] 过滤：标签数来自 `video_tags` 聚合，查不到的记录算 0 个。 */
+    private suspend fun filterByTagCount(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> {
+        if (!activeTagCount.isActive || list.isEmpty()) return list
+        val scoped = scopeByRelation(list)
         if (scoped.isEmpty()) return scoped
         val counts = tagRepo.getTagCountMap()
         return scoped.filter { activeTagCount.matches(counts[it.awemeId] ?: 0) }
+    }
+
+    /**
+     * 按 [activeTagEditCount] 过滤：次数直接取实体上的
+     * [DownloadedVideoEntity.tagEditCount]，不需要额外查询。
+     */
+    private fun filterByTagEditCount(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> {
+        if (!activeTagEditCount.isActive || list.isEmpty()) return list
+        val scoped = scopeByRelation(list)
+        if (scoped.isEmpty()) return scoped
+        return scoped.filter { activeTagEditCount.matches(it.tagEditCount) }
     }
 
     /** 按当前 [activeSort] 对内存中的实体列表倒序排序（用于非分页的筛选/全选路径）。 */
@@ -206,6 +232,15 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         if (filter == activeTagCount) return
         // 同样只切这一层，其他筛选原样保留
         activeTagCount = filter
+        refreshList()
+    }
+
+    override val activeTagEditCountFilter: ManageTagEditCountFilter get() = activeTagEditCount
+
+    override fun applyTagEditCountFilter(filter: ManageTagEditCountFilter) {
+        if (filter == activeTagEditCount) return
+        // 同样只切这一层，其他筛选原样保留
+        activeTagEditCount = filter
         refreshList()
     }
 
@@ -259,7 +294,8 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                     }
                     viewLifecycleOwner.lifecycleScope.launch {
                         val tagsMap = withContext(Dispatchers.IO) {
-                            ids.forEach { awemeId -> tagRepo.addTags(awemeId, chosen) }
+                            // 用户编辑入口：内部会给标签确有变化的记录累加 tagEditCount
+                            tagRepo.addTagsAsUserEdit(ids, chosen)
                             tagRepo.getTagsMapForVideos(ids)
                         }
                         // 局部刷新每条受影响 item 的标签行
@@ -413,8 +449,8 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                     hasMore = false
                     currentOffset += entities.size
                 }
-                activeTags.isEmpty() && activeTagCount.isActive -> {
-                    // 标签数量筛选只有内存实现，走分页会出现「整页被筛空」，故一次性全量加载
+                activeTags.isEmpty() && hasMemoryOnlyFilter() -> {
+                    // 标签数量 / 标签修改次数筛选只有内存实现，走分页会出现「整页被筛空」，故一次性全量加载
                     entities = if (currentOffset == 0) {
                         withContext(Dispatchers.IO) { postProcess(repo.getAllByMediaType(MEDIA_TYPE_VIDEO)) }
                     } else {
@@ -473,6 +509,8 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                     }
                     activeTagCount.isActive ->
                         getString(R.string.manage_tag_count_empty, getString(activeTagCount.labelRes))
+                    activeTagEditCount.isActive ->
+                        getString(R.string.manage_tag_edit_count_empty, getString(activeTagEditCount.labelRes))
                     // 归属筛选放在其他条件之后判断：有更具体的筛选时优先显示那条文案
                     activeRelation != ManageRelationFilter.OFF -> getString(R.string.manage_relation_empty)
                     else -> getString(R.string.manage_empty_videos)
@@ -594,7 +632,8 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                 .setPositiveButton(android.R.string.ok) { _, _ ->
                     val selected = allTags.filterIndexed { i, _ -> checkedItems[i] }
                     viewLifecycleOwner.lifecycleScope.launch {
-                        withContext(Dispatchers.IO) { tagRepo.setTags(awemeId, selected) }
+                        // 用户编辑入口：标签集合确有变化时累加 tagEditCount
+                        withContext(Dispatchers.IO) { tagRepo.setTagsAsUserEdit(awemeId, selected) }
                         adapter.updateItemTags(awemeId, selected)
                     }
                 }

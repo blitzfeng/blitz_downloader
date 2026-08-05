@@ -94,6 +94,19 @@
     <string name="manage_tag_count_4">4 个标签</string>
     <string name="manage_tag_count_5_plus">5 个及以上标签</string>
     <string name="manage_tag_count_empty">没有「%1$s」的视频</string>
+    <!-- 按标签修改次数筛选（仅视频 Tab） -->
+    <string name="manage_menu_filter_tag_edit_count">按标签修改次数筛选</string>
+    <string name="manage_menu_filter_tag_edit_count_active">按标签修改次数筛选（%1$s）</string>
+    <string name="manage_tag_edit_count_title">按标签修改次数筛选</string>
+    <string name="manage_tag_edit_count_off">不限</string>
+    <string name="manage_tag_edit_count_0">改过 0 次（从未整理）</string>
+    <string name="manage_tag_edit_count_1">改过 1 次</string>
+    <string name="manage_tag_edit_count_2">改过 2 次</string>
+    <string name="manage_tag_edit_count_3">改过 3 次</string>
+    <string name="manage_tag_edit_count_4">改过 4 次</string>
+    <string name="manage_tag_edit_count_5">改过 5 次</string>
+    <string name="manage_tag_edit_count_more_than_5">改过 5 次以上</string>
+    <string name="manage_tag_edit_count_empty">没有「%1$s」的视频</string>
     <string name="manage_menu_backup_db">备份数据库</string>
     <string name="manage_menu_restore_db">恢复备份</string>
     <string name="manage_backup_confirm_title">备份数据库</string>
