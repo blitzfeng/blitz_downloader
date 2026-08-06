@@ -279,33 +279,45 @@ class ManageActivity : AppCompatActivity() {
     // ── 按标签数量筛选 ─────────────────────────────────────────────────────────
 
     /**
-     * 「按标签数量筛选」：不限 / 0 个 …… / 5 个及以上（上限见
-     * [ManageTagCountFilter.MAX_COUNT]）。与归属筛选一样是叠加的一层，只切状态。
+     * 「按标签数量筛选」：0 个 …… / 5 个及以上（上限见 [ManageTagCountFilter.MAX_COUNT]），
+     * **多选，档位之间取并集**；一个都不勾即不筛选，中间的「清除筛选」是快捷清空。
+     * 与归属筛选一样是叠加的一层，只切状态。
      */
     private fun showTagCountFilterDialog() {
         val fragment = getCurrentTabFragment() ?: return
         if (!fragment.supportsTagCountFilter) return
         val filters = ManageTagCountFilter.values()
         val labels = filters.map { getString(it.labelRes) }.toTypedArray()
-        val checked = filters.indexOf(fragment.activeTagCountFilter)
+        val current = fragment.activeTagCountFilters
+        // 勾选状态在数组里累积，「确定」时才一次性提交，避免每勾一下就重刷列表
+        val checked = BooleanArray(filters.size) { filters[it] in current }
         AlertDialog.Builder(this)
             .setTitle(R.string.manage_tag_count_title)
-            .setSingleChoiceItems(labels, checked) { dialog, which ->
-                fragment.applyTagCountFilter(filters[which])
-                dialog.dismiss()
+            .setMultiChoiceItems(labels, checked) { _, which, isChecked ->
+                checked[which] = isChecked
+            }
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                fragment.applyTagCountFilters(filters.filterIndexed { i, _ -> checked[i] }.toSet())
                 invalidateOptionsMenu() // 菜单标题回显当前筛选状态
+            }
+            .setNeutralButton(R.string.manage_tag_count_clear) { _, _ ->
+                fragment.applyTagCountFilters(emptySet())
+                invalidateOptionsMenu()
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
-    /** 菜单标题：未筛选时用原文案，筛选中则附上当前档位。 */
+    /** 菜单标题：未筛选时用原文案，筛选中则附上已勾选档位（短文案拼接）。 */
     private fun tagCountMenuTitle(): String {
-        val filter = getCurrentTabFragment()?.activeTagCountFilter ?: ManageTagCountFilter.DEFAULT
-        return if (!filter.isActive) {
+        val filters = getCurrentTabFragment()?.activeTagCountFilters ?: ManageTagCountFilter.DEFAULT
+        return if (filters.isEmpty()) {
             getString(R.string.manage_menu_filter_tag_count)
         } else {
-            getString(R.string.manage_menu_filter_tag_count_active, getString(filter.labelRes))
+            getString(
+                R.string.manage_menu_filter_tag_count_active,
+                ManageTagCountFilter.shortSummary(this, filters),
+            )
         }
     }
 

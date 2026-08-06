@@ -163,14 +163,28 @@ class VideoTagRepository(context: Context) {
      * `tagEditCount` 的原子累加（`SET tagEditCount = tagEditCount + 1`），
      * 按 500 一批规避 SQLite 变量上限。不要改成"读实体→改→整行 update"。
      */
-    private suspend fun incrementTagEditCount(awemeIds: List<String>) {
+    private suspend fun incrementTagEditCount(awemeIds: List<String>): Int {
+        var updated = 0
         var i = 0
         while (i < awemeIds.size) {
             val part = awemeIds.subList(i, (i + 500).coerceAtMost(awemeIds.size))
-            downloadedVideoDao.incrementTagEditCount(part)
+            updated += downloadedVideoDao.incrementTagEditCount(part)
             i += 500
         }
+        return updated
     }
+
+    /**
+     * 手工把 [awemeIds] 的 `tagEditCount` +1，**不动标签本身**。
+     *
+     * 补 v12 之前手工改过标签、库里没留下计数的历史记录：管理页先用「按标签修改次数筛选」
+     * 筛出改过 0 次的，多选后从「设置标签」弹窗的「仅次数 +1」按钮触发。
+     * SQL 是无条件 `+1`、**没有幂等标记**，重复点会重复累加，由 UI 的二次确认兜底。
+     *
+     * @return 实际被 +1 的记录数。
+     */
+    suspend fun bumpTagEditCountManually(awemeIds: Collection<String>): Int =
+        incrementTagEditCount(awemeIds.distinct())
 
     /** 删除某视频的某个标签。 */
     suspend fun removeTag(awemeId: String, tagName: String) {

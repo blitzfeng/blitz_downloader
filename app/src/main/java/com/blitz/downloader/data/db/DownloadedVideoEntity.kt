@@ -121,4 +121,18 @@ data class DownloadedVideoEntity(
      * 旧记录默认为 0（不做历史回填）。
      */
     val tagEditCount: Int = 0,
+    /**
+     * 是否已看过（v13 新增，默认 false = 未看过）。
+     *
+     * 只由**管理页进入视频播放页**这一条路径置为 true：点开某条时标记该条，在播放页里上下
+     * 滑动切换到的那些也逐条标记（[com.blitz.downloader.activity.VideoPlayerActivity] 收到
+     * `EXTRA_LIST_AWEME_IDS` 时才写；网络预览等无 id 的入口不写）。
+     * 置位后不提供"标为未看"的回退入口。
+     *
+     * 管理页视频卡片在点赞数徽标右侧显示「未看过」标记（`watched == false` 时）。
+     * 图片 Tab 不显示——图集不走播放页，显示了也永远不会消。
+     *
+     * 旧记录默认为 false（不做历史回填）。
+     */
+    val watched: Boolean = false,
 )

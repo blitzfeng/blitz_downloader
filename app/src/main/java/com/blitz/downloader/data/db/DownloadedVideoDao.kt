@@ -46,6 +46,17 @@ interface DownloadedVideoDao {
     @Query("UPDATE downloaded_videos SET tagEditCount = tagEditCount + 1 WHERE awemeId IN (:awemeIds)")
     suspend fun incrementTagEditCount(awemeIds: List<String>): Int
 
+    /**
+     * 标记为已看过（管理页进入视频播放页时触发）。只置位、不回退，重复调用无副作用。
+     * [awemeIds] 由 Repository 分批传入（SQLite 变量上限）。
+     */
+    @Query("UPDATE downloaded_videos SET watched = 1 WHERE awemeId IN (:awemeIds)")
+    suspend fun markWatched(awemeIds: List<String>): Int
+
+    /** 这批 id 中已看过的那些（管理页回到列表时刷新「未看过」标记用）。 */
+    @Query("SELECT awemeId FROM downloaded_videos WHERE watched = 1 AND awemeId IN (:awemeIds)")
+    suspend fun getWatchedAwemeIdsIn(awemeIds: List<String>): List<String>
+
     @Query("SELECT * FROM downloaded_videos WHERE id = :rowId LIMIT 1")
     suspend fun getByRowId(rowId: Long): DownloadedVideoEntity?
 

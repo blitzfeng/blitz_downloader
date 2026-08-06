@@ -48,23 +48,50 @@
                 android:textStyle="bold"
                 android:visibility="gone" />
 
-            <!-- 点赞数徽标：左下，心形图标 + 数字；心形白色，我点赞过（userRelation 含 like）的着抖音红；diggCount<=0 时 GONE -->
-            <TextView
-                android:id="@+id/tvDiggCount"
+            <!--
+                左下角徽标行：点赞数 +「未看过」标记（后者紧贴前者右侧）。
+                两个徽标各自独立控制显隐，点赞数为 0 时「未看过」自然顶到最左。
+            -->
+            <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="bottom|start"
                 android:layout_margin="6dp"
-                android:background="#99000000"
-                android:drawableStart="@drawable/ic_heart_solid"
-                android:drawablePadding="3dp"
                 android:gravity="center_vertical"
-                android:paddingHorizontal="6dp"
-                android:paddingVertical="2dp"
-                android:textColor="#FFFFFF"
-                android:textSize="10sp"
-                android:visibility="gone"
-                tools:ignore="SmallSp" />
+                android:orientation="horizontal">
+
+                <!-- 点赞数徽标：心形图标 + 数字；心形白色，我点赞过（userRelation 含 like）的着抖音红；diggCount<=0 时 GONE -->
+                <TextView
+                    android:id="@+id/tvDiggCount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="#99000000"
+                    android:drawableStart="@drawable/ic_heart_solid"
+                    android:drawablePadding="3dp"
+                    android:gravity="center_vertical"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="2dp"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp"
+                    android:visibility="gone"
+                    tools:ignore="SmallSp" />
+
+                <!-- 「未看过」标记：watched == false 且当前 Tab 支持时显示（图片 Tab 不显示） -->
+                <TextView
+                    android:id="@+id/tvUnwatchedBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:background="#CCE64A19"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="2dp"
+                    android:text="@string/manage_unwatched_label"
+                    android:textColor="#FFFFFF"
+                    android:textSize="10sp"
+                    android:textStyle="bold"
+                    android:visibility="gone"
+                    tools:ignore="SmallSp" />
+            </LinearLayout>
 
             <!--
                 「已导出」标记（左上角）：exportCount > 0 且处于多选态时显示。

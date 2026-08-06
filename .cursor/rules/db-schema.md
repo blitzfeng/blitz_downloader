@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v12**
+> **当前版本：v13**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -33,6 +33,7 @@
 | v10 | `downloaded_videos` 新增 `diggCount`（点赞数）、`collectCount`（收藏数，预留） |
 | v11 | `downloaded_videos` 新增 `exportCount`（已成功导出到电脑的次数） |
 | v12 | `downloaded_videos` 新增 `tagEditCount`（用户修改标签的次数） |
+| v13 | `downloaded_videos` 新增 `watched`（是否已看过） |
 
 > **注意**：v4 的 `likeType` 与 `downloadType` 语义重叠，v5 通过重建表删除，**后续不要再加同类冗余字段**。
 
@@ -63,6 +64,7 @@
 | `collectCount` | INTEGER | `0` | 视频收藏数，接口字段 `statistics.collect_count`（v10 新增，UI 暂未展示，预留） |
 | `exportCount` | INTEGER | `0` | 已成功导出到电脑的次数（v11 新增，见下方规则） |
 | `tagEditCount` | INTEGER | `0` | 用户修改标签的次数（v12 新增，见下方规则） |
+| `watched` | INTEGER(Bool) | `0`(false) | 是否已看过（v13 新增，见下方规则） |
 
 ### `downloadType` 枚举值
 
@@ -148,6 +150,28 @@ DownloadedVideoRepository.buildUserRelationFromCollection(userDigged: Int, folde
 程序自动打标签的流程若误用它们，会把计数虚增。
 
 **筛选**：管理页「按标签修改次数筛选」（`ManageTagEditCountFilter`，档位 0/1/2/3/4/5/>5）读的就是这个字段。
+
+### `watched` 置位规则（v13）
+
+Room 的 Boolean 落库为 INTEGER（0/1），默认 0 = 未看过。**只置位、不回退**，没有"标为未看"的入口。
+
+| 场景 | 是否置位 |
+|------|---------|
+| 管理页点开某条视频进入播放页 | ✅ 该条 |
+| 在播放页里上下滑动切换到的视频 | ✅ 每切到一条标一条 |
+| 图集（`ImageViewerActivity`） | ❌ 不走播放页 |
+| 列表页的网络预览（`createNetworkIntent` / `createListNetworkIntent`） | ❌ 拿不到 aweme id |
+
+链路：`ManageVideoFragment.openVideoPlayer` 把 `awemeIds` 与 `filePaths` 并行传给
+`VideoPlayerActivity.createListFileIntent` → 播放页 `loadItemAtIndex` 每次加载都调 `markWatched(index)`
+→ `DownloadedVideoRepository.markWatched` 写库（同一 id 一次会话只写一次；用独立
+`CoroutineScope(Dispatchers.IO)` 而非 lifecycleScope，滑到下一条后立刻退出也要写完）。
+**没传 `EXTRA_LIST_AWEME_IDS` 就完全不写库**，这是区分"管理页"与其他入口的唯一开关。
+
+**UI**：管理页视频卡片在点赞数徽标**右侧**显示「未看过」（`watched == false`）。点开时列表先就地
+标掉（`ManageGridAdapter.markWatched`），播放页里滑动看过的那些由 `ManageVideoFragment.onResume`
+回查 `getWatchedAwemeIdSet` 补上——两条路径分工，别指望其中一条覆盖全部。
+图片 Tab 不显示这个标记（adapter 的 `showWatchedBadge = false`），因为图集永远不会置位。
 
 ### 索引
 
@@ -271,4 +295,4 @@ tags(tagName)          video_tags(awemeId, tagName)
 - **管理页展示**：`userRelation` 按 `|` 拆分渲染 chip；`videoAuthorSecUserId` 用于按作者分组/过滤。
 - **下载写入时**：调用 `DownloadedVideoRepository.recordSuccessfulDownload()`，`like` 场景传 `buildUserRelationFromLike(aweme.collectStat)`，`collects` 场景传 `buildUserRelationFromCollection(aweme.userDigged, folderName)`。
 - **标签功能**：通过 `VideoTagRepository` 操作，视频删除时标签自动级联删除，无需手动清理。
-- **新增数据库字段**：当前版本为 **v12**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_12_13` 并将 version 改为 13。
+- **新增数据库字段**：当前版本为 **v13**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_13_14` 并将 version 改为 14。

@@ -85,15 +85,22 @@
     <!-- 按标签数量筛选（仅视频 Tab） -->
     <string name="manage_menu_filter_tag_count">按标签数量筛选</string>
     <string name="manage_menu_filter_tag_count_active">按标签数量筛选（%1$s）</string>
-    <string name="manage_tag_count_title">按标签数量筛选</string>
-    <string name="manage_tag_count_off">不限</string>
+    <string name="manage_tag_count_title">按标签数量筛选（可多选）</string>
     <string name="manage_tag_count_0">0 个标签（未打标签）</string>
     <string name="manage_tag_count_1">1 个标签</string>
     <string name="manage_tag_count_2">2 个标签</string>
     <string name="manage_tag_count_3">3 个标签</string>
     <string name="manage_tag_count_4">4 个标签</string>
     <string name="manage_tag_count_5_plus">5 个及以上标签</string>
-    <string name="manage_tag_count_empty">没有「%1$s」的视频</string>
+    <!-- 多选后要拼接回显，故另备一套短文案 -->
+    <string name="manage_tag_count_short_0">0 个</string>
+    <string name="manage_tag_count_short_1">1 个</string>
+    <string name="manage_tag_count_short_2">2 个</string>
+    <string name="manage_tag_count_short_3">3 个</string>
+    <string name="manage_tag_count_short_4">4 个</string>
+    <string name="manage_tag_count_short_5_plus">5 个及以上</string>
+    <string name="manage_tag_count_clear">清除筛选</string>
+    <string name="manage_tag_count_empty">没有标签数量为「%1$s」的视频</string>
     <!-- 按标签修改次数筛选（仅视频 Tab） -->
     <string name="manage_menu_filter_tag_edit_count">按标签修改次数筛选</string>
     <string name="manage_menu_filter_tag_edit_count_active">按标签修改次数筛选（%1$s）</string>
@@ -107,6 +114,10 @@
     <string name="manage_tag_edit_count_5">改过 5 次</string>
     <string name="manage_tag_edit_count_more_than_5">改过 5 次以上</string>
     <string name="manage_tag_edit_count_empty">没有「%1$s」的视频</string>
+    <!-- 「设置标签」弹窗里的「仅次数 +1」：只累加修改次数、不动标签，用于补历史数据 -->
+    <string name="manage_bump_tag_edit_count">仅次数 +1</string>
+    <string name="manage_bump_tag_edit_count_confirm">把已选的 %1$d 条记录的标签修改次数各 +1（不改动标签本身）。\n\n注意：重复执行会重复累加。</string>
+    <string name="manage_bump_tag_edit_count_done">已更新 %1$d 条记录</string>
     <string name="manage_menu_backup_db">备份数据库</string>
     <string name="manage_menu_restore_db">恢复备份</string>
     <string name="manage_backup_confirm_title">备份数据库</string>
@@ -200,6 +211,8 @@
     <string name="manage_export_lan_copy">复制网址</string>
     <string name="manage_export_lan_stop">停止服务</string>
     <string name="manage_export_lan_copied">网址已复制</string>
+    <!-- 视频卡片左下角的「未看过」标记（点赞数右侧） -->
+    <string name="manage_unwatched_label">未看过</string>
     <!-- 局域网导出：传输状态与「已导出」标记 -->
     <string name="manage_exported_label">已导出</string>
     <string name="manage_exported_label_n">已导出 ×%1$d</string>

@@ -62,6 +62,41 @@ class DownloadedVideoRepository(context: Context) {
         return updated
     }
 
+    /**
+     * 标记这些记录为「已看过」（管理页进入视频播放页时调用），按 500 一批避免 SQLite 变量上限。
+     * 只置位不回退，重复调用无副作用。
+     * @return 实际更新的行数。
+     */
+    suspend fun markWatched(awemeIds: Collection<String>): Int {
+        if (awemeIds.isEmpty()) return 0
+        val asList = awemeIds.distinct()
+        var updated = 0
+        var i = 0
+        while (i < asList.size) {
+            val part = asList.subList(i, (i + 500).coerceAtMost(asList.size))
+            updated += dao.markWatched(part)
+            i += 500
+        }
+        return updated
+    }
+
+    /**
+     * 这批 id 中已看过的那些，供管理页回到列表时刷新「未看过」标记
+     * （播放页里滑动看过的条目不会通知列表，只能回查）。
+     */
+    suspend fun getWatchedAwemeIdSet(awemeIds: Collection<String>): Set<String> {
+        if (awemeIds.isEmpty()) return emptySet()
+        val asList = awemeIds.distinct()
+        val out = mutableSetOf<String>()
+        var i = 0
+        while (i < asList.size) {
+            val part = asList.subList(i, (i + 500).coerceAtMost(asList.size))
+            out.addAll(dao.getWatchedAwemeIdsIn(part))
+            i += 500
+        }
+        return out
+    }
+
     /** 用于网格：是否存在本地已记录下载（按作品 id）。 */
     suspend fun getDownloadedAwemeIdSet(ids: Collection<String>): Set<String> {
         if (ids.isEmpty()) return emptySet()

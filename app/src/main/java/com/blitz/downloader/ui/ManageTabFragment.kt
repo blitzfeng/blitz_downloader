@@ -99,15 +99,18 @@ interface ManageTabFragment {
     /** 是否支持「按标签数量筛选」（只有带标签功能的视频 Tab 支持）。 */
     val supportsTagCountFilter: Boolean get() = false
 
-    /** 当前「按标签数量筛选」状态（供筛选对话框预选中、菜单标题回显）。 */
-    val activeTagCountFilter: ManageTagCountFilter get() = ManageTagCountFilter.DEFAULT
+    /**
+     * 当前「按标签数量筛选」勾选的档位（供筛选对话框预选中、菜单标题回显）。
+     * **空集合表示不筛选**；多个档位之间取并集。
+     */
+    val activeTagCountFilters: Set<ManageTagCountFilter> get() = ManageTagCountFilter.DEFAULT
 
     /**
-     * 切换「按标签数量筛选」并从头刷新列表。
+     * 切换「按标签数量筛选」勾选的档位并从头刷新列表；传空集合即清除该层筛选。
      *
      * 与 [applyRelationFilter] 一样是叠加的一层，实现里不要清空其他筛选状态。
      */
-    fun applyTagCountFilter(filter: ManageTagCountFilter) {}
+    fun applyTagCountFilters(filters: Set<ManageTagCountFilter>) {}
 
     /** 是否支持「按标签修改次数筛选」（只有带标签功能的视频 Tab 支持）。 */
     val supportsTagEditCountFilter: Boolean get() = false
@@ -118,7 +121,7 @@ interface ManageTabFragment {
     /**
      * 切换「按标签修改次数筛选」并从头刷新列表。
      *
-     * 与 [applyRelationFilter] / [applyTagCountFilter] 一样是叠加的一层，
+     * 与 [applyRelationFilter] / [applyTagCountFilters] 一样是叠加的一层，
      * 实现里不要清空其他筛选状态。
      */
     fun applyTagEditCountFilter(filter: ManageTagEditCountFilter) {}

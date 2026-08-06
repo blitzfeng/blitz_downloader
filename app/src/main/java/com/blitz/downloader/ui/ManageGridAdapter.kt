@@ -40,12 +40,15 @@ data class ManageGridItem(
  * @param onItemClick         非多选模式下单击 item 时回调，传递 [DownloadedVideoEntity]。
  * @param onTagAreaClick      非多选模式下点击用户标签行时回调，传递 awemeId 及当前标签列表。
  * @param supportsUserTags    是否展示用户自定义标签行并支持点击编辑（视频 Tab 为 true，图片 Tab 为 false）。
+ * @param showWatchedBadge    是否展示「未看过」标记（只有视频 Tab 为 true：图集不走播放页，
+ *                            `watched` 永远不会置位，显示了就是个消不掉的标记）。
  */
 class ManageGridAdapter(
     private val onSelectionChanged: (inSelectionMode: Boolean, selectedCount: Int) -> Unit,
     private val onItemClick: (entity: DownloadedVideoEntity) -> Unit = {},
     private val onTagAreaClick: (awemeId: String, currentTags: List<String>) -> Unit = { _, _ -> },
     private val supportsUserTags: Boolean = false,
+    private val showWatchedBadge: Boolean = false,
 ) : RecyclerView.Adapter<ManageGridAdapter.ViewHolder>() {
 
     private val items = mutableListOf<ManageGridItem>()
@@ -145,6 +148,23 @@ class ManageGridAdapter(
         }
     }
 
+    /**
+     * 把这些条目就地标为「已看过」，去掉封面上的「未看过」标记。
+     * 与数据库侧的 `UPDATE ... SET watched = 1` 是两笔独立更新——这里只为让当前列表立刻
+     * 显示正确（点开播放页时先标本条，播放页里滑动看过的那些由 `onResume` 回查补上）。
+     */
+    fun markWatched(awemeIds: Set<String>) {
+        if (awemeIds.isEmpty()) return
+        awemeIds.forEach { awemeId ->
+            val pos = indexByAwemeId[awemeId] ?: return@forEach
+            if (pos >= items.size || items[pos].entity.awemeId != awemeId) return@forEach
+            val entity = items[pos].entity
+            if (entity.watched) return@forEach
+            items[pos] = items[pos].copy(entity = entity.copy(watched = true))
+            notifyItemChanged(pos, PAYLOAD_WATCHED)
+        }
+    }
+
     /** 更新某条目的用户标签，触发局部刷新（仅重绑标签行）。 */
     fun updateItemTags(awemeId: String, tags: List<String>) {
         val pos = indexByAwemeId[awemeId] ?: return
@@ -189,6 +209,7 @@ class ManageGridAdapter(
             holder.bindExportedState(inSelectionMode, item.entity.exportCount)
         }
         if (PAYLOAD_EXPORTED in payloads) holder.bindExportedState(inSelectionMode, item.entity.exportCount)
+        if (PAYLOAD_WATCHED in payloads) holder.bindWatchedState(item.entity.watched)
         if (PAYLOAD_TAGS in payloads) holder.bindUserTags(item.userTags)
     }
 
@@ -202,6 +223,7 @@ class ManageGridAdapter(
         private val invalidBadge: TextView = itemView.findViewById(R.id.tvInvalidBadge)
         private val diggBadge: TextView = itemView.findViewById(R.id.tvDiggCount)
         private val exportedBadge: TextView = itemView.findViewById(R.id.tvExportedBadge)
+        private val unwatchedBadge: TextView = itemView.findViewById(R.id.tvUnwatchedBadge)
         private val selectedOverlay: View = itemView.findViewById(R.id.viewSelectedOverlay)
         private val checkbox: CheckBox = itemView.findViewById(R.id.cbManageSelect)
         private val username: TextView = itemView.findViewById(R.id.tvUsername)
@@ -269,6 +291,7 @@ class ManageGridAdapter(
             bindInvalidState(item.fileExists)
             bindSelectionState(selectionMode, isSelected)
             bindExportedState(selectionMode, entity.exportCount)
+            bindWatchedState(entity.watched)
             bindUserTags(item.userTags)
             bindClickListeners(entity.awemeId)
         }
@@ -398,6 +421,15 @@ class ManageGridAdapter(
             exportedBadge.visibility = View.VISIBLE
         }
 
+        /**
+         * 点赞数右侧的「未看过」标记：[showWatchedBadge] 开启（视频 Tab）且尚未看过时显示。
+         * 置位来源见 [com.blitz.downloader.data.db.DownloadedVideoEntity.watched]。
+         */
+        fun bindWatchedState(watched: Boolean) {
+            unwatchedBadge.visibility =
+                if (showWatchedBadge && !watched) View.VISIBLE else View.GONE
+        }
+
         fun bindSelectionState(selectionMode: Boolean, isSelected: Boolean) {
             checkbox.visibility = if (selectionMode) View.VISIBLE else View.GONE
             checkbox.isChecked = isSelected
@@ -517,6 +549,7 @@ class ManageGridAdapter(
         private const val PAYLOAD_SELECTION_STATE = "selection_state"
         private const val PAYLOAD_TAGS = "tags"
         private const val PAYLOAD_EXPORTED = "exported"
+        private const val PAYLOAD_WATCHED = "watched"
 
         /** 用户自定义标签的背景色（深蓝紫，与系统 chip 区分）。 */
         private val USER_TAG_COLOR = 0xFF5C6BC0.toInt()  // Indigo 400

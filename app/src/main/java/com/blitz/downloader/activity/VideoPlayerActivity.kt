@@ -27,8 +27,12 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updateLayoutParams
+import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.R
 import com.blitz.downloader.databinding.ActivityVideoPlayerBinding
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
 import kotlin.math.abs
@@ -64,6 +68,12 @@ class VideoPlayerActivity : AppCompatActivity() {
     private val previewSources = mutableListOf<String>()   // URL 或文件路径
     private val previewTitles = mutableListOf<String>()
     private val previewSubtitles = mutableListOf<String>()
+
+    /** 与 [previewSources] 并行的 aweme id；为空表示调用方没传，不做「已看过」标记。 */
+    private val previewAwemeIds = mutableListOf<String>()
+
+    /** 本次已写过库的 id，避免来回滑动时重复 UPDATE。 */
+    private val markedWatchedIds = mutableSetOf<String>()
     private var previewIsNetwork = false
     private var currentIndex = 0
     private var isSwitchingVideo = false
@@ -138,6 +148,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         val listTitles = intent.getStringArrayListExtra(EXTRA_LIST_TITLES) ?: arrayListOf()
         val listSubtitles = intent.getStringArrayListExtra(EXTRA_LIST_SUBTITLES) ?: arrayListOf()
         val listPosition = intent.getIntExtra(EXTRA_LIST_POSITION, 0)
+        intent.getStringArrayListExtra(EXTRA_LIST_AWEME_IDS)?.let { previewAwemeIds.addAll(it) }
 
         when {
             !listUrls.isNullOrEmpty() -> {
@@ -436,6 +447,22 @@ class VideoPlayerActivity : AppCompatActivity() {
             supportActionBar?.subtitle = subtitle.takeIf { it.isNotBlank() }
             updatePositionBadge()
         }
+
+        markWatched(index)
+    }
+
+    /**
+     * 把索引 [index] 处的作品标记为「已看过」（写库）。
+     *
+     * 覆盖初次进入与上下滑动切换两条路径——都会先走 [loadItemAtIndex]。调用方没传
+     * [EXTRA_LIST_AWEME_IDS] 时（如网络预览）直接跳过；同一 id 一次会话内只写一次。
+     * 用 applicationScope 而非 lifecycleScope：滑到下一个后立刻退出页面也要写完。
+     */
+    private fun markWatched(index: Int) {
+        val awemeId = previewAwemeIds.getOrNull(index)?.takeIf { it.isNotBlank() } ?: return
+        if (!markedWatchedIds.add(awemeId)) return
+        val repo = BlitzApp.instance.downloadedVideoRepository
+        CoroutineScope(Dispatchers.IO).launch { repo.markWatched(listOf(awemeId)) }
     }
 
     private fun updatePositionBadge() {
@@ -540,6 +567,12 @@ class VideoPlayerActivity : AppCompatActivity() {
         const val EXTRA_LIST_SUBTITLES = "extra_list_subtitles"
         const val EXTRA_LIST_POSITION = "extra_list_position"
 
+        /**
+         * 与列表并行的 aweme id 列表（可选）。传了才会把播放到的条目写库标记为「已看过」，
+         * 网络预览等拿不到 id 的入口不传即可。
+         */
+        const val EXTRA_LIST_AWEME_IDS = "extra_list_aweme_ids"
+
         private const val KEY_POSITION = "key_position"
         private const val KEY_INDEX = "key_index"
         private const val AUTO_HIDE_DELAY_MS = 3000L
@@ -569,17 +602,24 @@ class VideoPlayerActivity : AppCompatActivity() {
             .putStringArrayListExtra(EXTRA_LIST_SUBTITLES, subtitles)
             .putExtra(EXTRA_LIST_POSITION, position)
 
-        /** 从本地文件路径列表打开预览，支持上下滑动切换。 */
+        /**
+         * 从本地文件路径列表打开预览，支持上下滑动切换。
+         *
+         * [awemeIds] 与 [filePaths] 一一对应，传了就会把播放到的条目标记为「已看过」；
+         * 管理页走这条路径，其他入口可省略。
+         */
         fun createListFileIntent(
             context: Context,
             filePaths: ArrayList<String>,
             titles: ArrayList<String> = arrayListOf(),
             subtitles: ArrayList<String> = arrayListOf(),
             position: Int = 0,
+            awemeIds: ArrayList<String>? = null,
         ): Intent = Intent(context, VideoPlayerActivity::class.java)
             .putStringArrayListExtra(EXTRA_LIST_FILE_PATHS, filePaths)
             .putStringArrayListExtra(EXTRA_LIST_TITLES, titles)
             .putStringArrayListExtra(EXTRA_LIST_SUBTITLES, subtitles)
             .putExtra(EXTRA_LIST_POSITION, position)
+            .apply { if (awemeIds != null) putStringArrayListExtra(EXTRA_LIST_AWEME_IDS, awemeIds) }
     }
 }

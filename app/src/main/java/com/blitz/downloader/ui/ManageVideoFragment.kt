@@ -76,23 +76,24 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
     private var activeRelation: ManageRelationFilter = ManageRelationFilter.DEFAULT
 
     /**
-     * 当前「按标签数量筛选」状态（默认不筛选）。叠加在其他筛选之上，但**位于归属筛选之下**
-     * ——激活时只在有归属（点赞 / 收藏 / 收藏夹）的记录里数标签，详见 [filterByTagCount]。
+     * 当前「按标签数量筛选」勾选的档位（默认空集合 = 不筛选，多选取并集）。叠加在其他筛选之上，
+     * 但**位于归属筛选之下**——激活时只在有归属（点赞 / 收藏 / 收藏夹）的记录里数标签，
+     * 详见 [filterByTagCount]。
      *
      * 判定只在内存里做（[postProcess]），因此它一激活就退出 SQL 分页路径改为全量加载，
      * 否则「一页 20 条筛剩 2 条、列表撑不满不触发滚动加载」会看起来像数据没了。
      */
-    private var activeTagCount: ManageTagCountFilter = ManageTagCountFilter.DEFAULT
+    private var activeTagCounts: Set<ManageTagCountFilter> = ManageTagCountFilter.DEFAULT
 
     /**
-     * 当前「按标签修改次数筛选」状态（默认不筛选）。与 [activeTagCount] 同一层级：叠加在其他
+     * 当前「按标签修改次数筛选」状态（默认不筛选，单选）。与 [activeTagCounts] 同一层级：叠加在其他
      * 筛选之上、**位于归属筛选之下**（见 [scopeByRelation]），判定只在内存里做（[postProcess]），
      * 因此激活时同样要退出 SQL 分页路径改为全量加载。
      */
     private var activeTagEditCount: ManageTagEditCountFilter = ManageTagEditCountFilter.DEFAULT
 
     /** 有没有只能在内存里判定的筛选层激活——有则取数路径必须切成全量加载。 */
-    private fun hasMemoryOnlyFilter(): Boolean = activeTagCount.isActive || activeTagEditCount.isActive
+    private fun hasMemoryOnlyFilter(): Boolean = activeTagCounts.isNotEmpty() || activeTagEditCount.isActive
 
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
@@ -182,13 +183,16 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
             list.filterNot { ManageRelationFilter.isUnassigned(it) }
         }
 
-    /** 按 [activeTagCount] 过滤：标签数来自 `video_tags` 聚合，查不到的记录算 0 个。 */
+    /**
+     * 按 [activeTagCounts] 过滤：标签数来自 `video_tags` 聚合，查不到的记录算 0 个。
+     * 勾选多档时取并集（命中任一档即保留）。
+     */
     private suspend fun filterByTagCount(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> {
-        if (!activeTagCount.isActive || list.isEmpty()) return list
+        if (activeTagCounts.isEmpty() || list.isEmpty()) return list
         val scoped = scopeByRelation(list)
         if (scoped.isEmpty()) return scoped
         val counts = tagRepo.getTagCountMap()
-        return scoped.filter { activeTagCount.matches(counts[it.awemeId] ?: 0) }
+        return scoped.filter { ManageTagCountFilter.matchesAny(activeTagCounts, counts[it.awemeId] ?: 0) }
     }
 
     /**
@@ -226,12 +230,12 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         refreshList()
     }
 
-    override val activeTagCountFilter: ManageTagCountFilter get() = activeTagCount
+    override val activeTagCountFilters: Set<ManageTagCountFilter> get() = activeTagCounts
 
-    override fun applyTagCountFilter(filter: ManageTagCountFilter) {
-        if (filter == activeTagCount) return
+    override fun applyTagCountFilters(filters: Set<ManageTagCountFilter>) {
+        if (filters == activeTagCounts) return
         // 同样只切这一层，其他筛选原样保留
-        activeTagCount = filter
+        activeTagCounts = filters
         refreshList()
     }
 
@@ -310,9 +314,39 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                         adapter.exitSelectionMode()
                     }
                 }
+                // 只给已选记录的 tagEditCount +1，不动标签：
+                // 补 v12 之前手工改过标签、但库里没留下计数的历史数据。
+                .setNeutralButton(R.string.manage_bump_tag_edit_count) { _, _ ->
+                    confirmAndBumpTagEditCount(ids)
+                }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
         }
+    }
+
+    /**
+     * 二次确认后把已选记录的标签修改次数 +1（不改标签）。
+     * 无条件累加、没有幂等标记，重复执行会重复加，所以确认框里写清楚。
+     */
+    private fun confirmAndBumpTagEditCount(ids: List<String>) {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.manage_bump_tag_edit_count)
+            .setMessage(getString(R.string.manage_bump_tag_edit_count_confirm, ids.size))
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val updated = withContext(Dispatchers.IO) { tagRepo.bumpTagEditCountManually(ids) }
+                    Toast.makeText(
+                        requireContext(),
+                        getString(R.string.manage_bump_tag_edit_count_done, updated),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    adapter.exitSelectionMode()
+                    // 计数变了但内存里的实体还是旧值；正按修改次数筛选时必须重查，否则筛选结果对不上
+                    if (activeTagEditCount.isActive) refreshList()
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     override fun handleClearInvalid() {
@@ -387,6 +421,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                 showTagEditDialog(awemeId, currentTags)
             },
             supportsUserTags = true,
+            showWatchedBadge = true,
         )
         val gridManager = GridLayoutManager(requireContext(), 2)
         recyclerView.layoutManager = gridManager
@@ -507,8 +542,10 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                             getString(R.string.manage_tag_filter_empty_any, names)
                         }
                     }
-                    activeTagCount.isActive ->
-                        getString(R.string.manage_tag_count_empty, getString(activeTagCount.labelRes))
+                    activeTagCounts.isNotEmpty() -> getString(
+                        R.string.manage_tag_count_empty,
+                        ManageTagCountFilter.shortSummary(requireContext(), activeTagCounts),
+                    )
                     activeTagEditCount.isActive ->
                         getString(R.string.manage_tag_edit_count_empty, getString(activeTagEditCount.labelRes))
                     // 归属筛选放在其他条件之后判断：有更具体的筛选时优先显示那条文案
@@ -666,8 +703,27 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                 }),
                 subtitles = ArrayList(allItems.map { item -> item.entity.userName }),
                 position = if (position >= 0) position else 0,
+                // 播放页据此把播放到的条目写库标记为「已看过」（含在里面上下滑动切换到的）
+                awemeIds = ArrayList(allItems.map { it.entity.awemeId }),
             )
         )
+        // 点开这条立刻去掉「未看过」标记，不等回到列表；写库由播放页负责
+        adapter.markWatched(setOf(entity.awemeId))
+    }
+
+    /**
+     * 从播放页返回时补齐「已看过」标记：在播放页里上下滑动看过的条目只写了库、没通知列表，
+     * 这里按当前已加载的 id 回查一次数据库补上（点开的那条在 [openVideoPlayer] 里已就地标过）。
+     */
+    override fun onResume() {
+        super.onResume()
+        if (!::adapter.isInitialized) return
+        val ids = adapter.getItems().filterNot { it.entity.watched }.map { it.entity.awemeId }
+        if (ids.isEmpty()) return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val watched = withContext(Dispatchers.IO) { repo.getWatchedAwemeIdSet(ids) }
+            if (watched.isNotEmpty()) adapter.markWatched(watched)
+        }
     }
 
     companion object {
