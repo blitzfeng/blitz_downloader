@@ -2,64 +2,51 @@ package com.blitz.downloader.fragment
 
 import android.content.Intent
 import android.os.Bundle
-import android.os.Environment
 import android.view.View
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.ImageViewerActivity
 import com.blitz.downloader.activity.ManageActivity
 import com.blitz.downloader.adapter.ManageGridAdapter
-import com.blitz.downloader.data.DownloadedVideoRepository
 import com.blitz.downloader.data.db.DownloadedVideoEntity
-import com.blitz.downloader.model.ManageGridItem
 import com.blitz.downloader.model.filter.ManageRelationFilter
 import com.blitz.downloader.model.filter.ManageSortOrder
-import java.io.File
-import kotlinx.coroutines.Dispatchers
+import com.blitz.downloader.viewmodel.ManageEmptyReason
+import com.blitz.downloader.viewmodel.ManageImageViewModel
+import com.blitz.downloader.viewmodel.ManageTabEvent
+import com.blitz.downloader.viewmodel.ManageTabUiState
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
+/**
+ * 管理页「图片」Tab。
+ *
+ * 与 [ManageVideoFragment] 结构一致但能力更少：没有标签栏、不检查文件失效、
+ * 不支持清除失效——这些与既有行为保持一致，不要顺手「补齐」。
+ */
 class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabFragment {
 
     private lateinit var adapter: ManageGridAdapter
-    private lateinit var repo: DownloadedVideoRepository
+    private var progressRef: ProgressBar? = null
     private var tvEmptyRef: TextView? = null
 
-    private var currentOffset = 0
-    private var isLoading = false
-    private var hasMore = true
+    private val viewModel: ManageImageViewModel by viewModels()
 
-    /** 当前激活的搜索关键词（trim 后非空时启用搜索路径）。 */
-    private var activeSearchQuery: String = ""
+    /** 收到 [ManageTabEvent.SelectAllAfterLoad] 后置位，在下一次渲染完成后执行全选。 */
+    private var pendingSelectAll = false
 
-    /**
-     * 当前作者筛选：优先按稳定 ID [activeAuthorSecId]，无 ID 时按昵称 [activeAuthorName]。
-     * 二者都为空表示未按作者筛选。
-     */
-    private var activeAuthorSecId: String = ""
-    private var activeAuthorName: String = ""
-
-    private fun hasAuthorFilter(): Boolean = activeAuthorSecId.isNotBlank() || activeAuthorName.isNotBlank()
-    private fun clearAuthorFilterState() {
-        activeAuthorSecId = ""
-        activeAuthorName = ""
-    }
-
-    /** 当前排序方式（默认下载时间倒序）。 */
-    private var activeSort: ManageSortOrder = ManageSortOrder.DEFAULT
-
-    /**
-     * 当前「按归属筛选」状态（默认不筛选）。与搜索 / 作者筛选**叠加**而非互斥，
-     * 因此所有取数路径都要再过一遍它：分页路径下沉到 SQL，其余路径走 [ManageRelationFilter.apply]。
-     */
-    private var activeRelation: ManageRelationFilter = ManageRelationFilter.DEFAULT
+    // -----------------------------------------------------------------------
+    // ManageTabFragment：供 ManageActivity 的菜单驱动
+    // -----------------------------------------------------------------------
 
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
@@ -71,103 +58,46 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
 
     override fun getSelectedEntities(): List<DownloadedVideoEntity> {
         if (!::adapter.isInitialized) return emptyList()
-        val selected = adapter.getSelectedAwemeIds().toSet()
-        if (selected.isEmpty()) return emptyList()
-        return adapter.getItems().filter { it.entity.awemeId in selected }.map { it.entity }
+        return viewModel.entitiesFor(adapter.getSelectedAwemeIds())
     }
 
     // 「已全选」= 当前范围全部记录都已加载（无更多分页）且全部选中；否则按钮显示「全选」。
     override val isAllSelected: Boolean
-        get() = ::adapter.isInitialized && !hasMore && adapter.isAllSelected()
+        get() = ::adapter.isInitialized && !viewModel.uiState.value.hasMore && adapter.isAllSelected()
 
-    override fun markExported(awemeIds: Set<String>) {
-        if (::adapter.isInitialized) adapter.markExported(awemeIds)
-    }
+    override fun markExported(awemeIds: Set<String>) = viewModel.markExported(awemeIds)
 
     override fun handleToggleSelectAll() {
         if (!::adapter.isInitialized) return
         // 当前范围已全部加载：纯内存切换，不重建列表、不丢滚动位置。
-        if (!hasMore) {
+        if (!viewModel.uiState.value.hasMore) {
             if (adapter.isAllSelected()) adapter.deselectAll() else adapter.selectAll()
             return
         }
-        // 仍有未加载的分页：先把当前范围（搜索 / 全部）在数据库中的全部记录拉齐再全选。
-        viewLifecycleOwner.lifecycleScope.launch {
-            val all = withContext(Dispatchers.IO) { loadFullScopeEntities() }
-            if (all.isEmpty()) return@launch
-            adapter.clearItems()
-            currentOffset = all.size
-            hasMore = false
-            isLoading = false
-            tvEmptyRef?.visibility = View.GONE
-            adapter.addItems(all.map { ManageGridItem(it) })
-            adapter.selectAll()
-        }
+        viewModel.loadFullScopeThenSelectAll()
     }
 
-    /** 当前范围（搜索 / 全部）在数据库中的全部记录，供全选使用。 */
-    private suspend fun loadFullScopeEntities(): List<DownloadedVideoEntity> = withContext(Dispatchers.IO) {
-        val list = when {
-            hasAuthorFilter() -> loadAuthorEntities(MEDIA_TYPE_IMAGE)
-            activeSearchQuery.isNotBlank() -> repo.searchByUserName(MEDIA_TYPE_IMAGE, activeSearchQuery)
-            else -> repo.getAllByMediaType(MEDIA_TYPE_IMAGE)
-        }
-        postProcess(list)
-    }
+    override val activeSortOrder: ManageSortOrder get() = viewModel.filters.sort
+    override fun applySort(sort: ManageSortOrder) = viewModel.applySort(sort)
 
-    /**
-     * 非分页路径（搜索 / 作者 / 全选）的统一后处理：先过「按归属筛选」这一层，再按当前排序倒排。
-     * 分页路径的归属筛选下沉到 SQL，不走这里。
-     */
-    private fun postProcess(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> =
-        sortEntities(activeRelation.apply(list))
+    override val activeRelationFilter: ManageRelationFilter get() = viewModel.filters.relation
+    override fun applyRelationFilter(filter: ManageRelationFilter) = viewModel.applyRelationFilter(filter)
 
-    /** 按当前 [activeSort] 对内存中的实体列表倒序排序。 */
-    private fun sortEntities(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> = when (activeSort) {
-        ManageSortOrder.DOWNLOAD_TIME -> list.sortedByDescending { it.createdAtMillis }
-        ManageSortOrder.PUBLISH_TIME -> list.sortedByDescending { it.createTime }
-        ManageSortOrder.DIGG -> list.sortedByDescending { it.diggCount }
-    }
+    override fun applySearchQuery(query: String?) = viewModel.applySearchQuery(query)
 
-    override val activeSortOrder: ManageSortOrder get() = activeSort
+    override val activeAuthorKey: String? get() = viewModel.filters.authorKey
 
-    override fun applySort(sort: ManageSortOrder) {
-        if (sort == activeSort) return
-        activeSort = sort
-        refreshList()
-    }
-
-    override val activeRelationFilter: ManageRelationFilter get() = activeRelation
-
-    override fun applyRelationFilter(filter: ManageRelationFilter) {
-        if (filter == activeRelation) return
-        // 只切这一层，保留搜索 / 作者筛选：筛选是叠加关系。
-        activeRelation = filter
-        refreshList()
-    }
+    override fun applyAuthorFilter(secUserId: String?, userName: String?) =
+        viewModel.applyAuthorFilter(secUserId, userName)
 
     override fun handleDeleteSelected() {
         if (!::adapter.isInitialized) return
         val ids = adapter.getSelectedAwemeIds()
         if (ids.isEmpty()) return
-
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_confirm_delete_title)
             .setMessage(getString(R.string.manage_confirm_delete_msg, ids.size))
-            .setPositiveButton(R.string.manage_confirm_ok) { _, _ ->
-                viewLifecycleOwner.lifecycleScope.launch {
-                    val deleted = withContext(Dispatchers.IO) { repo.deleteByAwemeIds(ids) }
-                    adapter.removeItems(ids.toSet())
-                    if (adapter.itemCount == 0 && !hasMore) {
-                        tvEmptyRef?.visibility = View.VISIBLE
-                    }
-                    Toast.makeText(
-                        requireContext(),
-                        getString(R.string.manage_delete_done, deleted),
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }
+            .setPositiveButton(R.string.manage_confirm_ok) { _, _ -> viewModel.deleteSelected(ids) }
             .setNegativeButton(R.string.manage_confirm_cancel, null)
             .show()
     }
@@ -176,23 +106,22 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
         // 图片 Tab 不支持此操作
     }
 
+    // -----------------------------------------------------------------------
+    // 生命周期
+    // -----------------------------------------------------------------------
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        repo = DownloadedVideoRepository(requireContext())
-
         val recyclerView: RecyclerView = view.findViewById(R.id.rvManageImages)
-        val progress: ProgressBar = view.findViewById(R.id.progressManageImage)
-        val tvEmpty: TextView = view.findViewById(R.id.tvEmptyManageImage)
-        tvEmptyRef = tvEmpty
+        progressRef = view.findViewById(R.id.progressManageImage)
+        tvEmptyRef = view.findViewById(R.id.tvEmptyManageImage)
 
         adapter = ManageGridAdapter(
             onSelectionChanged = { active, count ->
                 (activity as? ManageActivity)?.onSelectionChanged(active, count)
             },
-            onItemClick = { entity ->
-                openImageViewer(entity)
-            },
+            onItemClick = { entity -> viewModel.openImageViewer(entity) },
             supportsUserTags = false,
         )
         val gridManager = GridLayoutManager(requireContext(), 2)
@@ -202,129 +131,85 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabF
         recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 if (dy <= 0) return
-                val lastVisible = gridManager.findLastVisibleItemPosition()
-                if (!isLoading && hasMore && lastVisible >= adapter.itemCount - 4) {
-                    loadNextPage(progress, tvEmpty)
+                if (!viewModel.canLoadMore()) return
+                if (gridManager.findLastVisibleItemPosition() >= adapter.itemCount - 4) {
+                    viewModel.loadNextPage()
                 }
             }
         })
 
-        loadNextPage(progress, tvEmpty)
+        observeViewModel()
+        viewModel.loadInitialIfNeeded()
     }
 
     override fun onDestroyView() {
+        progressRef = null
         tvEmptyRef = null
         super.onDestroyView()
     }
 
-    private fun loadNextPage(progress: ProgressBar, tvEmpty: TextView) {
-        if (isLoading || !hasMore) return
-        isLoading = true
-        if (currentOffset == 0) progress.visibility = View.VISIBLE
-
+    private fun observeViewModel() {
         viewLifecycleOwner.lifecycleScope.launch {
-            val entities = withContext(Dispatchers.IO) {
-                when {
-                    // 作者筛选 / 搜索：一次性返回匹配集，后续不再分页
-                    hasAuthorFilter() ->
-                        if (currentOffset == 0) postProcess(loadAuthorEntities(MEDIA_TYPE_IMAGE)) else emptyList()
-                    activeSearchQuery.isNotBlank() ->
-                        if (currentOffset == 0) postProcess(repo.searchByUserName(MEDIA_TYPE_IMAGE, activeSearchQuery)) else emptyList()
-                    // 分页路径：归属筛选下沉到 SQL，保证 LIMIT 前生效、分页计数正确
-                    else -> repo.getPageByMediaTypeSorted(
-                        MEDIA_TYPE_IMAGE,
-                        activeSort.column,
-                        PAGE_SIZE,
-                        currentOffset,
-                        activeRelation.unassignedOnly,
-                    )
-                }
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { viewModel.uiState.collect { render(it) } }
+                launch { viewModel.events.collect { handleEvent(it) } }
             }
-            progress.visibility = View.GONE
-            when {
-                hasAuthorFilter() -> hasMore = false
-                activeSearchQuery.isNotBlank() -> hasMore = false
-                entities.size < PAGE_SIZE -> hasMore = false
-            }
-            currentOffset += entities.size
-
-            if (entities.isEmpty() && currentOffset == 0) {
-                tvEmpty.text = when {
-                    hasAuthorFilter() -> getString(R.string.manage_author_empty, activeAuthorName)
-                    activeSearchQuery.isNotBlank() -> getString(R.string.manage_search_empty, activeSearchQuery)
-                    // 归属筛选放在其他条件之后判断：有更具体的筛选时优先显示那条文案
-                    activeRelation != ManageRelationFilter.OFF -> getString(R.string.manage_relation_empty)
-                    else -> getString(R.string.manage_empty_images)
-                }
-                tvEmpty.visibility = View.VISIBLE
-            } else {
-                tvEmpty.visibility = View.GONE
-                adapter.addItems(entities.map { ManageGridItem(it) })
-            }
-            isLoading = false
         }
     }
 
-    override fun applySearchQuery(query: String?) {
-        val q = query?.trim().orEmpty()
-        if (q == activeSearchQuery) return
-        activeSearchQuery = q
-        if (q.isNotBlank()) clearAuthorFilterState()
-        refreshList()
-    }
-
-    override val activeAuthorKey: String?
-        get() = activeAuthorSecId.ifBlank { activeAuthorName }.ifBlank { null }
-
-    override fun applyAuthorFilter(secUserId: String?, userName: String?) {
-        val sec = secUserId?.trim().orEmpty()
-        val name = userName?.trim().orEmpty()
-        if (sec == activeAuthorSecId && name == activeAuthorName) return
-        activeAuthorSecId = sec
-        activeAuthorName = name
-        if (sec.isNotBlank() || name.isNotBlank()) activeSearchQuery = ""
-        refreshList()
-    }
-
-    /** 按当前作者筛选取该 mediaType 下的全部作品：有稳定 ID 走 ID，无则退回昵称。 */
-    private suspend fun loadAuthorEntities(mediaType: String): List<DownloadedVideoEntity> =
-        if (activeAuthorSecId.isNotBlank()) {
-            repo.getByMediaTypeAndAuthorSecUserId(mediaType, activeAuthorSecId)
+    private fun render(state: ManageTabUiState) {
+        progressRef?.visibility = if (state.showProgress) View.VISIBLE else View.GONE
+        adapter.submitItems(state.items)
+        val reason = state.emptyReason
+        if (reason != null) {
+            tvEmptyRef?.text = emptyText(reason)
+            tvEmptyRef?.visibility = View.VISIBLE
         } else {
-            repo.getByMediaTypeAndUserName(mediaType, activeAuthorName)
+            tvEmptyRef?.visibility = View.GONE
         }
-
-    /** 从头加载（搜索切换 / 退出搜索时调用）。 */
-    private fun refreshList() {
-        currentOffset = 0
-        hasMore = true
-        adapter.clearItems()
-        val progress = view?.findViewById<ProgressBar>(R.id.progressManageImage) ?: return
-        val tvEmpty = view?.findViewById<TextView>(R.id.tvEmptyManageImage) ?: return
-        loadNextPage(progress, tvEmpty)
+        if (pendingSelectAll && state.items.isNotEmpty()) {
+            pendingSelectAll = false
+            adapter.selectAll()
+        }
     }
 
-    private fun openImageViewer(entity: DownloadedVideoEntity) {
-        if (entity.filePath.isBlank()) {
-            Toast.makeText(requireContext(), R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
-            return
-        }
-        @Suppress("DEPRECATION")
-        val file = File(Environment.getExternalStorageDirectory(), entity.filePath)
-        if (!file.exists()) {
-            Toast.makeText(requireContext(), R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
-            return
-        }
-        val title = entity.desc.trim().ifBlank { entity.userName.ifBlank { entity.awemeId } }
-        val intent = Intent(requireContext(), ImageViewerActivity::class.java).apply {
-            putExtra(ImageViewerActivity.EXTRA_FILE_PATH, entity.filePath)
-            putExtra(ImageViewerActivity.EXTRA_TITLE, title)
-        }
-        startActivity(intent)
+    private fun emptyText(reason: ManageEmptyReason): CharSequence = when (reason) {
+        is ManageEmptyReason.Author -> getString(R.string.manage_author_empty, reason.name)
+        is ManageEmptyReason.Search -> getString(R.string.manage_search_empty, reason.query)
+        ManageEmptyReason.Relation -> getString(R.string.manage_relation_empty)
+        // 图片 Tab 不支持标签相关的筛选层，落到这里只可能是「一条都没有」
+        else -> getString(R.string.manage_empty_images)
     }
 
-    companion object {
-        private const val PAGE_SIZE = 20
-        private const val MEDIA_TYPE_IMAGE = "image"
+    private fun handleEvent(event: ManageTabEvent) {
+        when (event) {
+            is ManageTabEvent.DeleteDone ->
+                toast(getString(R.string.manage_delete_done, event.count))
+            ManageTabEvent.FileNotFound -> toast(getString(R.string.player_file_not_found))
+            // uiState 与 events 由两个独立协程收集，到达顺序不保证：列表已经渲染出来就直接
+            // 全选，还没渲染就置位、等 render 完成后再选。少了任一分支都可能全选不生效。
+            ManageTabEvent.SelectAllAfterLoad ->
+                if (adapter.itemCount > 0) adapter.selectAll() else pendingSelectAll = true
+            is ManageTabEvent.OpenImageViewer -> startActivity(
+                Intent(requireContext(), ImageViewerActivity::class.java).apply {
+                    putExtra(ImageViewerActivity.EXTRA_FILE_PATH, event.filePath)
+                    putExtra(ImageViewerActivity.EXTRA_TITLE, event.title)
+                },
+            )
+            // 以下事件只由视频 Tab 产生
+            is ManageTabEvent.ClearInvalidDone,
+            ManageTabEvent.ClearInvalidNone,
+            ManageTabEvent.NoTagsAvailable,
+            is ManageTabEvent.ShowTagEditor,
+            is ManageTabEvent.ShowBatchTagPicker,
+            is ManageTabEvent.TagsApplied,
+            is ManageTabEvent.TagEditCountBumped,
+            is ManageTabEvent.OpenVideoPlayer,
+            -> Unit
+        }
+    }
+
+    private fun toast(text: CharSequence) {
+        Toast.makeText(requireContext(), text, Toast.LENGTH_SHORT).show()
     }
 }

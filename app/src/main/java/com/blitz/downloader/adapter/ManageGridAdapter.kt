@@ -10,6 +10,7 @@ import android.widget.CheckBox
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import coil.load
 import coil.transform.RoundedCornersTransformation
@@ -54,47 +55,36 @@ class ManageGridAdapter(
 
     // ── 公共 API ──────────────────────────────────────────────────────────────
 
-    /** 返回当前已加载的所有 item 快照，供打开播放器时构建列表使用。 */
+    /** 返回当前已加载的所有 item 快照。 */
     fun getItems(): List<ManageGridItem> = items.toList()
 
-    fun addItems(newItems: List<ManageGridItem>) {
-        val insertStart = items.size
-        items.addAll(newItems)
-        newItems.forEachIndexed { i, item ->
-            indexByAwemeId[item.entity.awemeId] = insertStart + i
-        }
-        notifyItemRangeInserted(insertStart, newItems.size)
-    }
-
-    fun clearItems() {
-        val size = items.size
+    /**
+     * 用 ViewModel 给出的新列表整体替换当前列表。
+     *
+     * 列表数据的权威在 ViewModel（见 [com.blitz.downloader.viewmodel.ManageTabViewModel]），
+     * Adapter 只负责渲染与多选状态，因此这里是唯一的数据入口。
+     * 用 [DiffUtil] 算增量并沿用原有的 payload 常量，保证追加分页、标签到达、
+     * 文件失效、已看过 / 已导出这些更新仍然只重绑必要的部分。
+     *
+     * 选中集合按新列表里还在的 id 收窄：删除后被选中的条目会自动从选中集里消失。
+     */
+    fun submitItems(newItems: List<ManageGridItem>) {
+        val diff = DiffUtil.calculateDiff(ItemDiffCallback(items.toList(), newItems), false)
         items.clear()
-        indexByAwemeId.clear()
-        selectedIds.clear()
-        if (inSelectionMode) {
-            inSelectionMode = false
-            onSelectionChanged(false, 0)
-        }
-        notifyItemRangeRemoved(0, size)
-    }
-
-    fun updateFileExists(awemeId: String, exists: Boolean) {
-        val pos = indexByAwemeId[awemeId] ?: return
-        if (pos < items.size && items[pos].entity.awemeId == awemeId) {
-            items[pos] = items[pos].copy(fileExists = exists)
-            notifyItemChanged(pos, PAYLOAD_FILE_EXISTS)
-        }
-    }
-
-    fun removeItems(awemeIds: Set<String>) {
-        if (awemeIds.isEmpty()) return
-        items.removeAll { it.entity.awemeId in awemeIds }
-        selectedIds.removeAll(awemeIds)
+        items.addAll(newItems)
         rebuildIndex()
-        notifyDataSetChanged()
-        if (inSelectionMode && selectedIds.isEmpty()) {
-            inSelectionMode = false
-            onSelectionChanged(false, 0)
+
+        val survivingIds = newItems.mapTo(mutableSetOf()) { it.entity.awemeId }
+        val selectionChanged = selectedIds.retainAll(survivingIds)
+        diff.dispatchUpdatesTo(this)
+
+        if (items.isEmpty() || (inSelectionMode && selectedIds.isEmpty())) {
+            if (inSelectionMode) {
+                inSelectionMode = false
+                onSelectionChanged(false, 0)
+            }
+        } else if (selectionChanged) {
+            onSelectionChanged(inSelectionMode, selectedIds.size)
         }
     }
 
@@ -124,48 +114,6 @@ class ManageGridAdapter(
         selectedIds.clear()
         notifyItemRangeChanged(0, items.size, PAYLOAD_SELECTION_STATE)
         onSelectionChanged(inSelectionMode, 0)
-    }
-
-    /**
-     * 局域网导出成功后把这些条目的 `exportCount` 就地 +1，刷新左上角「已导出」标记。
-     * 与数据库侧的原子累加是两笔独立更新——这里只为让当前列表立刻显示正确，
-     * 下次重新查询时以数据库为准。
-     */
-    fun markExported(awemeIds: Set<String>) {
-        if (awemeIds.isEmpty()) return
-        awemeIds.forEach { awemeId ->
-            val pos = indexByAwemeId[awemeId] ?: return@forEach
-            if (pos >= items.size || items[pos].entity.awemeId != awemeId) return@forEach
-            val entity = items[pos].entity
-            items[pos] = items[pos].copy(entity = entity.copy(exportCount = entity.exportCount + 1))
-            notifyItemChanged(pos, PAYLOAD_EXPORTED)
-        }
-    }
-
-    /**
-     * 把这些条目就地标为「已看过」，去掉封面上的「未看过」标记。
-     * 与数据库侧的 `UPDATE ... SET watched = 1` 是两笔独立更新——这里只为让当前列表立刻
-     * 显示正确（点开播放页时先标本条，播放页里滑动看过的那些由 `onResume` 回查补上）。
-     */
-    fun markWatched(awemeIds: Set<String>) {
-        if (awemeIds.isEmpty()) return
-        awemeIds.forEach { awemeId ->
-            val pos = indexByAwemeId[awemeId] ?: return@forEach
-            if (pos >= items.size || items[pos].entity.awemeId != awemeId) return@forEach
-            val entity = items[pos].entity
-            if (entity.watched) return@forEach
-            items[pos] = items[pos].copy(entity = entity.copy(watched = true))
-            notifyItemChanged(pos, PAYLOAD_WATCHED)
-        }
-    }
-
-    /** 更新某条目的用户标签，触发局部刷新（仅重绑标签行）。 */
-    fun updateItemTags(awemeId: String, tags: List<String>) {
-        val pos = indexByAwemeId[awemeId] ?: return
-        if (pos < items.size && items[pos].entity.awemeId == awemeId) {
-            items[pos] = items[pos].copy(userTags = tags)
-            notifyItemChanged(pos, PAYLOAD_TAGS)
-        }
     }
 
     fun exitSelectionMode() {
@@ -535,6 +483,49 @@ class ManageGridAdapter(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT,
             )
+        }
+    }
+
+    /**
+     * [submitItems] 用的差异计算。
+     *
+     * [getChangePayload] 只在**恰好一个**可局部刷新的字段变化时返回对应 payload；
+     * 多个字段同时变或变的是别的字段时返回 null，走整条重绑。这样既保留了原先按
+     * payload 局部刷新的效率，又不会漏更新。
+     */
+    private class ItemDiffCallback(
+        private val old: List<ManageGridItem>,
+        private val new: List<ManageGridItem>,
+    ) : DiffUtil.Callback() {
+
+        override fun getOldListSize(): Int = old.size
+
+        override fun getNewListSize(): Int = new.size
+
+        override fun areItemsTheSame(oldPos: Int, newPos: Int): Boolean =
+            old[oldPos].entity.awemeId == new[newPos].entity.awemeId
+
+        override fun areContentsTheSame(oldPos: Int, newPos: Int): Boolean =
+            old[oldPos] == new[newPos]
+
+        override fun getChangePayload(oldPos: Int, newPos: Int): Any? {
+            val o = old[oldPos]
+            val n = new[newPos]
+            val changed = mutableListOf<String>()
+            if (o.fileExists != n.fileExists) changed += PAYLOAD_FILE_EXISTS
+            if (o.userTags != n.userTags) changed += PAYLOAD_TAGS
+            if (o.entity.exportCount != n.entity.exportCount) changed += PAYLOAD_EXPORTED
+            if (o.entity.watched != n.entity.watched) changed += PAYLOAD_WATCHED
+            // 其余字段（封面、描述、点赞数……）变了就整条重绑
+            val onlyKnownFieldsChanged = o.copy(
+                fileExists = n.fileExists,
+                userTags = n.userTags,
+                entity = o.entity.copy(
+                    exportCount = n.entity.exportCount,
+                    watched = n.entity.watched,
+                ),
+            ) == n
+            return if (changed.size == 1 && onlyKnownFieldsChanged) changed.first() else null
         }
     }
 

@@ -1,15 +1,16 @@
 package com.blitz.downloader.fragment
 
-import android.content.Intent
 import android.os.Bundle
-import android.os.Environment
 import android.view.View
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -18,89 +19,38 @@ import com.blitz.downloader.activity.ManageActivity
 import com.blitz.downloader.activity.VideoPlayerActivity
 import com.blitz.downloader.adapter.ManageGridAdapter
 import com.blitz.downloader.adapter.TagFilterAdapter
-import com.blitz.downloader.config.AppSettings
-import com.blitz.downloader.data.DownloadedVideoRepository
-import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.data.db.DownloadedVideoEntity
-import com.blitz.downloader.model.ManageGridItem
 import com.blitz.downloader.model.filter.ManageRelationFilter
 import com.blitz.downloader.model.filter.ManageSortOrder
 import com.blitz.downloader.model.filter.ManageTagCountFilter
 import com.blitz.downloader.model.filter.ManageTagEditCountFilter
-import java.io.File
-import kotlinx.coroutines.Dispatchers
+import com.blitz.downloader.viewmodel.ManageEmptyReason
+import com.blitz.downloader.viewmodel.ManageTabEvent
+import com.blitz.downloader.viewmodel.ManageTabUiState
+import com.blitz.downloader.viewmodel.ManageVideoViewModel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
+/**
+ * 管理页「视频」Tab。
+ *
+ * 只负责视图：网格与标签栏、把菜单动作转发给 [ManageVideoViewModel]、渲染 `uiState`、
+ * 弹出对话框。取数、筛选、排序、删除、标签读写都在 ViewModel 里。
+ */
 class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabFragment {
 
     private lateinit var adapter: ManageGridAdapter
     private lateinit var tagFilterAdapter: TagFilterAdapter
-    private lateinit var repo: DownloadedVideoRepository
-    private lateinit var tagRepo: VideoTagRepository
-    private var rvRef: RecyclerView? = null
+    private var progressRef: ProgressBar? = null
     private var tvEmptyRef: TextView? = null
 
-    private var currentOffset = 0
-    private var isLoading = false
-    private var hasMore = true
+    private val viewModel: ManageVideoViewModel by viewModels()
 
-    /**
-     * 当前激活的标签过滤，空集合表示不过滤（标签栏上的「全部」）。
-     * 多个标签之间取交集还是并集由设置页决定，见 [tagMatchAll]。
-     */
-    private var activeTags: Set<String> = emptySet()
+    /** 收到 [ManageTabEvent.SelectAllAfterLoad] 后置位，在下一次渲染完成后执行全选。 */
+    private var pendingSelectAll = false
 
-    /**
-     * 标签多选的匹配方式，每次取数时现读设置——设置页在另一个 Activity 里，
-     * 现读即可拿到最新值，不需要跨页变更通知。
-     */
-    private fun tagMatchAll(): Boolean = AppSettings.isTagFilterMatchAll(requireContext())
-
-    /** 当前激活的搜索关键词（trim 后非空时启用搜索路径，忽略 [activeTags]）。 */
-    private var activeSearchQuery: String = ""
-
-    /**
-     * 当前作者筛选：优先按稳定 ID [activeAuthorSecId]，无 ID 时按昵称 [activeAuthorName]。
-     * 二者都为空表示未按作者筛选。[activeAuthorName] 同时用于空状态文案与抽屉回显。
-     */
-    private var activeAuthorSecId: String = ""
-    private var activeAuthorName: String = ""
-
-    private fun hasAuthorFilter(): Boolean = activeAuthorSecId.isNotBlank() || activeAuthorName.isNotBlank()
-    private fun clearAuthorFilterState() {
-        activeAuthorSecId = ""
-        activeAuthorName = ""
-    }
-
-    /** 当前排序方式（默认下载时间倒序）。 */
-    private var activeSort: ManageSortOrder = ManageSortOrder.DEFAULT
-
-    /**
-     * 当前「按归属筛选」状态（默认不筛选）。与标签 / 搜索 / 作者筛选**叠加**而非互斥，
-     * 因此所有取数路径都要再过一遍它：分页路径下沉到 SQL，其余路径走 [ManageRelationFilter.apply]。
-     */
-    private var activeRelation: ManageRelationFilter = ManageRelationFilter.DEFAULT
-
-    /**
-     * 当前「按标签数量筛选」勾选的档位（默认空集合 = 不筛选，多选取并集）。叠加在其他筛选之上，
-     * 但**位于归属筛选之下**——激活时只在有归属（点赞 / 收藏 / 收藏夹）的记录里数标签，
-     * 详见 [filterByTagCount]。
-     *
-     * 判定只在内存里做（[postProcess]），因此它一激活就退出 SQL 分页路径改为全量加载，
-     * 否则「一页 20 条筛剩 2 条、列表撑不满不触发滚动加载」会看起来像数据没了。
-     */
-    private var activeTagCounts: Set<ManageTagCountFilter> = ManageTagCountFilter.DEFAULT
-
-    /**
-     * 当前「按标签修改次数筛选」状态（默认不筛选，单选）。与 [activeTagCounts] 同一层级：叠加在其他
-     * 筛选之上、**位于归属筛选之下**（见 [scopeByRelation]），判定只在内存里做（[postProcess]），
-     * 因此激活时同样要退出 SQL 分页路径改为全量加载。
-     */
-    private var activeTagEditCount: ManageTagEditCountFilter = ManageTagEditCountFilter.DEFAULT
-
-    /** 有没有只能在内存里判定的筛选层激活——有则取数路径必须切成全量加载。 */
-    private fun hasMemoryOnlyFilter(): Boolean = activeTagCounts.isNotEmpty() || activeTagEditCount.isActive
+    // -----------------------------------------------------------------------
+    // ManageTabFragment：供 ManageActivity 的菜单驱动
+    // -----------------------------------------------------------------------
 
     override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
     override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
@@ -114,319 +64,128 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
 
     override fun getSelectedEntities(): List<DownloadedVideoEntity> {
         if (!::adapter.isInitialized) return emptyList()
-        val selected = adapter.getSelectedAwemeIds().toSet()
-        if (selected.isEmpty()) return emptyList()
-        return adapter.getItems().filter { it.entity.awemeId in selected }.map { it.entity }
+        return viewModel.entitiesFor(adapter.getSelectedAwemeIds())
     }
 
     // 「已全选」= 当前范围全部记录都已加载（无更多分页）且全部选中。
     // 仅当满足此条件时按钮才显示「取消全选」，否则显示「全选」（点击会拉取全库该范围记录）。
     override val isAllSelected: Boolean
-        get() = ::adapter.isInitialized && !hasMore && adapter.isAllSelected()
+        get() = ::adapter.isInitialized && !viewModel.uiState.value.hasMore && adapter.isAllSelected()
 
-    override fun markExported(awemeIds: Set<String>) {
-        if (::adapter.isInitialized) adapter.markExported(awemeIds)
-    }
+    override fun markExported(awemeIds: Set<String>) = viewModel.markExported(awemeIds)
 
     override fun handleToggleSelectAll() {
         if (!::adapter.isInitialized) return
         // 当前范围已全部加载：纯内存切换，不重建列表、不丢滚动位置。
-        if (!hasMore) {
+        if (!viewModel.uiState.value.hasMore) {
             if (adapter.isAllSelected()) adapter.deselectAll() else adapter.selectAll()
             return
         }
-        // 仍有未加载的分页：先把当前范围（搜索 / 标签 / 全部）在数据库中的全部记录拉齐再全选。
-        viewLifecycleOwner.lifecycleScope.launch {
-            val all = withContext(Dispatchers.IO) { loadFullScopeEntities() }
-            if (all.isEmpty()) return@launch
-            adapter.clearItems()
-            currentOffset = all.size
-            hasMore = false
-            isLoading = false
-            tvEmptyRef?.visibility = View.GONE
-            adapter.addItems(all.map { ManageGridItem(it) })
-            adapter.selectAll()
-            checkFileExistence(all)
-            loadAndApplyTags(all)
-        }
+        // 仍有未加载的分页：先把当前范围在数据库中的全部记录拉齐再全选。
+        viewModel.loadFullScopeThenSelectAll()
     }
 
-    /** 当前范围（搜索 / 标签 / 全部）在数据库中的全部记录，供全选使用。 */
-    private suspend fun loadFullScopeEntities(): List<DownloadedVideoEntity> {
-        val matchAll = tagMatchAll()
-        return withContext(Dispatchers.IO) {
-            val list = when {
-                hasAuthorFilter() -> loadAuthorEntities(MEDIA_TYPE_VIDEO)
-                activeSearchQuery.isNotBlank() -> repo.searchByUserName(MEDIA_TYPE_VIDEO, activeSearchQuery)
-                activeTags.isEmpty() -> repo.getAllByMediaType(MEDIA_TYPE_VIDEO)
-                else -> tagRepo.getVideosByTags(activeTags, matchAll)
-                    .filter { it.mediaType == MEDIA_TYPE_VIDEO }
-            }
-            postProcess(list)
-        }
-    }
+    override val activeSortOrder: ManageSortOrder get() = viewModel.filters.sort
+    override fun applySort(sort: ManageSortOrder) = viewModel.applySort(sort)
 
-    /**
-     * 非分页路径（搜索 / 标签 / 作者 / 全选）的统一后处理：依次过「按归属筛选」
-     * 「按标签数量筛选」「按标签修改次数筛选」三层，再按当前排序倒排。分页路径的归属筛选
-     * 下沉到 SQL，不走这里；后两层没有 SQL 侧实现，激活时取数路径本身就会切成全量加载。
-     */
-    private suspend fun postProcess(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> =
-        sortEntities(filterByTagEditCount(filterByTagCount(activeRelation.apply(list))))
+    override val activeRelationFilter: ManageRelationFilter get() = viewModel.filters.relation
+    override fun applyRelationFilter(filter: ManageRelationFilter) = viewModel.applyRelationFilter(filter)
 
-    /**
-     * 「标签数量」「标签修改次数」两层筛选共用的归属收窄。
-     *
-     * 这两层**隶属于归属筛选**：无归属记录（既无点赞/收藏关系、也不属于收藏夹，通常是从
-     * 他人主页 post 下载的）绝大多数没打过标签、更没改过，不排掉的话「0 个标签」「改过 0 次」
-     * 会被它们淹没，看不到真正待整理的点赞/收藏视频。因此归属筛选为 OFF 时仍按
-     * [ManageRelationFilter.EXCLUDE_UNASSIGNED] 收窄；只有用户显式选了「仅看无归属」
-     * 才以用户的选择为准（否则结果必然为空，等于把那个选项废掉）。
-     */
-    private fun scopeByRelation(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> =
-        if (activeRelation == ManageRelationFilter.ONLY_UNASSIGNED) {
-            list
-        } else {
-            list.filterNot { ManageRelationFilter.isUnassigned(it) }
-        }
+    override val activeTagCountFilters: Set<ManageTagCountFilter> get() = viewModel.filters.tagCounts
+    override fun applyTagCountFilters(filters: Set<ManageTagCountFilter>) =
+        viewModel.applyTagCountFilters(filters)
 
-    /**
-     * 按 [activeTagCounts] 过滤：标签数来自 `video_tags` 聚合，查不到的记录算 0 个。
-     * 勾选多档时取并集（命中任一档即保留）。
-     */
-    private suspend fun filterByTagCount(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> {
-        if (activeTagCounts.isEmpty() || list.isEmpty()) return list
-        val scoped = scopeByRelation(list)
-        if (scoped.isEmpty()) return scoped
-        val counts = tagRepo.getTagCountMap()
-        return scoped.filter { ManageTagCountFilter.matchesAny(activeTagCounts, counts[it.awemeId] ?: 0) }
-    }
+    override val activeTagEditCountFilter: ManageTagEditCountFilter get() = viewModel.filters.tagEditCount
+    override fun applyTagEditCountFilter(filter: ManageTagEditCountFilter) =
+        viewModel.applyTagEditCountFilter(filter)
 
-    /**
-     * 按 [activeTagEditCount] 过滤：次数直接取实体上的
-     * [DownloadedVideoEntity.tagEditCount]，不需要额外查询。
-     */
-    private fun filterByTagEditCount(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> {
-        if (!activeTagEditCount.isActive || list.isEmpty()) return list
-        val scoped = scopeByRelation(list)
-        if (scoped.isEmpty()) return scoped
-        return scoped.filter { activeTagEditCount.matches(it.tagEditCount) }
-    }
+    override fun applySearchQuery(query: String?) = viewModel.applySearchQuery(query)
 
-    /** 按当前 [activeSort] 对内存中的实体列表倒序排序（用于非分页的筛选/全选路径）。 */
-    private fun sortEntities(list: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> = when (activeSort) {
-        ManageSortOrder.DOWNLOAD_TIME -> list.sortedByDescending { it.createdAtMillis }
-        ManageSortOrder.PUBLISH_TIME -> list.sortedByDescending { it.createTime }
-        ManageSortOrder.DIGG -> list.sortedByDescending { it.diggCount }
-    }
+    override val activeAuthorKey: String? get() = viewModel.filters.authorKey
 
-    override val activeSortOrder: ManageSortOrder get() = activeSort
-
-    override fun applySort(sort: ManageSortOrder) {
-        if (sort == activeSort) return
-        activeSort = sort
-        refreshList()
-    }
-
-    override val activeRelationFilter: ManageRelationFilter get() = activeRelation
-
-    override fun applyRelationFilter(filter: ManageRelationFilter) {
-        if (filter == activeRelation) return
-        // 只切这一层，保留 activeTags / activeSearchQuery / 作者筛选：筛选是叠加关系。
-        activeRelation = filter
-        refreshList()
-    }
-
-    override val activeTagCountFilters: Set<ManageTagCountFilter> get() = activeTagCounts
-
-    override fun applyTagCountFilters(filters: Set<ManageTagCountFilter>) {
-        if (filters == activeTagCounts) return
-        // 同样只切这一层，其他筛选原样保留
-        activeTagCounts = filters
-        refreshList()
-    }
-
-    override val activeTagEditCountFilter: ManageTagEditCountFilter get() = activeTagEditCount
-
-    override fun applyTagEditCountFilter(filter: ManageTagEditCountFilter) {
-        if (filter == activeTagEditCount) return
-        // 同样只切这一层，其他筛选原样保留
-        activeTagEditCount = filter
-        refreshList()
+    override fun applyAuthorFilter(secUserId: String?, userName: String?) {
+        viewModel.applyAuthorFilter(secUserId, userName)
+        // 作者筛选与标签互斥，ViewModel 已清掉标签条件，标签栏也要跟着回到「全部」
+        if (viewModel.filters.authorKey != null) tagFilterAdapter.resetToAll()
     }
 
     override fun handleDeleteSelected() {
         if (!::adapter.isInitialized) return
         val ids = adapter.getSelectedAwemeIds()
         if (ids.isEmpty()) return
-
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_confirm_delete_title)
             .setMessage(getString(R.string.manage_confirm_delete_msg, ids.size))
-            .setPositiveButton(R.string.manage_confirm_ok) { _, _ ->
-                viewLifecycleOwner.lifecycleScope.launch {
-                    val deleted = withContext(Dispatchers.IO) { repo.deleteByAwemeIds(ids) }
-                    adapter.removeItems(ids.toSet())
-                    checkEmptyState()
-                    Toast.makeText(
-                        requireContext(),
-                        getString(R.string.manage_delete_done, deleted),
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }
+            .setPositiveButton(R.string.manage_confirm_ok) { _, _ -> viewModel.deleteSelected(ids) }
             .setNegativeButton(R.string.manage_confirm_cancel, null)
             .show()
     }
 
     override fun handleSetTagsSelected() {
         if (!::adapter.isInitialized) return
-        val ids = adapter.getSelectedAwemeIds()
-        if (ids.isEmpty()) return
-
-        viewLifecycleOwner.lifecycleScope.launch {
-            val allTags = withContext(Dispatchers.IO) { tagRepo.getAvailableTags() }
-            if (allTags.isEmpty()) {
-                Toast.makeText(requireContext(), R.string.manage_set_tags_no_tags, Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-
-            val checkedItems = BooleanArray(allTags.size) { false }
-            AlertDialog.Builder(requireContext())
-                .setTitle(getString(R.string.manage_set_tags_title, ids.size))
-                .setMultiChoiceItems(allTags.toTypedArray(), checkedItems) { _, which, isChecked ->
-                    checkedItems[which] = isChecked
-                }
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    val chosen = allTags.filterIndexed { i, _ -> checkedItems[i] }
-                    if (chosen.isEmpty()) {
-                        Toast.makeText(requireContext(), R.string.manage_set_tags_none_checked, Toast.LENGTH_SHORT).show()
-                        return@setPositiveButton
-                    }
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        val tagsMap = withContext(Dispatchers.IO) {
-                            // 用户编辑入口：内部会给标签确有变化的记录累加 tagEditCount
-                            tagRepo.addTagsAsUserEdit(ids, chosen)
-                            tagRepo.getTagsMapForVideos(ids)
-                        }
-                        // 局部刷新每条受影响 item 的标签行
-                        ids.forEach { id ->
-                            adapter.updateItemTags(id, tagsMap[id] ?: emptyList())
-                        }
-                        Toast.makeText(
-                            requireContext(),
-                            getString(R.string.manage_set_tags_done, ids.size),
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        adapter.exitSelectionMode()
-                    }
-                }
-                // 只给已选记录的 tagEditCount +1，不动标签：
-                // 补 v12 之前手工改过标签、但库里没留下计数的历史数据。
-                .setNeutralButton(R.string.manage_bump_tag_edit_count) { _, _ ->
-                    confirmAndBumpTagEditCount(ids)
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-    }
-
-    /**
-     * 二次确认后把已选记录的标签修改次数 +1（不改标签）。
-     * 无条件累加、没有幂等标记，重复执行会重复加，所以确认框里写清楚。
-     */
-    private fun confirmAndBumpTagEditCount(ids: List<String>) {
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.manage_bump_tag_edit_count)
-            .setMessage(getString(R.string.manage_bump_tag_edit_count_confirm, ids.size))
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                viewLifecycleOwner.lifecycleScope.launch {
-                    val updated = withContext(Dispatchers.IO) { tagRepo.bumpTagEditCountManually(ids) }
-                    Toast.makeText(
-                        requireContext(),
-                        getString(R.string.manage_bump_tag_edit_count_done, updated),
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                    adapter.exitSelectionMode()
-                    // 计数变了但内存里的实体还是旧值；正按修改次数筛选时必须重查，否则筛选结果对不上
-                    if (activeTagEditCount.isActive) refreshList()
-                }
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        viewModel.requestBatchTagPicker(adapter.getSelectedAwemeIds())
     }
 
     override fun handleClearInvalid() {
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_menu_clear_invalid)
             .setMessage(R.string.manage_clear_invalid_confirm)
-            .setPositiveButton(R.string.manage_confirm_ok) { _, _ ->
-                doClearInvalid()
-            }
+            .setPositiveButton(R.string.manage_confirm_ok) { _, _ -> viewModel.clearInvalid() }
             .setNegativeButton(R.string.manage_confirm_cancel, null)
             .show()
     }
 
-    private fun doClearInvalid() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            val invalidIds = withContext(Dispatchers.IO) {
-                repo.getAllByMediaType(MEDIA_TYPE_VIDEO)
-                    .filter { it.filePath.isNotBlank() && !File(Environment.getExternalStorageDirectory(), it.filePath).exists() }
-                    .map { it.awemeId }
-            }
-            if (invalidIds.isEmpty()) {
-                Toast.makeText(requireContext(), getString(R.string.manage_clear_invalid_none), Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-            val deleted = withContext(Dispatchers.IO) { repo.deleteByAwemeIds(invalidIds) }
-            refreshList()
-            Toast.makeText(
-                requireContext(),
-                getString(R.string.manage_clear_invalid_done, deleted),
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
+    // -----------------------------------------------------------------------
+    // 生命周期
+    // -----------------------------------------------------------------------
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        repo = DownloadedVideoRepository(requireContext())
-        tagRepo = VideoTagRepository(requireContext())
+        setupTagFilterBar(view)
+        setupGrid(view)
+        observeViewModel()
 
-        // ── 标签过滤栏 ──────────────────────────────────────────────────────────
+        viewModel.loadTagFilterBar()
+        viewModel.loadInitialIfNeeded()
+    }
+
+    override fun onDestroyView() {
+        progressRef = null
+        tvEmptyRef = null
+        super.onDestroyView()
+    }
+
+    /**
+     * 从播放页返回时补齐「已看过」标记。
+     *
+     * 这是两条刷新路径中的兜底那条（点开的那条在打开播放页时已就地标掉），
+     * **不要**当成冗余删掉：ViewModel 不随 onResume 重建，替代不了它。
+     */
+    override fun onResume() {
+        super.onResume()
+        viewModel.refreshWatchedFlags()
+    }
+
+    private fun setupTagFilterBar(view: View) {
         val rvTagFilter: RecyclerView = view.findViewById(R.id.rvTagFilter)
-        tagFilterAdapter = TagFilterAdapter { tags ->
-            // 选择标签时强制清掉搜索词与作者筛选；标签与二者互斥，
-            // 不清就会出现「点了标签但列表还按搜索/作者筛」的迷之结果。
-            activeSearchQuery = ""
-            clearAuthorFilterState()
-            activeTags = tags
-            refreshList()
-        }
-        rvTagFilter.layoutManager = LinearLayoutManager(
-            requireContext(), LinearLayoutManager.HORIZONTAL, false
-        )
+        tagFilterAdapter = TagFilterAdapter { tags -> viewModel.applyTags(tags) }
+        rvTagFilter.layoutManager =
+            LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         rvTagFilter.adapter = tagFilterAdapter
-        loadTagFilterBar()
+    }
 
-        // ── 视频网格 ──────────────────────────────────────────────────────────
+    private fun setupGrid(view: View) {
         val recyclerView: RecyclerView = view.findViewById(R.id.rvManageVideos)
-        val progress: ProgressBar = view.findViewById(R.id.progressManageVideo)
-        val tvEmpty: TextView = view.findViewById(R.id.tvEmptyManageVideo)
-        rvRef = recyclerView
-        tvEmptyRef = tvEmpty
+        progressRef = view.findViewById(R.id.progressManageVideo)
+        tvEmptyRef = view.findViewById(R.id.tvEmptyManageVideo)
 
         adapter = ManageGridAdapter(
             onSelectionChanged = { active, count ->
                 (activity as? ManageActivity)?.onSelectionChanged(active, count)
             },
-            onItemClick = { entity ->
-                openVideoPlayer(entity)
-            },
-            onTagAreaClick = { awemeId, currentTags ->
-                showTagEditDialog(awemeId, currentTags)
-            },
+            onItemClick = { entity -> viewModel.openVideoPlayer(entity) },
+            onTagAreaClick = { awemeId, currentTags -> viewModel.requestTagEditor(awemeId, currentTags) },
             supportsUserTags = true,
             showWatchedBadge = true,
         )
@@ -437,304 +196,170 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
                 if (dy <= 0) return
-                val lastVisible = gridManager.findLastVisibleItemPosition()
-                if (!isLoading && hasMore && lastVisible >= adapter.itemCount - 4) {
-                    loadNextPage(progress, tvEmpty)
+                if (!viewModel.canLoadMore()) return
+                if (gridManager.findLastVisibleItemPosition() >= adapter.itemCount - 4) {
+                    viewModel.loadNextPage()
                 }
             }
         })
-
-        loadNextPage(progress, tvEmpty)
     }
 
-    override fun onDestroyView() {
-        rvRef = null
-        tvEmptyRef = null
-        super.onDestroyView()
-    }
-
-    /** 从 tags 表加载所有可用标签，填充标签过滤栏。 */
-    private fun loadTagFilterBar() {
+    private fun observeViewModel() {
         viewLifecycleOwner.lifecycleScope.launch {
-            val tags = withContext(Dispatchers.IO) { tagRepo.getAvailableTags() }
-            tagFilterAdapter.submitTags(tags)
-        }
-    }
-
-    private fun loadNextPage(progress: ProgressBar, tvEmpty: TextView) {
-        if (isLoading || !hasMore) return
-        isLoading = true
-        if (currentOffset == 0) progress.visibility = View.VISIBLE
-
-        viewLifecycleOwner.lifecycleScope.launch {
-            val entities: List<DownloadedVideoEntity>
-            when {
-                hasAuthorFilter() -> {
-                    // 作者筛选：优先按稳定 ID，无 ID 退回昵称；一次性返回全部，不再分页
-                    entities = if (currentOffset == 0) {
-                        withContext(Dispatchers.IO) { postProcess(loadAuthorEntities(MEDIA_TYPE_VIDEO)) }
-                    } else {
-                        emptyList()
-                    }
-                    hasMore = false
-                    currentOffset += entities.size
-                }
-                activeSearchQuery.isNotBlank() -> {
-                    // 搜索路径：按昵称全量查询，忽略标签过滤
-                    entities = if (currentOffset == 0) {
-                        withContext(Dispatchers.IO) {
-                            postProcess(repo.searchByUserName(MEDIA_TYPE_VIDEO, activeSearchQuery))
-                        }
-                    } else {
-                        emptyList()
-                    }
-                    hasMore = false
-                    currentOffset += entities.size
-                }
-                activeTags.isEmpty() && hasMemoryOnlyFilter() -> {
-                    // 标签数量 / 标签修改次数筛选只有内存实现，走分页会出现「整页被筛空」，故一次性全量加载
-                    entities = if (currentOffset == 0) {
-                        withContext(Dispatchers.IO) { postProcess(repo.getAllByMediaType(MEDIA_TYPE_VIDEO)) }
-                    } else {
-                        emptyList()
-                    }
-                    hasMore = false
-                    currentOffset += entities.size
-                }
-                activeTags.isEmpty() -> {
-                    // 全量分页（按当前排序）；归属筛选下沉到 SQL，保证 LIMIT 前生效、分页计数正确
-                    entities = withContext(Dispatchers.IO) {
-                        repo.getPageByMediaTypeSorted(
-                            MEDIA_TYPE_VIDEO,
-                            activeSort.column,
-                            PAGE_SIZE,
-                            currentOffset,
-                            activeRelation.unassignedOnly,
-                        )
-                    }
-                    if (entities.size < PAGE_SIZE) hasMore = false
-                    currentOffset += entities.size
-                }
-                else -> {
-                    // 按标签全量加载（标签结果集通常不大，不做额外分页）；
-                    // 多选时按设置取交集 / 并集
-                    val matchAll = tagMatchAll()
-                    entities = if (currentOffset == 0) {
-                        withContext(Dispatchers.IO) {
-                            postProcess(
-                                tagRepo.getVideosByTags(activeTags, matchAll)
-                                    .filter { it.mediaType == MEDIA_TYPE_VIDEO }
-                            )
-                        }
-                    } else {
-                        emptyList()
-                    }
-                    hasMore = false
-                    currentOffset += entities.size
-                }
-            }
-
-            progress.visibility = View.GONE
-
-            if (entities.isEmpty() && currentOffset == 0) {
-                tvEmpty.text = when {
-                    hasAuthorFilter() -> getString(R.string.manage_author_empty, activeAuthorName)
-                    activeSearchQuery.isNotBlank() -> getString(R.string.manage_search_empty, activeSearchQuery)
-                    // 标签多选取交集时很容易筛空，说清是「哪几个标签的什么组合」没结果
-                    activeTags.isNotEmpty() -> {
-                        val names = activeTags.joinToString("、")
-                        if (tagMatchAll()) {
-                            getString(R.string.manage_tag_filter_empty_all, names)
-                        } else {
-                            getString(R.string.manage_tag_filter_empty_any, names)
-                        }
-                    }
-                    activeTagCounts.isNotEmpty() -> getString(
-                        R.string.manage_tag_count_empty,
-                        ManageTagCountFilter.shortSummary(requireContext(), activeTagCounts),
-                    )
-                    activeTagEditCount.isActive ->
-                        getString(R.string.manage_tag_edit_count_empty, getString(activeTagEditCount.labelRes))
-                    // 归属筛选放在其他条件之后判断：有更具体的筛选时优先显示那条文案
-                    activeRelation != ManageRelationFilter.OFF -> getString(R.string.manage_relation_empty)
-                    else -> getString(R.string.manage_empty_videos)
-                }
-                tvEmpty.visibility = View.VISIBLE
-            } else {
-                tvEmpty.visibility = View.GONE
-                adapter.addItems(entities.map { ManageGridItem(it) })
-                checkFileExistence(entities)
-                loadAndApplyTags(entities)
-            }
-            isLoading = false
-        }
-    }
-
-    override fun applySearchQuery(query: String?) {
-        val q = query?.trim().orEmpty()
-        if (q == activeSearchQuery) return
-        activeSearchQuery = q
-        // 主搜索启用时清掉作者筛选（二者互斥）；activeTag 不动，退出搜索后仍回到之前选中的标签
-        if (q.isNotBlank()) clearAuthorFilterState()
-        refreshList()
-    }
-
-    override val activeAuthorKey: String?
-        get() = activeAuthorSecId.ifBlank { activeAuthorName }.ifBlank { null }
-
-    override fun applyAuthorFilter(secUserId: String?, userName: String?) {
-        val sec = secUserId?.trim().orEmpty()
-        val name = userName?.trim().orEmpty()
-        if (sec == activeAuthorSecId && name == activeAuthorName) return
-        activeAuthorSecId = sec
-        activeAuthorName = name
-        if (sec.isNotBlank() || name.isNotBlank()) {
-            // 作者筛选与搜索/标签互斥
-            activeSearchQuery = ""
-            activeTags = emptySet()
-            tagFilterAdapter.resetToAll()
-        }
-        refreshList()
-    }
-
-    /** 按当前作者筛选取该 mediaType 下的全部作品：有稳定 ID 走 ID，无则退回昵称。 */
-    private suspend fun loadAuthorEntities(mediaType: String): List<DownloadedVideoEntity> =
-        if (activeAuthorSecId.isNotBlank()) {
-            repo.getByMediaTypeAndAuthorSecUserId(mediaType, activeAuthorSecId)
-        } else {
-            repo.getByMediaTypeAndUserName(mediaType, activeAuthorName)
-        }
-
-    /**
-     * 在 IO 线程批量查询 [entities] 中每条视频的用户自定义标签，
-     * 回主线程通过 [ManageGridAdapter.updateItemTags] 局部刷新标签行。
-     */
-    private fun loadAndApplyTags(entities: List<DownloadedVideoEntity>) {
-        if (entities.isEmpty()) return
-        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val awemeIds = entities.map { it.awemeId }
-            val tagsMap = tagRepo.getTagsMapForVideos(awemeIds)
-            withContext(Dispatchers.Main) {
-                awemeIds.forEach { id ->
-                    val tags = tagsMap[id] ?: emptyList()
-                    adapter.updateItemTags(id, tags)
-                }
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { viewModel.uiState.collect { render(it) } }
+                launch { viewModel.availableTags.collect { tagFilterAdapter.submitTags(it) } }
+                launch { viewModel.events.collect { handleEvent(it) } }
             }
         }
     }
 
-    /**
-     * 在 IO 线程检查文件存在性；不存在时回主线程更新 Adapter 显示失效蒙层。
-     * 只检查 filePath 非空的记录（旧记录无路径，保守不标失效）。
-     */
-    private fun checkFileExistence(entities: List<DownloadedVideoEntity>) {
-        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            entities.forEach { entity ->
-                if (entity.filePath.isBlank()) return@forEach
-                val exists = File(Environment.getExternalStorageDirectory(), entity.filePath).exists()
-                if (!exists) {
-                    withContext(Dispatchers.Main) { adapter.updateFileExists(entity.awemeId, false) }
-                }
-            }
-        }
-    }
+    // -----------------------------------------------------------------------
+    // 渲染
+    // -----------------------------------------------------------------------
 
-    private fun refreshList() {
-        currentOffset = 0
-        hasMore = true
-        adapter.clearItems()
-        val progress = view?.findViewById<ProgressBar>(R.id.progressManageVideo) ?: return
-        val tvEmpty = view?.findViewById<TextView>(R.id.tvEmptyManageVideo) ?: return
-        loadNextPage(progress, tvEmpty)
-    }
-
-    private fun checkEmptyState() {
-        if (adapter.itemCount == 0 && !hasMore) {
+    private fun render(state: ManageTabUiState) {
+        progressRef?.visibility = if (state.showProgress) View.VISIBLE else View.GONE
+        adapter.submitItems(state.items)
+        val reason = state.emptyReason
+        if (reason != null) {
+            tvEmptyRef?.text = emptyText(reason)
             tvEmptyRef?.visibility = View.VISIBLE
+        } else {
+            tvEmptyRef?.visibility = View.GONE
+        }
+        if (pendingSelectAll && state.items.isNotEmpty()) {
+            pendingSelectAll = false
+            adapter.selectAll()
         }
     }
 
-    /**
-     * 点击标签行时弹出标签设置弹窗：
-     * - 显示系统中全部可用标签，当前已打的预先勾选；
-     * - 勾选即添加、取消即删除，确认后整体覆盖写库并局部刷新卡片。
-     */
-    private fun showTagEditDialog(awemeId: String, currentTags: List<String>) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            val allTags = withContext(Dispatchers.IO) { tagRepo.getAvailableTags() }
-            if (allTags.isEmpty()) {
-                Toast.makeText(requireContext(), R.string.manage_set_tags_no_tags, Toast.LENGTH_SHORT).show()
-                return@launch
+    private fun emptyText(reason: ManageEmptyReason): CharSequence = when (reason) {
+        is ManageEmptyReason.Author -> getString(R.string.manage_author_empty, reason.name)
+        is ManageEmptyReason.Search -> getString(R.string.manage_search_empty, reason.query)
+        // 标签多选取交集时很容易筛空，说清是「哪几个标签的什么组合」没结果
+        is ManageEmptyReason.Tags -> {
+            val names = reason.names.joinToString("、")
+            if (reason.matchAll) {
+                getString(R.string.manage_tag_filter_empty_all, names)
+            } else {
+                getString(R.string.manage_tag_filter_empty_any, names)
             }
-            val currentSet = currentTags.toSet()
-            val checkedItems = BooleanArray(allTags.size) { allTags[it] in currentSet }
-            AlertDialog.Builder(requireContext())
-                .setTitle(R.string.manage_edit_tags_title)
-                .setMultiChoiceItems(allTags.toTypedArray(), checkedItems) { _, which, isChecked ->
-                    checkedItems[which] = isChecked
-                }
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    val selected = allTags.filterIndexed { i, _ -> checkedItems[i] }
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        // 用户编辑入口：标签集合确有变化时累加 tagEditCount
-                        withContext(Dispatchers.IO) { tagRepo.setTagsAsUserEdit(awemeId, selected) }
-                        adapter.updateItemTags(awemeId, selected)
-                    }
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
         }
+        is ManageEmptyReason.TagCounts -> getString(
+            R.string.manage_tag_count_empty,
+            ManageTagCountFilter.shortSummary(requireContext(), reason.filters),
+        )
+        is ManageEmptyReason.TagEditCount ->
+            getString(R.string.manage_tag_edit_count_empty, getString(reason.filter.labelRes))
+        ManageEmptyReason.Relation -> getString(R.string.manage_relation_empty)
+        ManageEmptyReason.NoRecords -> getString(R.string.manage_empty_videos)
     }
 
-    private fun openVideoPlayer(entity: DownloadedVideoEntity) {
-        if (entity.filePath.isBlank()) {
-            Toast.makeText(requireContext(), R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
-            return
-        }
-        @Suppress("DEPRECATION")
-        if (!File(Environment.getExternalStorageDirectory(), entity.filePath).exists()) {
-            Toast.makeText(requireContext(), R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
-            return
-        }
+    // -----------------------------------------------------------------------
+    // 一次性事件
+    // -----------------------------------------------------------------------
 
-        // 构建当前已加载列表，传入播放器以支持上下滑动切换
-        val allItems = adapter.getItems().filter { it.entity.filePath.isNotBlank() }
-        val position = allItems.indexOfFirst { it.entity.awemeId == entity.awemeId }
-
-        startActivity(
-            VideoPlayerActivity.createListFileIntent(
-                context = requireContext(),
-                filePaths = ArrayList(allItems.map { it.entity.filePath }),
-                titles = ArrayList(allItems.map { item ->
-                    item.entity.desc.trim().ifBlank { item.entity.userName.ifBlank { item.entity.awemeId } }
-                }),
-                subtitles = ArrayList(allItems.map { item -> item.entity.userName }),
-                position = if (position >= 0) position else 0,
-                // 播放页据此把播放到的条目写库标记为「已看过」（含在里面上下滑动切换到的）
-                awemeIds = ArrayList(allItems.map { it.entity.awemeId }),
+    private fun handleEvent(event: ManageTabEvent) {
+        when (event) {
+            is ManageTabEvent.DeleteDone ->
+                toast(getString(R.string.manage_delete_done, event.count))
+            is ManageTabEvent.ClearInvalidDone ->
+                toast(getString(R.string.manage_clear_invalid_done, event.count))
+            ManageTabEvent.ClearInvalidNone -> toast(getString(R.string.manage_clear_invalid_none))
+            ManageTabEvent.NoTagsAvailable -> toast(getString(R.string.manage_set_tags_no_tags))
+            is ManageTabEvent.ShowTagEditor -> showTagEditDialog(event)
+            is ManageTabEvent.ShowBatchTagPicker -> showBatchTagDialog(event)
+            is ManageTabEvent.TagsApplied -> {
+                toast(getString(R.string.manage_set_tags_done, event.count))
+                adapter.exitSelectionMode()
+            }
+            is ManageTabEvent.TagEditCountBumped -> {
+                toast(getString(R.string.manage_bump_tag_edit_count_done, event.count))
+                adapter.exitSelectionMode()
+            }
+            ManageTabEvent.FileNotFound -> toast(getString(R.string.player_file_not_found))
+            // uiState 与 events 由两个独立协程收集，到达顺序不保证：列表已经渲染出来就直接
+            // 全选，还没渲染就置位、等 render 完成后再选。少了任一分支都可能全选不生效。
+            ManageTabEvent.SelectAllAfterLoad ->
+                if (adapter.itemCount > 0) adapter.selectAll() else pendingSelectAll = true
+            is ManageTabEvent.OpenVideoPlayer -> startActivity(
+                VideoPlayerActivity.createListFileIntent(
+                    context = requireContext(),
+                    filePaths = ArrayList(event.filePaths),
+                    titles = ArrayList(event.titles),
+                    subtitles = ArrayList(event.subtitles),
+                    position = event.position,
+                    awemeIds = ArrayList(event.awemeIds),
+                ),
             )
-        )
-        // 点开这条立刻去掉「未看过」标记，不等回到列表；写库由播放页负责
-        adapter.markWatched(setOf(entity.awemeId))
+            is ManageTabEvent.OpenImageViewer -> Unit // 视频 Tab 不会收到
+        }
     }
 
     /**
-     * 从播放页返回时补齐「已看过」标记：在播放页里上下滑动看过的条目只写了库、没通知列表，
-     * 这里按当前已加载的 id 回查一次数据库补上（点开的那条在 [openVideoPlayer] 里已就地标过）。
+     * 单条记录的标签设置弹窗：显示全部可用标签、当前已打的预先勾选，
+     * 确认后整体覆盖写库。
      */
-    override fun onResume() {
-        super.onResume()
-        if (!::adapter.isInitialized) return
-        val ids = adapter.getItems().filterNot { it.entity.watched }.map { it.entity.awemeId }
-        if (ids.isEmpty()) return
-        viewLifecycleOwner.lifecycleScope.launch {
-            val watched = withContext(Dispatchers.IO) { repo.getWatchedAwemeIdSet(ids) }
-            if (watched.isNotEmpty()) adapter.markWatched(watched)
-        }
+    private fun showTagEditDialog(event: ManageTabEvent.ShowTagEditor) {
+        val allTags = event.allTags
+        val checkedItems = BooleanArray(allTags.size) { allTags[it] in event.currentTags }
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.manage_edit_tags_title)
+            .setMultiChoiceItems(allTags.toTypedArray(), checkedItems) { _, which, isChecked ->
+                checkedItems[which] = isChecked
+            }
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                viewModel.applyTagsToVideo(
+                    event.awemeId,
+                    allTags.filterIndexed { i, _ -> checkedItems[i] },
+                )
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
-    companion object {
-        private const val PAGE_SIZE = 20
-        private const val MEDIA_TYPE_VIDEO = "video"
+    /** 多选后的批量标签弹窗：勾选的标签会**追加**到所有已选记录上。 */
+    private fun showBatchTagDialog(event: ManageTabEvent.ShowBatchTagPicker) {
+        val allTags = event.allTags
+        val ids = event.awemeIds
+        val checkedItems = BooleanArray(allTags.size) { false }
+        AlertDialog.Builder(requireContext())
+            .setTitle(getString(R.string.manage_set_tags_title, ids.size))
+            .setMultiChoiceItems(allTags.toTypedArray(), checkedItems) { _, which, isChecked ->
+                checkedItems[which] = isChecked
+            }
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val chosen = allTags.filterIndexed { i, _ -> checkedItems[i] }
+                if (chosen.isEmpty()) {
+                    toast(getString(R.string.manage_set_tags_none_checked))
+                    return@setPositiveButton
+                }
+                viewModel.addTagsToVideos(ids, chosen)
+            }
+            // 只给已选记录的 tagEditCount +1，不动标签：
+            // 补 v12 之前手工改过标签、但库里没留下计数的历史数据。
+            .setNeutralButton(R.string.manage_bump_tag_edit_count) { _, _ ->
+                confirmAndBumpTagEditCount(ids)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * 二次确认后把已选记录的标签修改次数 +1（不改标签）。
+     * 无条件累加、没有幂等标记，重复执行会重复加，所以确认框里写清楚。
+     */
+    private fun confirmAndBumpTagEditCount(ids: List<String>) {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.manage_bump_tag_edit_count)
+            .setMessage(getString(R.string.manage_bump_tag_edit_count_confirm, ids.size))
+            .setPositiveButton(android.R.string.ok) { _, _ -> viewModel.bumpTagEditCount(ids) }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun toast(text: CharSequence) {
+        Toast.makeText(requireContext(), text, Toast.LENGTH_SHORT).show()
     }
 }
