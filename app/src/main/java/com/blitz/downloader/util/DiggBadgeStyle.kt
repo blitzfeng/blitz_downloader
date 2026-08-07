@@ -1,4 +1,4 @@
-package com.blitz.downloader.ui
+package com.blitz.downloader.util
 
 import android.content.res.ColorStateList
 import android.widget.TextView

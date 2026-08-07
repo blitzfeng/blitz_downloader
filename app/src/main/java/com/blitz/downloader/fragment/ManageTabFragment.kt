@@ -1,6 +1,10 @@
-package com.blitz.downloader.ui
+package com.blitz.downloader.fragment
 
 import com.blitz.downloader.data.db.DownloadedVideoEntity
+import com.blitz.downloader.model.filter.ManageRelationFilter
+import com.blitz.downloader.model.filter.ManageSortOrder
+import com.blitz.downloader.model.filter.ManageTagCountFilter
+import com.blitz.downloader.model.filter.ManageTagEditCountFilter
 
 /**
  * 管理页各 Tab Fragment 的公共契约，由 [ManageActivity] 调用以驱动菜单行为。

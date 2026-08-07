@@ -1,4 +1,4 @@
-package com.blitz.downloader.ui
+package com.blitz.downloader.adapter
 
 import android.graphics.Color
 import android.view.LayoutInflater

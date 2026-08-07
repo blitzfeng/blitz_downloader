@@ -1,4 +1,4 @@
-package com.blitz.downloader.ui
+package com.blitz.downloader.fragment
 
 import android.Manifest
 import android.content.ClipboardManager
@@ -21,11 +21,7 @@ import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.DouyinWebBrowserActivity
 import com.blitz.downloader.activity.VideoPlayerActivity
-import com.blitz.downloader.config.AppConfig
-import com.blitz.downloader.data.DownloadMediaType
-import com.blitz.downloader.data.DownloadSourceType
-import com.blitz.downloader.data.DownloadedVideoRepository
-import com.blitz.downloader.data.VideoTagRepository
+import com.blitz.downloader.adapter.VideoGridAdapter
 import com.blitz.downloader.api.AwemeItem
 import com.blitz.downloader.api.AwemeMapper
 import com.blitz.downloader.api.DouyinApiClient
@@ -34,18 +30,25 @@ import com.blitz.downloader.api.DouyinCollectsFolderRow
 import com.blitz.downloader.api.DouyinListApi
 import com.blitz.downloader.api.DouyinPageKind
 import com.blitz.downloader.api.DouyinUrlParser
+import com.blitz.downloader.config.AppConfig
+import com.blitz.downloader.data.DownloadMediaType
+import com.blitz.downloader.data.DownloadSourceType
+import com.blitz.downloader.data.DownloadedVideoRepository
+import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.databinding.FragmentListDownloadBinding
+import com.blitz.downloader.dialog.PhotoSelectionBottomSheet
 import com.blitz.downloader.download.BatchDownloadCoordinator
 import com.blitz.downloader.download.DownloadEvents
 import com.blitz.downloader.download.DownloadJob
 import com.blitz.downloader.download.DownloadRecordMeta
 import com.blitz.downloader.download.DownloadService
+import com.blitz.downloader.model.VideoItemUiModel
 import com.blitz.downloader.util.DouyinCookieSync
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 class ListDownloadFragment : Fragment() {
 

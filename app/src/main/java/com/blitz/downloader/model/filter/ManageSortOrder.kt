@@ -1,4 +1,4 @@
-package com.blitz.downloader.ui
+package com.blitz.downloader.model.filter
 
 import com.blitz.downloader.R
 

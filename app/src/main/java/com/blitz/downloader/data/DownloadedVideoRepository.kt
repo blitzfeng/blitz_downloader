@@ -183,10 +183,10 @@ class DownloadedVideoRepository(context: Context) {
 
     /**
      * 指定排序列的分页查询（管理页排序）。[orderColumn] 仅接受来自
-     * [com.blitz.downloader.ui.ManageSortOrder] 的固定列名，无注入风险；一律倒序。
+     * [com.blitz.downloader.model.filter.ManageSortOrder] 的固定列名，无注入风险；一律倒序。
      *
      * [unassignedOnly] 为管理页「按归属筛选」（见
-     * [com.blitz.downloader.ui.ManageRelationFilter]）的 SQL 侧参数：`null` 不筛选，
+     * [com.blitz.downloader.model.filter.ManageRelationFilter]）的 SQL 侧参数：`null` 不筛选，
      * `true` 只留「无归属」，`false` 排除「无归属」。筛选发生在 LIMIT 之前，故分页计数仍正确。
      */
     suspend fun getPageByMediaTypeSorted(
@@ -204,7 +204,7 @@ class DownloadedVideoRepository(context: Context) {
 
     /**
      * 「无归属」（`userRelation` 与 `collectionType` 均为空）的 SQL 片段，含前导 ` AND `。
-     * 判定必须与 [com.blitz.downloader.ui.ManageRelationFilter.isUnassigned] 的内存实现等价：
+     * 判定必须与 [com.blitz.downloader.model.filter.ManageRelationFilter.isUnassigned] 的内存实现等价：
      * 那边用 `isBlank()`，这边用 `TRIM(...) = ''`；`IFNULL` 兼容迁移前可能残留的 NULL。
      */
     private fun unassignedClause(unassignedOnly: Boolean?): String {

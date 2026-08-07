@@ -1,6 +1,6 @@
 package com.blitz.downloader.download
 
-import com.blitz.downloader.ui.VideoItemUiModel
+import com.blitz.downloader.model.VideoItemUiModel
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

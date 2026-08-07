@@ -1,4 +1,4 @@
-package com.blitz.downloader.ui
+package com.blitz.downloader.dialog
 
 import android.content.Context
 import android.view.LayoutInflater
@@ -11,6 +11,8 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import coil.load
 import com.blitz.downloader.R
+import com.blitz.downloader.fragment.ListDownloadFragment
+import com.blitz.downloader.model.VideoItemUiModel
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton

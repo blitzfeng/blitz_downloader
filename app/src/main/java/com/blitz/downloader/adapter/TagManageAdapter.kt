@@ -1,4 +1,4 @@
-package com.blitz.downloader.ui
+package com.blitz.downloader.adapter
 
 import android.view.LayoutInflater
 import android.view.MotionEvent

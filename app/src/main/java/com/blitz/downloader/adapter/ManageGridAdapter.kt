@@ -1,4 +1,4 @@
-package com.blitz.downloader.ui
+package com.blitz.downloader.adapter
 
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
@@ -16,16 +16,10 @@ import coil.transform.RoundedCornersTransformation
 import com.blitz.downloader.R
 import com.blitz.downloader.data.DownloadedVideoRepository
 import com.blitz.downloader.data.db.DownloadedVideoEntity
+import com.blitz.downloader.model.ManageGridItem
+import com.blitz.downloader.util.DiggBadgeStyle
 import com.blitz.downloader.util.NumberFormatUtils
 import java.io.File
-
-data class ManageGridItem(
-    val entity: DownloadedVideoEntity,
-    /** true = 文件存在（或未检查），false = 文件已不存在 → 显示失效蒙层。 */
-    val fileExists: Boolean = true,
-    /** 用户在管理页手动打的自定义标签列表（来自 video_tags 表）。 */
-    val userTags: List<String> = emptyList(),
-)
 
 /**
  * 管理页宫格 Adapter。

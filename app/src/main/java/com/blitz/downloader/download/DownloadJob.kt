@@ -1,9 +1,9 @@
 package com.blitz.downloader.download
 
-import com.blitz.downloader.ui.VideoItemUiModel
+import com.blitz.downloader.model.VideoItemUiModel
 
 /**
- * 一次批量下载任务的完整描述，从 UI 层（[com.blitz.downloader.ui.ListDownloadFragment]）
+ * 一次批量下载任务的完整描述，从 UI 层（[com.blitz.downloader.fragment.ListDownloadFragment]）
  * 交给 [DownloadService] 在后台执行。
  *
  * 之所以把「入库所需的元数据」也一并带上（而非在 UI 层下载后再写库），是因为下载被迁到了

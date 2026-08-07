@@ -1,4 +1,4 @@
-package com.blitz.downloader.ui
+package com.blitz.downloader.fragment
 
 import android.annotation.SuppressLint
 import android.app.AlertDialog

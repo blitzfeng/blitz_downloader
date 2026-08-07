@@ -1,6 +1,6 @@
 package com.blitz.downloader.api
 
-import com.blitz.downloader.ui.VideoItemUiModel
+import com.blitz.downloader.model.VideoItemUiModel
 
 /**
  * 将列表接口 [AwemeItem] 转为网格 [VideoItemUiModel]。

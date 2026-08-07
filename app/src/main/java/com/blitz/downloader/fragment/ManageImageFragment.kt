@@ -1,4 +1,4 @@
-package com.blitz.downloader.ui
+package com.blitz.downloader.fragment
 
 import android.content.Intent
 import android.os.Bundle
@@ -15,12 +15,16 @@ import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.ImageViewerActivity
 import com.blitz.downloader.activity.ManageActivity
+import com.blitz.downloader.adapter.ManageGridAdapter
 import com.blitz.downloader.data.DownloadedVideoRepository
 import com.blitz.downloader.data.db.DownloadedVideoEntity
+import com.blitz.downloader.model.ManageGridItem
+import com.blitz.downloader.model.filter.ManageRelationFilter
+import com.blitz.downloader.model.filter.ManageSortOrder
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 class ManageImageFragment : Fragment(R.layout.fragment_manage_image), ManageTabFragment {
 

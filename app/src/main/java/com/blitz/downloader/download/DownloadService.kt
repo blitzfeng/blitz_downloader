@@ -17,6 +17,7 @@ import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.ManageActivity
 import com.blitz.downloader.data.VideoTagRepository
+import com.blitz.downloader.model.VideoItemUiModel
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope

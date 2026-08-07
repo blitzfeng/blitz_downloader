@@ -20,7 +20,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
 import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.databinding.ActivityTagManageBinding
-import com.blitz.downloader.ui.TagManageAdapter
+import com.blitz.downloader.adapter.TagManageAdapter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext

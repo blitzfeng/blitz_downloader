@@ -14,8 +14,8 @@ import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.blitz.downloader.R
 import com.blitz.downloader.databinding.ActivityMainBinding
-import com.blitz.downloader.ui.ListDownloadFragment
-import com.blitz.downloader.ui.SingleDownloadFragment
+import com.blitz.downloader.fragment.ListDownloadFragment
+import com.blitz.downloader.fragment.SingleDownloadFragment
 import com.blitz.downloader.util.DouyinCookieStore
 import com.blitz.downloader.util.MediaPermissions
 import com.google.android.material.tabs.TabLayout

@@ -4,7 +4,7 @@ package com.blitz.downloader.config
  * 列表批量下载的范围与 Cookie 策略（对齐 F2 中按登录态区分接口能力的方式）。
  *
  * ### 当前主场景：需登录（喜欢 / 收藏等）
- * - 目标：在 [com.blitz.downloader.ui.ListDownloadFragment] 的 WebView 内**先登录抖音**，再打开「喜欢」「收藏」等个人列表页；用 [android.webkit.CookieManager] 同步完整登录 Cookie 到
+ * - 目标：在 [com.blitz.downloader.fragment.ListDownloadFragment] 的 WebView 内**先登录抖音**，再打开「喜欢」「收藏」等个人列表页；用 [android.webkit.CookieManager] 同步完整登录 Cookie 到
  *   [com.blitz.downloader.api.DouyinApiClient.globalCookie] 后调列表 API。
  *
  * ### 公开页（保留，勿删相关实现）
