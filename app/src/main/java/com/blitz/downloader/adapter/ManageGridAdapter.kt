@@ -25,22 +25,27 @@ import java.io.File
 /**
  * 管理页宫格 Adapter。
  *
- * 交互：
- * - **单击 item**：非多选模式下立即调用 [onItemClick]（打开播放页/图片浏览页）。
- * - **单击用户标签行**：当 [supportsUserTags] 为 true 时调用 [onTagAreaClick]（标签设置弹窗）。
- * - **长按 item**：进入多选模式。
- * - **多选模式单击**：切换该条目的选中状态。
+ * **不持有任何状态的权威**：列表数据经 [submitItems] 写入、多选状态经 [submitSelection] 写入，
+ * 两者都由 ViewModel 决定（见 [com.blitz.downloader.viewmodel.ManageTabViewModel] 与
+ * [com.blitz.downloader.viewmodel.ManageViewModel]）。交互一律以回调形式上报。
  *
- * @param onSelectionChanged  多选模式/数量变化时回调。
+ * 交互：
+ * - **单击 item**：非多选模式下调用 [onItemClick]（打开播放页/图片浏览页），多选模式下调用 [onSelectionToggle]。
+ * - **单击用户标签行**：当 [supportsUserTags] 为 true 时调用 [onTagAreaClick]（标签设置弹窗）。
+ * - **长按 item**：非多选模式下调用 [onItemLongClick]（请求进入多选模式）。
+ *
  * @param onItemClick         非多选模式下单击 item 时回调，传递 [DownloadedVideoEntity]。
+ * @param onItemLongClick     长按请求进入多选模式，传递 awemeId。
+ * @param onSelectionToggle   多选模式下单击，请求切换该条目的选中状态。
  * @param onTagAreaClick      非多选模式下点击用户标签行时回调，传递 awemeId 及当前标签列表。
  * @param supportsUserTags    是否展示用户自定义标签行并支持点击编辑（视频 Tab 为 true，图片 Tab 为 false）。
  * @param showWatchedBadge    是否展示「未看过」标记（只有视频 Tab 为 true：图集不走播放页，
  *                            `watched` 永远不会置位，显示了就是个消不掉的标记）。
  */
 class ManageGridAdapter(
-    private val onSelectionChanged: (inSelectionMode: Boolean, selectedCount: Int) -> Unit,
     private val onItemClick: (entity: DownloadedVideoEntity) -> Unit = {},
+    private val onItemLongClick: (awemeId: String) -> Unit = {},
+    private val onSelectionToggle: (awemeId: String) -> Unit = {},
     private val onTagAreaClick: (awemeId: String, currentTags: List<String>) -> Unit = { _, _ -> },
     private val supportsUserTags: Boolean = false,
     private val showWatchedBadge: Boolean = false,
@@ -49,9 +54,12 @@ class ManageGridAdapter(
     private val items = mutableListOf<ManageGridItem>()
     private val indexByAwemeId = mutableMapOf<String, Int>()
 
-    var inSelectionMode: Boolean = false
-        private set
-    private val selectedIds = mutableSetOf<String>()
+    /**
+     * 多选状态由 [com.blitz.downloader.viewmodel.ManageViewModel] 持有，
+     * 这里只是渲染用的副本，经 [submitSelection] 写入。
+     */
+    private var inSelectionMode: Boolean = false
+    private var selectedIds: Set<String> = emptySet()
 
     // ── 公共 API ──────────────────────────────────────────────────────────────
 
@@ -65,63 +73,33 @@ class ManageGridAdapter(
      * Adapter 只负责渲染与多选状态，因此这里是唯一的数据入口。
      * 用 [DiffUtil] 算增量并沿用原有的 payload 常量，保证追加分页、标签到达、
      * 文件失效、已看过 / 已导出这些更新仍然只重绑必要的部分。
-     *
-     * 选中集合按新列表里还在的 id 收窄：删除后被选中的条目会自动从选中集里消失。
      */
     fun submitItems(newItems: List<ManageGridItem>) {
         val diff = DiffUtil.calculateDiff(ItemDiffCallback(items.toList(), newItems), false)
         items.clear()
         items.addAll(newItems)
         rebuildIndex()
-
-        val survivingIds = newItems.mapTo(mutableSetOf()) { it.entity.awemeId }
-        val selectionChanged = selectedIds.retainAll(survivingIds)
         diff.dispatchUpdatesTo(this)
+    }
 
-        if (items.isEmpty() || (inSelectionMode && selectedIds.isEmpty())) {
-            if (inSelectionMode) {
-                inSelectionMode = false
-                onSelectionChanged(false, 0)
-            }
-        } else if (selectionChanged) {
-            onSelectionChanged(inSelectionMode, selectedIds.size)
+    /**
+     * 写入多选状态。状态的权威在 ViewModel，这里只按差异重绑受影响的条目：
+     * 多选模式本身变化时整体重绑（复选框显隐、「已导出」标记跟着多选态出现），
+     * 仅选中集合变化时只重绑增删的那几条。
+     */
+    fun submitSelection(selectionMode: Boolean, ids: Set<String>) {
+        if (selectionMode == inSelectionMode && ids == selectedIds) return
+        val modeChanged = selectionMode != inSelectionMode
+        val previous = selectedIds
+        inSelectionMode = selectionMode
+        selectedIds = ids
+        if (modeChanged) {
+            notifyItemRangeChanged(0, items.size, PAYLOAD_SELECTION_STATE)
+            return
         }
-    }
-
-    fun getSelectedAwemeIds(): List<String> = selectedIds.toList()
-
-    /** 当前已加载项是否已全部选中（无项时返回 false）。 */
-    fun isAllSelected(): Boolean = items.isNotEmpty() && selectedIds.size == items.size
-
-    /**
-     * 全选当前**已加载**的所有条目（分页未加载的不在内）。
-     * 若尚未进入多选模式则一并进入。
-     */
-    fun selectAll() {
-        if (items.isEmpty()) return
-        if (!inSelectionMode) inSelectionMode = true
-        selectedIds.clear()
-        items.forEach { selectedIds.add(it.entity.awemeId) }
-        notifyItemRangeChanged(0, items.size, PAYLOAD_SELECTION_STATE)
-        onSelectionChanged(true, selectedIds.size)
-    }
-
-    /**
-     * 取消全部选中，但**保持多选模式**（区别于 [exitSelectionMode]），便于用户重新挑选。
-     */
-    fun deselectAll() {
-        if (selectedIds.isEmpty()) return
-        selectedIds.clear()
-        notifyItemRangeChanged(0, items.size, PAYLOAD_SELECTION_STATE)
-        onSelectionChanged(inSelectionMode, 0)
-    }
-
-    fun exitSelectionMode() {
-        if (!inSelectionMode) return
-        inSelectionMode = false
-        selectedIds.clear()
-        notifyItemRangeChanged(0, items.size, PAYLOAD_SELECTION_STATE)
-        onSelectionChanged(false, 0)
+        ((previous - ids) + (ids - previous)).forEach { id ->
+            indexByAwemeId[id]?.let { notifyItemChanged(it, PAYLOAD_SELECTION_STATE) }
+        }
     }
 
     // ── RecyclerView.Adapter ──────────────────────────────────────────────────
@@ -380,44 +358,27 @@ class ManageGridAdapter(
 
         private fun bindClickListeners(awemeId: String) {
             itemView.setOnLongClickListener {
-                if (!inSelectionMode) {
-                    inSelectionMode = true
-                    selectedIds.add(awemeId)
-                    onSelectionChanged(true, selectedIds.size)
-                    notifyItemRangeChanged(0, items.size, PAYLOAD_SELECTION_STATE)
-                }
+                if (!inSelectionMode) onItemLongClick(awemeId)
                 true
             }
             itemView.setOnClickListener {
-                if (!inSelectionMode) {
-                    val pos = indexByAwemeId[awemeId] ?: return@setOnClickListener
-                    val entity = if (pos < items.size) items[pos].entity else return@setOnClickListener
-                    onItemClick(entity)
+                if (inSelectionMode) {
+                    onSelectionToggle(awemeId)
                     return@setOnClickListener
                 }
-                toggleSelection(awemeId)
+                val pos = indexByAwemeId[awemeId] ?: return@setOnClickListener
+                if (pos < items.size) onItemClick(items[pos].entity)
             }
             // 用户标签行独立点击区域（仅在 supportsUserTags 模式下注册）
             if (supportsUserTags) {
                 userTagContainer.setOnClickListener {
-                    if (!inSelectionMode) {
-                        val pos = indexByAwemeId[awemeId] ?: return@setOnClickListener
-                        val tags = if (pos < items.size) items[pos].userTags else emptyList()
-                        onTagAreaClick(awemeId, tags)
-                    } else {
-                        toggleSelection(awemeId)
+                    if (inSelectionMode) {
+                        onSelectionToggle(awemeId)
+                        return@setOnClickListener
                     }
+                    val pos = indexByAwemeId[awemeId] ?: return@setOnClickListener
+                    onTagAreaClick(awemeId, if (pos < items.size) items[pos].userTags else emptyList())
                 }
-            }
-        }
-
-        private fun toggleSelection(awemeId: String) {
-            if (awemeId in selectedIds) selectedIds.remove(awemeId) else selectedIds.add(awemeId)
-            if (selectedIds.isEmpty()) {
-                exitSelectionMode()
-            } else {
-                onSelectionChanged(true, selectedIds.size)
-                notifyItemChanged(bindingAdapterPosition, PAYLOAD_SELECTION_STATE)
             }
         }
     }

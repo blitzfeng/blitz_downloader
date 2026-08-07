@@ -7,6 +7,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -15,28 +16,29 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
-import com.blitz.downloader.activity.ManageActivity
 import com.blitz.downloader.activity.VideoPlayerActivity
 import com.blitz.downloader.adapter.ManageGridAdapter
 import com.blitz.downloader.adapter.TagFilterAdapter
-import com.blitz.downloader.data.db.DownloadedVideoEntity
-import com.blitz.downloader.model.filter.ManageRelationFilter
-import com.blitz.downloader.model.filter.ManageSortOrder
 import com.blitz.downloader.model.filter.ManageTagCountFilter
-import com.blitz.downloader.model.filter.ManageTagEditCountFilter
+import com.blitz.downloader.viewmodel.ManageCommand
 import com.blitz.downloader.viewmodel.ManageEmptyReason
 import com.blitz.downloader.viewmodel.ManageTabEvent
 import com.blitz.downloader.viewmodel.ManageTabUiState
 import com.blitz.downloader.viewmodel.ManageVideoViewModel
+import com.blitz.downloader.viewmodel.ManageViewModel
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
  * 管理页「视频」Tab。
  *
- * 只负责视图：网格与标签栏、把菜单动作转发给 [ManageVideoViewModel]、渲染 `uiState`、
- * 弹出对话框。取数、筛选、排序、删除、标签读写都在 ViewModel 里。
+ * 与 Activity 之间**只通过 [ManageViewModel] 通信**（不再有 `ManageTabFragment` 接口，
+ * Activity 也不再用 `findFragmentByTag` 反查 Fragment）：
+ * 筛选条件与多选状态从 Activity 级 ViewModel 观察下来，菜单动作以命令形式收到，
+ * 列表数据每次变化上报回去供「全选」与「导出选中」使用。
  */
-class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabFragment {
+class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
 
     private lateinit var adapter: ManageGridAdapter
     private lateinit var tagFilterAdapter: TagFilterAdapter
@@ -44,100 +46,9 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
     private var tvEmptyRef: TextView? = null
 
     private val viewModel: ManageVideoViewModel by viewModels()
+    private val manageViewModel: ManageViewModel by activityViewModels()
 
-    /** 收到 [ManageTabEvent.SelectAllAfterLoad] 后置位，在下一次渲染完成后执行全选。 */
-    private var pendingSelectAll = false
-
-    // -----------------------------------------------------------------------
-    // ManageTabFragment：供 ManageActivity 的菜单驱动
-    // -----------------------------------------------------------------------
-
-    override val inSelectionMode: Boolean get() = ::adapter.isInitialized && adapter.inSelectionMode
-    override val selectedCount: Int get() = if (::adapter.isInitialized) adapter.getSelectedAwemeIds().size else 0
-    override val supportsClearInvalid: Boolean get() = true
-    override val supportsTagCountFilter: Boolean get() = true
-    override val supportsTagEditCountFilter: Boolean get() = true
-
-    override fun exitSelectionMode() {
-        if (::adapter.isInitialized) adapter.exitSelectionMode()
-    }
-
-    override fun getSelectedEntities(): List<DownloadedVideoEntity> {
-        if (!::adapter.isInitialized) return emptyList()
-        return viewModel.entitiesFor(adapter.getSelectedAwemeIds())
-    }
-
-    // 「已全选」= 当前范围全部记录都已加载（无更多分页）且全部选中。
-    // 仅当满足此条件时按钮才显示「取消全选」，否则显示「全选」（点击会拉取全库该范围记录）。
-    override val isAllSelected: Boolean
-        get() = ::adapter.isInitialized && !viewModel.uiState.value.hasMore && adapter.isAllSelected()
-
-    override fun markExported(awemeIds: Set<String>) = viewModel.markExported(awemeIds)
-
-    override fun handleToggleSelectAll() {
-        if (!::adapter.isInitialized) return
-        // 当前范围已全部加载：纯内存切换，不重建列表、不丢滚动位置。
-        if (!viewModel.uiState.value.hasMore) {
-            if (adapter.isAllSelected()) adapter.deselectAll() else adapter.selectAll()
-            return
-        }
-        // 仍有未加载的分页：先把当前范围在数据库中的全部记录拉齐再全选。
-        viewModel.loadFullScopeThenSelectAll()
-    }
-
-    override val activeSortOrder: ManageSortOrder get() = viewModel.filters.sort
-    override fun applySort(sort: ManageSortOrder) = viewModel.applySort(sort)
-
-    override val activeRelationFilter: ManageRelationFilter get() = viewModel.filters.relation
-    override fun applyRelationFilter(filter: ManageRelationFilter) = viewModel.applyRelationFilter(filter)
-
-    override val activeTagCountFilters: Set<ManageTagCountFilter> get() = viewModel.filters.tagCounts
-    override fun applyTagCountFilters(filters: Set<ManageTagCountFilter>) =
-        viewModel.applyTagCountFilters(filters)
-
-    override val activeTagEditCountFilter: ManageTagEditCountFilter get() = viewModel.filters.tagEditCount
-    override fun applyTagEditCountFilter(filter: ManageTagEditCountFilter) =
-        viewModel.applyTagEditCountFilter(filter)
-
-    override fun applySearchQuery(query: String?) = viewModel.applySearchQuery(query)
-
-    override val activeAuthorKey: String? get() = viewModel.filters.authorKey
-
-    override fun applyAuthorFilter(secUserId: String?, userName: String?) {
-        viewModel.applyAuthorFilter(secUserId, userName)
-        // 作者筛选与标签互斥，ViewModel 已清掉标签条件，标签栏也要跟着回到「全部」
-        if (viewModel.filters.authorKey != null) tagFilterAdapter.resetToAll()
-    }
-
-    override fun handleDeleteSelected() {
-        if (!::adapter.isInitialized) return
-        val ids = adapter.getSelectedAwemeIds()
-        if (ids.isEmpty()) return
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.manage_confirm_delete_title)
-            .setMessage(getString(R.string.manage_confirm_delete_msg, ids.size))
-            .setPositiveButton(R.string.manage_confirm_ok) { _, _ -> viewModel.deleteSelected(ids) }
-            .setNegativeButton(R.string.manage_confirm_cancel, null)
-            .show()
-    }
-
-    override fun handleSetTagsSelected() {
-        if (!::adapter.isInitialized) return
-        viewModel.requestBatchTagPicker(adapter.getSelectedAwemeIds())
-    }
-
-    override fun handleClearInvalid() {
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.manage_menu_clear_invalid)
-            .setMessage(R.string.manage_clear_invalid_confirm)
-            .setPositiveButton(R.string.manage_confirm_ok) { _, _ -> viewModel.clearInvalid() }
-            .setNegativeButton(R.string.manage_confirm_cancel, null)
-            .show()
-    }
-
-    // -----------------------------------------------------------------------
-    // 生命周期
-    // -----------------------------------------------------------------------
+    private val tab = ManageViewModel.TAB_VIDEO
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -169,7 +80,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
 
     private fun setupTagFilterBar(view: View) {
         val rvTagFilter: RecyclerView = view.findViewById(R.id.rvTagFilter)
-        tagFilterAdapter = TagFilterAdapter { tags -> viewModel.applyTags(tags) }
+        tagFilterAdapter = TagFilterAdapter { tags -> manageViewModel.applyTags(tab, tags) }
         rvTagFilter.layoutManager =
             LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         rvTagFilter.adapter = tagFilterAdapter
@@ -181,10 +92,9 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         tvEmptyRef = view.findViewById(R.id.tvEmptyManageVideo)
 
         adapter = ManageGridAdapter(
-            onSelectionChanged = { active, count ->
-                (activity as? ManageActivity)?.onSelectionChanged(active, count)
-            },
             onItemClick = { entity -> viewModel.openVideoPlayer(entity) },
+            onItemLongClick = { awemeId -> manageViewModel.enterSelectionMode(tab, awemeId) },
+            onSelectionToggle = { awemeId -> manageViewModel.toggleSelection(tab, awemeId) },
             onTagAreaClick = { awemeId, currentTags -> viewModel.requestTagEditor(awemeId, currentTags) },
             supportsUserTags = true,
             showWatchedBadge = true,
@@ -210,8 +120,41 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
                 launch { viewModel.uiState.collect { render(it) } }
                 launch { viewModel.availableTags.collect { tagFilterAdapter.submitTags(it) } }
                 launch { viewModel.events.collect { handleEvent(it) } }
+                launch {
+                    manageViewModel.filters
+                        .map { it[tab] }
+                        .distinctUntilChanged()
+                        .collect { filters ->
+                            if (filters == null) return@collect
+                            viewModel.applyFilters(filters)
+                            // 作者筛选与标签互斥，条件里标签被清空时标签栏也要回到「全部」
+                            if (filters.tags.isEmpty()) tagFilterAdapter.resetToAll()
+                        }
+                }
+                launch {
+                    manageViewModel.selection
+                        .map { it[tab] }
+                        .distinctUntilChanged()
+                        .collect { selection ->
+                            if (selection == null) return@collect
+                            adapter.submitSelection(selection.inSelectionMode, selection.selectedIds)
+                        }
+                }
+                launch {
+                    manageViewModel.commands.collect { command ->
+                        if (command.tab == tab) handleCommand(command)
+                    }
+                }
             }
         }
+    }
+
+    private fun handleCommand(command: ManageCommand) = when (command) {
+        is ManageCommand.DeleteSelected -> viewModel.deleteSelected(command.ids)
+        is ManageCommand.SetTagsSelected -> viewModel.requestBatchTagPicker(command.ids)
+        is ManageCommand.ClearInvalid -> viewModel.clearInvalid()
+        is ManageCommand.LoadFullScopeThenSelectAll -> viewModel.loadFullScope()
+        is ManageCommand.MarkExported -> viewModel.markExported(command.awemeIds)
     }
 
     // -----------------------------------------------------------------------
@@ -228,10 +171,8 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
         } else {
             tvEmptyRef?.visibility = View.GONE
         }
-        if (pendingSelectAll && state.items.isNotEmpty()) {
-            pendingSelectAll = false
-            adapter.selectAll()
-        }
+        // 上报已加载快照：Activity 侧据此算「是否已全选」与「选中了哪些实体」
+        manageViewModel.setLoaded(tab, state.items.map { it.entity }, state.hasMore)
     }
 
     private fun emptyText(reason: ManageEmptyReason): CharSequence = when (reason) {
@@ -272,17 +213,13 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video), ManageTabF
             is ManageTabEvent.ShowBatchTagPicker -> showBatchTagDialog(event)
             is ManageTabEvent.TagsApplied -> {
                 toast(getString(R.string.manage_set_tags_done, event.count))
-                adapter.exitSelectionMode()
+                manageViewModel.exitSelectionMode(tab)
             }
             is ManageTabEvent.TagEditCountBumped -> {
                 toast(getString(R.string.manage_bump_tag_edit_count_done, event.count))
-                adapter.exitSelectionMode()
+                manageViewModel.exitSelectionMode(tab)
             }
             ManageTabEvent.FileNotFound -> toast(getString(R.string.player_file_not_found))
-            // uiState 与 events 由两个独立协程收集，到达顺序不保证：列表已经渲染出来就直接
-            // 全选，还没渲染就置位、等 render 完成后再选。少了任一分支都可能全选不生效。
-            ManageTabEvent.SelectAllAfterLoad ->
-                if (adapter.itemCount > 0) adapter.selectAll() else pendingSelectAll = true
             is ManageTabEvent.OpenVideoPlayer -> startActivity(
                 VideoPlayerActivity.createListFileIntent(
                     context = requireContext(),

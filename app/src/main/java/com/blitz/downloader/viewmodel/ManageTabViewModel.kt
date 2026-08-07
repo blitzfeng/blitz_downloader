@@ -260,10 +260,12 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
     // -----------------------------------------------------------------------
 
     /**
-     * 仍有未加载的分页时，先把当前范围在数据库中的全部记录拉齐，再让视图层全选。
-     * 拉齐完成后发 [ManageTabEvent.SelectAllAfterLoad]，由 Fragment 在下一次渲染后执行全选。
+     * 把当前范围在数据库中的全部记录一次拉齐（供「全选」使用）。
+     *
+     * 拉齐后照常经 `uiState` 发布，Activity 级 ViewModel 在收到新的已加载快照时
+     * 完成全选——不需要额外的事件往返。
      */
-    fun loadFullScopeThenSelectAll() {
+    fun loadFullScope() {
         viewModelScope.launch {
             val all = withContext(Dispatchers.IO) { loadFullScopeEntities() }
             if (all.isEmpty()) return@launch
@@ -273,7 +275,6 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
             hasMore = false
             isLoading = false
             publish()
-            emit(ManageTabEvent.SelectAllAfterLoad)
             if (loadsUserTags) loadAndApplyTags(all)
             if (checksFileExistence) checkFileExistence(all)
         }
@@ -335,16 +336,6 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (changed) publish()
     }
-
-    /** 当前已加载条目中，awemeId 落在 [ids] 里的实体（供「导出选中」使用）。 */
-    fun entitiesFor(ids: Collection<String>): List<DownloadedVideoEntity> {
-        if (ids.isEmpty()) return emptyList()
-        val set = ids.toSet()
-        return items.filter { it.entity.awemeId in set }.map { it.entity }
-    }
-
-    /** 当前已加载条目数量，用于判断「已全选」。 */
-    fun loadedCount(): Int = items.size
 
     /**
      * 批量查询这些记录的用户自定义标签并回写到列表。
@@ -480,9 +471,6 @@ sealed interface ManageTabEvent {
     data class TagsApplied(val count: Int) : ManageTabEvent
     data class TagEditCountBumped(val count: Int) : ManageTabEvent
     data object FileNotFound : ManageTabEvent
-
-    /** 全量拉齐完成，视图层在下一次渲染后执行全选。 */
-    data object SelectAllAfterLoad : ManageTabEvent
 
     data class OpenVideoPlayer(
         val filePaths: List<String>,
