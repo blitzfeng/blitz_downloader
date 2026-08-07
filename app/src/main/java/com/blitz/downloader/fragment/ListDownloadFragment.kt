@@ -15,81 +15,55 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.widget.NestedScrollView
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
-import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.DouyinWebBrowserActivity
 import com.blitz.downloader.activity.VideoPlayerActivity
 import com.blitz.downloader.adapter.VideoGridAdapter
-import com.blitz.downloader.api.AwemeItem
-import com.blitz.downloader.api.AwemeMapper
-import com.blitz.downloader.api.DouyinApiClient
-import com.blitz.downloader.api.DouyinAuthException
 import com.blitz.downloader.api.DouyinCollectsFolderRow
-import com.blitz.downloader.api.DouyinListApi
-import com.blitz.downloader.api.DouyinPageKind
-import com.blitz.downloader.api.DouyinUrlParser
 import com.blitz.downloader.config.AppConfig
-import com.blitz.downloader.data.DownloadMediaType
-import com.blitz.downloader.data.DownloadSourceType
-import com.blitz.downloader.data.DownloadedVideoRepository
-import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.databinding.FragmentListDownloadBinding
 import com.blitz.downloader.dialog.PhotoSelectionBottomSheet
 import com.blitz.downloader.download.BatchDownloadCoordinator
-import com.blitz.downloader.download.DownloadEvents
-import com.blitz.downloader.download.DownloadJob
-import com.blitz.downloader.download.DownloadRecordMeta
-import com.blitz.downloader.download.DownloadService
-import com.blitz.downloader.model.VideoItemUiModel
-import com.blitz.downloader.util.DouyinCookieSync
+import com.blitz.downloader.viewmodel.CookiePasteResult
+import com.blitz.downloader.viewmodel.CookieStatusUi
+import com.blitz.downloader.viewmodel.CookieSyncResult
+import com.blitz.downloader.viewmodel.ListDownloadEvent
+import com.blitz.downloader.viewmodel.ListDownloadUiState
+import com.blitz.downloader.viewmodel.ListDownloadViewModel
+import com.blitz.downloader.viewmodel.ListKindChoice
+import com.blitz.downloader.viewmodel.ListStatus
 import java.io.File
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
+/**
+ * 批量下载页。
+ *
+ * 只负责视图：绑定控件、把用户操作转发给 [ListDownloadViewModel]、渲染 `uiState`、
+ * 处理 ViewModel 发出的一次性事件（弹窗 / 跳转 / Toast）。
+ * 网络请求、数据库读写、分页与登录态重试都在 ViewModel 里。
+ */
 class ListDownloadFragment : Fragment() {
 
-
-    val myUserId = "MS4wLjABAAAA7ZinArXxNJlWd2iiRKUI3ruz4TwjqKN5F7iqF5nGKIAgCTDtscTfMCQMor1Fn9vr"
     private var _binding: FragmentListDownloadBinding? = null
     private val binding get() = _binding!!
     private lateinit var videoAdapter: VideoGridAdapter
-    private val videoItems = mutableListOf<VideoItemUiModel>()
 
-    private var listLoadJob: Job? = null
-    private var batchDownloadJob: Job? = null
+    private val viewModel: ListDownloadViewModel by viewModels()
+
     private var showFabRunnable: Runnable? = null
+
+    /** 本 App 所有者的主页地址，用于「返回我的主页」时回填输入框。 */
+    private val indexMainPage =
+        "https://www.douyin.com/user/${AppConfig.MY_SEC_USER_ID}?from_tab_name=main"
 
     /** Android 13+ 通知权限申请器：用于展示前台下载进度，拒绝也不阻断下载。 */
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* 拒绝也照常下载，仅无通知 */ }
-
-    /** 登录态失效弹窗中「去登录」后待重试的加载动作；登录返回且已登录时自动执行。 */
-    private var pendingRetryAfterLogin: (suspend () -> Unit)? = null
-    private var awaitingLoginRetry: Boolean = false
-
-    /** 是否在列表中隐藏已下载项（仅影响展示，不影响 videoItems 源数据）。 */
-    private var hideDownloaded: Boolean = false
-
-    private enum class ListApiMode { None, UserPost, UserLike, UserCollection, CollectsVideo, MixAweme }
-
-    private var listApiMode: ListApiMode = ListApiMode.None
-    private var listSecUserId: String? = null
-    private var listMixId: String? = null
-    private var listCollectsId: String? = null
-    /** 当前选中收藏夹的显示名称（[ListApiMode.CollectsVideo] 时有效），用于写入 DB。 */
-    private var listCollectsName: String = ""
-    private var listNextCursor: Long = 0L
-    private var listHasMore: Boolean = false
-    private var listLoadingMore: Boolean = false
-    private var selectedUserId = myUserId
-    val indexMainPage = "https://www.douyin.com/user/${selectedUserId}?from_tab_name=main"
-
-    private val downloadedRepo: DownloadedVideoRepository
-        get() = (requireContext().applicationContext as BlitzApp).downloadedVideoRepository
 
     override fun onCreateView(
         layoutInflater: LayoutInflater,
@@ -104,18 +78,26 @@ class ListDownloadFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         binding.etUrlInput.setText(DouyinWebBrowserActivity.DOUYIN_DEFAULT_HOME_URL)
-        refreshCookieStatusUi()
         BatchDownloadCoordinator.createNoMediaFile(File(BatchDownloadCoordinator.COVER_SUBDIR))
 
+        setupRecyclerView()
+        setupScrollListener()
+        setupClickListeners()
+        observeViewModel()
+    }
+
+    private fun setupRecyclerView() {
         binding.rvVideos.layoutManager = GridLayoutManager(requireContext(), 3)
         videoAdapter = VideoGridAdapter(
             items = emptyList(),
-            onItemClicked = { item -> toggleSelection(item.id) },
-            onAuthorPostsClicked = { item -> onAuthorPostsClicked(item) },
-            onPreviewClicked = { item -> onPreviewClicked(item) },
+            onItemClicked = { item -> viewModel.toggleSelection(item.id) },
+            onAuthorPostsClicked = { item -> viewModel.onAuthorPostsClicked(item.id) },
+            onPreviewClicked = { item -> viewModel.onPreviewClicked(item.id) },
         )
         binding.rvVideos.adapter = videoAdapter
+    }
 
+    private fun setupScrollListener() {
         val thresholdPx = (200 * resources.displayMetrics.density).toInt()
         binding.nestedScrollView.setOnScrollChangeListener(
             NestedScrollView.OnScrollChangeListener { v, _, scrollY, _, _ ->
@@ -129,334 +111,102 @@ class ListDownloadFragment : Fragment() {
                     binding.root.postDelayed(r, 300)
                 }
                 // 加载下一页
-                if (listApiMode == ListApiMode.None || listLoadingMore || !listHasMore) return@OnScrollChangeListener
+                if (!viewModel.canLoadMore()) return@OnScrollChangeListener
                 val diff = v.getChildAt(0).measuredHeight - v.measuredHeight - scrollY
                 if (diff <= thresholdPx) {
-                    loadNextListPage()
+                    viewModel.loadNextListPage()
                 }
             },
         )
+    }
 
+    private fun setupClickListeners() {
         binding.fabParse.setOnClickListener {
-            parseAndOpenOrLoadList()
+            viewModel.parseAndLoad(binding.etUrlInput.text?.toString(), currentListKind())
         }
-
-        binding.btnBackToMyPage.setOnClickListener {
-            exitAuthorPostsMode()
-        }
-
-        binding.btnSyncCookie.setOnClickListener {
-            syncCookieFromCookieManager()
-        }
-
-        binding.btnPasteCookie.setOnClickListener {
-            importCookieFromClipboard()
-        }
-
-        binding.btnOpenDouyinBrowser.setOnClickListener {
-            startDouyinBrowser(initialUrlFromInput())
-        }
-
-        binding.btnBackToMyPage.setOnClickListener {
-            exitAuthorPostsMode()
-        }
-
-        binding.btnSelectAll.setOnClickListener {
-            if (videoItems.isEmpty()) {
-                Toast.makeText(requireContext(), R.string.batch_select_empty, Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            val selectable = videoItems.filter { !it.isDownloaded }
-            if (selectable.isEmpty()) {
-                Toast.makeText(requireContext(), R.string.batch_select_empty, Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            val allSelected = selectable.all { it.isSelected }
-            val newSelect = !allSelected
-            for (i in videoItems.indices) {
-                val item = videoItems[i]
-                if (item.isDownloaded) continue
-                videoItems[i] = item.copy(isSelected = newSelect)
-            }
-            videoAdapter.submitList(currentDisplayList())
-            updateSelectedCountText()
-        }
-
+        binding.btnBackToMyPage.setOnClickListener { exitAuthorPostsMode() }
+        binding.btnSyncCookie.setOnClickListener { viewModel.syncCookieFromCookieManager() }
+        binding.btnPasteCookie.setOnClickListener { viewModel.importPastedCookie(readClipboardText()) }
+        binding.btnOpenDouyinBrowser.setOnClickListener { startDouyinBrowser(initialUrlFromInput()) }
+        binding.btnSelectAll.setOnClickListener { viewModel.toggleSelectAll() }
+        binding.btnDownloadSelected.setOnClickListener { viewModel.startBatchDownload() }
         binding.cbHideDownloaded.setOnCheckedChangeListener { _, checked ->
-            hideDownloaded = checked
-            videoAdapter.submitList(currentDisplayList())
-            updateSelectedCountText()
-            if (listApiMode != ListApiMode.None) refreshListStatusAfterOk()
-            // 打开开关后当前页可能被过滤到没剩几条：列表撑不满屏 → 滚动分页不会触发 → 看着像「什么都没加载出来」。
-            // 这里主动续拉后面的页。
-            if (checked && needsAutoFillMorePages()) {
-                listLoadJob?.cancel()
-                listLoadJob = viewLifecycleOwner.lifecycleScope.launch {
-                    fetchListPage(isFirstPage = false)
-                }
-            }
+            viewModel.setHideDownloaded(checked)
         }
+    }
 
-        binding.btnDownloadSelected.setOnClickListener {
-            startBatchDownload()
-        }
-
-        // 下载服务写库成功后就地刷新当前列表（打角标 + 取消勾选），不用离开页面再回来。
+    private fun observeViewModel() {
         viewLifecycleOwner.lifecycleScope.launch {
-            DownloadEvents.recorded.collect { ids -> markItemsDownloaded(ids) }
-        }
-    }
-
-    /**
-     * 把刚下载完成的作品在当前列表里标记为已下载并取消勾选。
-     * 与当前列表没有交集（页面期间已经换成别的接口数据）时直接返回，不做任何刷新。
-     */
-    private fun markItemsDownloaded(awemeIds: Set<String>) {
-        if (videoItems.isEmpty() || awemeIds.isEmpty()) return
-        var changed = false
-        for (i in videoItems.indices) {
-            val v = videoItems[i]
-            if (v.id !in awemeIds) continue
-            if (v.isDownloaded && !v.isSelected) continue
-            videoItems[i] = v.copy(isDownloaded = true, isSelected = false)
-            changed = true
-        }
-        if (!changed) return
-        videoAdapter.submitList(currentDisplayList())
-        updateSelectedCountText()
-        if (listApiMode != ListApiMode.None) refreshListStatusAfterOk()
-        // 隐藏已下载时刚下完的项会立刻消失，可见项可能不够一屏 —— 沿用与加载时相同的续拉策略。
-        if (needsAutoFillMorePages()) {
-            listLoadJob?.cancel()
-            listLoadJob = viewLifecycleOwner.lifecycleScope.launch {
-                fetchListPage(isFirstPage = false)
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { viewModel.uiState.collect { render(it) } }
+                launch { viewModel.cookieStatus.collect { renderCookieStatus(it) } }
+                launch { viewModel.events.collect { handleEvent(it) } }
             }
-        }
-    }
-
-    /** 提交给 Adapter 展示的列表：按「隐藏已下载」开关过滤，源数据 [videoItems] 不变。 */
-    private fun currentDisplayList(): List<VideoItemUiModel> =
-        if (hideDownloaded) videoItems.filter { !it.isDownloaded } else videoItems.toList()
-
-    /**
-     * 提交批量下载：预先算好每项的入库元数据，交给 [DownloadService] 在前台服务里执行。
-     * 下载与写库都在服务内完成，离开本页 / 应用退到后台也不会中断，进度见通知栏。
-     */
-    private fun startBatchDownload() {
-        val selected = videoItems.filter { it.isSelected }
-        if (selected.isEmpty()) {
-            Toast.makeText(requireContext(), R.string.batch_download_none_selected, Toast.LENGTH_SHORT).show()
-            return
-        }
-        // 图集按用户在选图弹窗里的勾选结果算（downloadImageUrls），没选图的图集不算可下载
-        val downloadable = selected.filter { !it.downloadUrl.isNullOrBlank() || it.downloadImageUrls.isNotEmpty() }
-        if (downloadable.isEmpty()) {
-            Toast.makeText(requireContext(), R.string.batch_download_no_play_url, Toast.LENGTH_LONG).show()
-            return
-        }
-
-        // Android 13+：通知权限用于展示前台进度，缺失也不阻断下载（服务照常运行）。
-        requestNotificationPermissionIfNeeded()
-
-        val sourceType = listSourceTypeForCurrentMode()
-        val isCollects = listApiMode == ListApiMode.CollectsVideo
-        val folderName = if (isCollects) listCollectsName else ""
-        val folderId = if (isCollects) listCollectsId.orEmpty() else ""
-        val ownerSecUserId = when (listApiMode) {
-            ListApiMode.UserPost -> listSecUserId.orEmpty()
-            else -> AppConfig.MY_SEC_USER_ID
-        }
-        val metas = downloadable.associate { item ->
-            val userRelation = when (listApiMode) {
-                ListApiMode.UserLike ->
-                    DownloadedVideoRepository.buildUserRelationFromLike(item.collectStat)
-                ListApiMode.UserCollection ->
-                    DownloadedVideoRepository.buildUserRelationFromCollection(item.userDigged, "collect")
-                ListApiMode.CollectsVideo ->
-                    DownloadedVideoRepository.buildUserRelationFromCollection(item.userDigged, folderName)
-                else -> ""
-            }
-            item.id to DownloadRecordMeta(
-                downloadType = sourceType,
-                userName = item.authorNickname,
-                mediaType = if (item.isPhoto) DownloadMediaType.IMAGE else DownloadMediaType.VIDEO,
-                createTime = item.createTime,
-                desc = item.descRaw,
-                collectionType = folderName,
-                collectId = folderId,
-                videoAuthorSecUserId = item.authorSecUserId,
-                sourceOwnerSecUserId = ownerSecUserId,
-                userRelation = userRelation,
-                diggCount = item.diggCount,
-                collectCount = item.collectCount,
-                linkCollectFolderTag = isCollects,
-            )
-        }
-
-        DownloadService.start(
-            requireContext().applicationContext,
-            DownloadJob(items = downloadable, metas = metas),
-        )
-        binding.tvStatus.text = getString(R.string.batch_download_enqueued, downloadable.size)
-        Toast.makeText(requireContext(), R.string.batch_download_enqueued_toast, Toast.LENGTH_LONG).show()
-    }
-
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        val granted = ContextCompat.checkSelfPermission(
-            requireContext(), Manifest.permission.POST_NOTIFICATIONS,
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
     override fun onResume() {
         super.onResume()
-        refreshCookieStatusUi()
-        if (videoItems.isNotEmpty()) {
-            viewLifecycleOwner.lifecycleScope.launch {
-                reapplyDownloadedFlagsToList()
-            }
-        }
-        // 从登录页返回：先把 WebView 里的最新 Cookie 同步进来，再判断是否已登录。
-        if (awaitingLoginRetry) {
-            DouyinCookieSync.syncFromCookieManager()
-            refreshCookieStatusUi()
-            val hasLogin = DouyinCookieSync.cookieTokenSnapshot(DouyinApiClient.globalCookie).hasLoginSession
-            if (hasLogin) {
-                awaitingLoginRetry = false
-                val retry = pendingRetryAfterLogin
-                pendingRetryAfterLogin = null
-                if (retry != null) {
-                    viewLifecycleOwner.lifecycleScope.launch { retry() }
-                }
-            }
-        }
+        viewModel.onScreenResumed()
     }
 
     override fun onDestroyView() {
         showFabRunnable?.let { _binding?.root?.removeCallbacks(it) }
         showFabRunnable = null
-        batchDownloadJob?.cancel()
-        listLoadJob?.cancel()
         _binding = null
         super.onDestroyView()
     }
 
-    private fun startDouyinBrowser(initialUrl: String?) {
-        startActivity(DouyinWebBrowserActivity.createIntent(requireContext(), initialUrl))
-    }
+    // -----------------------------------------------------------------------
+    // 渲染
+    // -----------------------------------------------------------------------
 
-    private fun initialUrlFromInput(): String? {
-        val raw = binding.etUrlInput.text?.toString()?.trim().orEmpty()
-        if (raw.isEmpty()) return null
-        return if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "https://$raw"
-    }
-
-    private fun toggleSelection(id: String) {
-        val index = videoItems.indexOfFirst { it.id == id }
-        if (index == -1) return
-        val current = videoItems[index]
-        if (current.isDownloaded) return
-        val nowSelected = !current.isSelected
-        videoItems[index] = current.copy(
-            isSelected = nowSelected,
-            // 取消勾选时顺手清掉子选择：下次再勾选回到"默认全选"，不残留上一次的选图
-            selectedImageIndices = if (nowSelected) current.selectedImageIndices else null,
-        )
-        videoAdapter.submitList(currentDisplayList())
-        updateSelectedCountText()
-
-        // 勾选图集时弹出选图弹窗（默认全选）；一张都不选则连这条的勾选一起取消
-        if (nowSelected && current.isPhoto && current.imageUrls.isNotEmpty()) {
-            showPhotoSelection(current.id, editable = true)
+    private fun render(state: ListDownloadUiState) {
+        videoAdapter.setUserPostMode(state.isUserPostMode)
+        videoAdapter.submitList(state.visibleItems)
+        renderAuthorPostsChrome(state.isAuthorPostsMode)
+        // 配置变更后视图会重建成 XML 默认值，从 state 回写一次；
+        // 这会触发监听器，但 setHideDownloaded 对同值早返回，不会形成回环。
+        if (binding.cbHideDownloaded.isChecked != state.hideDownloaded) {
+            binding.cbHideDownloaded.isChecked = state.hideDownloaded
         }
-    }
-
-    /**
-     * 打开图集选图弹窗。
-     *
-     * @param editable false 时是纯预览（未勾选的、或已下载的图集），关闭后不改动列表状态——
-     * 否则"只是想看看"会因为默认全选而把这条静默勾上。
-     */
-    private fun showPhotoSelection(id: String, editable: Boolean) {
-        val item = videoItems.firstOrNull { it.id == id } ?: return
-        if (item.imageUrls.isEmpty()) return
-        PhotoSelectionBottomSheet.show(
-            context = requireContext(),
-            imageUrls = item.imageUrls,
-            initialSelection = item.selectedImageIndices,
-            editable = editable,
-        ) { result -> applyPhotoSelection(id, result) }
-    }
-
-    /**
-     * 选图弹窗关闭后回写列表：`null` = 全选，空集合 = 一张都没选（视为放弃这条，连勾选一起取消）。
-     */
-    private fun applyPhotoSelection(id: String, result: Set<Int>?) {
-        // 弹窗关闭回调可能晚于 onDestroyView（如返回上一页时被 dismiss）
-        if (_binding == null) return
-        val index = videoItems.indexOfFirst { it.id == id }
-        if (index == -1) return
-        val item = videoItems[index]
-        val keepSelected = result == null || result.isNotEmpty()
-        videoItems[index] = item.copy(
-            isSelected = keepSelected,
-            selectedImageIndices = if (keepSelected) result else null,
-        )
-        videoAdapter.submitList(currentDisplayList())
-        updateSelectedCountText()
-        if (!keepSelected) {
-            Toast.makeText(requireContext(), R.string.photo_pick_none_selected, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun listSourceTypeForCurrentMode(): String = when (listApiMode) {
-        ListApiMode.UserPost -> DownloadSourceType.POST
-        ListApiMode.UserLike -> DownloadSourceType.LIKE
-        ListApiMode.UserCollection -> DownloadSourceType.COLLECT
-        ListApiMode.MixAweme -> DownloadSourceType.MIX
-        ListApiMode.CollectsVideo -> DownloadSourceType.COLLECTS
-        ListApiMode.None -> DownloadSourceType.POST
-    }
-
-    private suspend fun reapplyDownloadedFlagsToList() {
-        if (videoItems.isEmpty()) return
-        val ids = videoItems.map { it.id }
-        val downloaded = withContext(Dispatchers.IO) {
-            downloadedRepo.getDownloadedAwemeIdSet(ids)
-        }
-        for (i in videoItems.indices) {
-            val v = videoItems[i]
-            val isDl = v.id in downloaded
-            videoItems[i] = v.copy(
-                isDownloaded = isDl,
-                isSelected = if (isDl) false else v.isSelected,
-            )
-        }
-        videoAdapter.submitList(currentDisplayList())
-        updateSelectedCountText()
-    }
-
-    private fun updateSelectedCountText() {
-        val c = videoItems.count { it.isSelected }
-        binding.btnDownloadSelected.isEnabled = c > 0
-        val hidden = if (hideDownloaded) videoItems.count { it.isDownloaded } else 0
-        binding.tvSelectedCount.text = if (hidden > 0) {
-            "已选择 $c / ${videoItems.size}（隐藏 $hidden）"
+        binding.btnDownloadSelected.isEnabled = state.canDownload
+        binding.tvSelectedCount.text = if (state.hiddenCount > 0) {
+            "已选择 ${state.selectedCount} / ${state.totalCount}（隐藏 ${state.hiddenCount}）"
         } else {
-            "已选择 $c / ${videoItems.size}"
+            "已选择 ${state.selectedCount} / ${state.totalCount}"
+        }
+        binding.tvStatus.text = statusText(state)
+    }
+
+    private fun statusText(state: ListDownloadUiState): CharSequence = when (val s = state.status) {
+        ListStatus.Idle -> getString(R.string.list_batch_scope_hint)
+        ListStatus.Loading -> getString(R.string.list_api_loading)
+        ListStatus.CollectsLoading -> getString(R.string.collects_list_loading)
+        ListStatus.CollectsEmpty -> getString(R.string.collects_list_empty)
+        is ListStatus.Error -> getString(R.string.list_api_error, s.message ?: "")
+        is ListStatus.AuthorPostsMode -> getString(R.string.author_posts_mode_hint, s.nickname)
+        is ListStatus.Enqueued -> getString(R.string.batch_download_enqueued, s.count)
+        is ListStatus.Loaded -> {
+            val tail = getString(
+                if (s.hasMore) R.string.list_api_has_more else R.string.list_api_no_more,
+            )
+            val base = getString(R.string.list_api_status_loaded, s.total, tail)
+            // 开了「隐藏已下载」时把过滤掉多少条说清楚，否则可见项为 0 会被误认为加载失败
+            if (s.hidden > 0) {
+                getString(R.string.list_api_status_hidden_suffix, base, s.hidden, s.total - s.hidden)
+            } else {
+                base
+            }
         }
     }
 
-    private fun refreshCookieStatusUi() {
-        val line = DouyinApiClient.globalCookie
-        if (line.isNullOrBlank()) {
+    private fun renderCookieStatus(status: CookieStatusUi) {
+        val snap = status.snapshot
+        if (!status.hasCookie || snap == null) {
             binding.tvCookieStatus.setText(R.string.cookie_status_none)
             return
         }
-        val snap = DouyinCookieSync.cookieTokenSnapshot(line)
         val yn = { ok: Boolean ->
             getString(if (ok) R.string.token_status_yes else R.string.token_status_no)
         }
@@ -476,442 +226,208 @@ class ListDownloadFragment : Fragment() {
         }
     }
 
-    /** 从系统 Cookie（含独立「抖音网页」WebView）合并到内存并持久化。 */
-    private fun syncCookieFromCookieManager() {
-        val merged = DouyinCookieSync.syncFromCookieManager()
-        refreshCookieStatusUi()
-        val snap = DouyinCookieSync.cookieTokenSnapshot(DouyinApiClient.globalCookie)
-        val ctx = requireContext()
-        when {
-            merged == null && DouyinApiClient.globalCookie.isNullOrBlank() ->
-                Toast.makeText(ctx, R.string.toast_cookie_sync_empty, Toast.LENGTH_SHORT).show()
-            merged == null && !DouyinApiClient.globalCookie.isNullOrBlank() ->
-                Toast.makeText(ctx, R.string.toast_cookie_sync_web_empty, Toast.LENGTH_LONG).show()
-            snap.hasLoginSession ->
-                Toast.makeText(ctx, R.string.toast_cookie_synced_with_login, Toast.LENGTH_SHORT).show()
-            else ->
-                Toast.makeText(ctx, R.string.toast_cookie_synced_no_login, Toast.LENGTH_LONG).show()
+    // -----------------------------------------------------------------------
+    // 一次性事件
+    // -----------------------------------------------------------------------
+
+    private fun handleEvent(event: ListDownloadEvent) {
+        when (event) {
+            is ListDownloadEvent.CookieSynced -> toast(
+                when (event.result) {
+                    CookieSyncResult.EMPTY -> R.string.toast_cookie_sync_empty
+                    CookieSyncResult.WEB_EMPTY -> R.string.toast_cookie_sync_web_empty
+                    CookieSyncResult.OK_WITH_LOGIN -> R.string.toast_cookie_synced_with_login
+                    CookieSyncResult.OK_NO_LOGIN -> R.string.toast_cookie_synced_no_login
+                },
+                long = event.result == CookieSyncResult.WEB_EMPTY ||
+                    event.result == CookieSyncResult.OK_NO_LOGIN,
+            )
+
+            is ListDownloadEvent.CookiePasted -> when (event.result) {
+                CookiePasteResult.CLIPBOARD_EMPTY -> toast("剪贴板为空")
+                CookiePasteResult.OK -> toast(R.string.toast_cookie_paste_ok)
+                CookiePasteResult.INVALID -> toast(R.string.toast_cookie_paste_invalid)
+            }
+
+            is ListDownloadEvent.ShowPhotoSelection -> PhotoSelectionBottomSheet.show(
+                context = requireContext(),
+                imageUrls = event.imageUrls,
+                initialSelection = event.initialSelection,
+                editable = event.editable,
+            ) { result -> viewModel.applyPhotoSelection(event.id, result) }
+
+            ListDownloadEvent.PhotoSelectionCleared -> toast(R.string.photo_pick_none_selected)
+
+            is ListDownloadEvent.ShowCollectsFolderPicker -> showCollectsFolderDialog(event.folders)
+            ListDownloadEvent.CollectsFolderEmpty -> toast(R.string.collects_list_empty, long = true)
+
+            ListDownloadEvent.ShowSessionExpiredDialog -> showSessionExpiredDialog()
+            ListDownloadEvent.OpenBrowserForLogin ->
+                startDouyinBrowser(DouyinWebBrowserActivity.DOUYIN_DEFAULT_HOME_URL)
+
+            is ListDownloadEvent.OpenBrowser -> startDouyinBrowser(normalizeUrl(event.url))
+            is ListDownloadEvent.OpenedAsPlainUrl -> {
+                toast("已按普通链接打开网页")
+                startDouyinBrowser(normalizeUrl(event.url))
+            }
+
+            is ListDownloadEvent.EnterAuthorPostsMode ->
+                enterAuthorPostsMode(event.authorUrl)
+
+            is ListDownloadEvent.OpenVideoPreview -> startActivity(
+                VideoPlayerActivity.createListNetworkIntent(
+                    context = requireContext(),
+                    urls = ArrayList(event.urls),
+                    titles = ArrayList(
+                        event.nicknames.map { it.ifBlank { getString(R.string.video_player_title) } },
+                    ),
+                    subtitles = ArrayList(event.descriptions),
+                    position = event.position,
+                ),
+            )
+
+            ListDownloadEvent.RequestNotificationPermission -> requestNotificationPermissionIfNeeded()
+            is ListDownloadEvent.BatchDownloadEnqueued ->
+                toast(R.string.batch_download_enqueued_toast, long = true)
+
+            is ListDownloadEvent.ListLoadFailed ->
+                toast(getString(R.string.list_api_error, event.message ?: ""), long = true)
+
+            ListDownloadEvent.NothingSelected -> toast(R.string.batch_download_none_selected)
+            ListDownloadEvent.NoPlayUrl -> toast(R.string.batch_download_no_play_url, long = true)
+            ListDownloadEvent.NoPreviewUrl -> toast("该视频暂无可用播放地址")
+            ListDownloadEvent.SelectAllRejected -> toast(R.string.batch_select_empty)
+            ListDownloadEvent.NeedLoginForCollection ->
+                toast(R.string.list_api_collection_need_login, long = true)
+            ListDownloadEvent.NeedUserOrMix -> toast(R.string.list_api_need_user_or_mix, long = true)
+            ListDownloadEvent.UrlInputEmpty -> toast("请输入URL")
+            ListDownloadEvent.ShortLinkUnresolved ->
+                toast(R.string.list_api_short_unresolved, long = true)
+            ListDownloadEvent.AuthorIdMissing -> toast("该作品没有作者ID，无法加载")
         }
     }
 
-    private fun importCookieFromClipboard() {
-        val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val text = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
-        if (text.isNullOrBlank()) {
-            Toast.makeText(requireContext(), "剪贴板为空", Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (DouyinCookieSync.applyPastedCookieHeader(text)) {
-            refreshCookieStatusUi()
-            Toast.makeText(requireContext(), R.string.toast_cookie_paste_ok, Toast.LENGTH_SHORT).show()
-        } else {
-            Toast.makeText(requireContext(), R.string.toast_cookie_paste_invalid, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun parseAndOpenOrLoadList() {
-        if (binding.rgListKind.checkedRadioButtonId == R.id.rbKindCollectsFolder) {
-            if (DouyinApiClient.globalCookie.isNullOrBlank()) {
-                Toast.makeText(
-                    requireContext(),
-                    R.string.list_api_collection_need_login,
-                    Toast.LENGTH_LONG,
-                ).show()
-                return
-            }
-            listLoadJob?.cancel()
-            listLoadJob = viewLifecycleOwner.lifecycleScope.launch {
-                runCollectsFolderPickFlow()
-            }
-            return
-        }
-
-        val raw = binding.etUrlInput.text?.toString()?.trim()
-        if (raw.isNullOrBlank()) {
-            Toast.makeText(requireContext(), "请输入URL", Toast.LENGTH_SHORT).show()
-            return
-        }
-        listLoadJob?.cancel()
-        listLoadJob = viewLifecycleOwner.lifecycleScope.launch {
-            val parsed = DouyinUrlParser.parse(raw)
-            when (parsed.kind) {
-                DouyinPageKind.USER -> {
-                    val sid = parsed.secUserId?.takeIf { it.isNotBlank() }
-                    if (sid == null) {
-                        Toast.makeText(requireContext(), R.string.list_api_need_user_or_mix, Toast.LENGTH_LONG).show()
-                        return@launch
-                    }
-                    when (binding.rgListKind.checkedRadioButtonId) {
-                        R.id.rbKindLike -> {
-                            resetListBatchState(ListApiMode.UserLike, secUserId = sid, mixId = null)
-                            fetchListPage(isFirstPage = true)
-                        }
-                        R.id.rbKindCollection -> {
-                            if (DouyinApiClient.globalCookie.isNullOrBlank()) {
-                                Toast.makeText(
-                                    requireContext(),
-                                    R.string.list_api_collection_need_login,
-                                    Toast.LENGTH_LONG,
-                                ).show()
-                                return@launch
-                            }
-                            resetListBatchState(ListApiMode.UserCollection, secUserId = null, mixId = null)
-                            fetchListPage(isFirstPage = true)
-                        }
-                        else -> {
-                            resetListBatchState(ListApiMode.UserPost, secUserId = sid, mixId = null)
-                            fetchListPage(isFirstPage = true)
-                        }
-                    }
-                }
-                DouyinPageKind.MIX -> {
-                    val mid = parsed.mixId?.takeIf { it.isNotBlank() }
-                    if (mid == null) {
-                        Toast.makeText(requireContext(), R.string.list_api_need_user_or_mix, Toast.LENGTH_LONG).show()
-                        return@launch
-                    }
-                    resetListBatchState(ListApiMode.MixAweme, secUserId = null, mixId = mid)
-                    fetchListPage(isFirstPage = true)
-                }
-                DouyinPageKind.VIDEO -> {
-                    resetListBatchState(ListApiMode.None, null, null)
-                    startDouyinBrowser(initialUrlFromInput())
-                }
-                DouyinPageKind.SHORT_UNRESOLVED -> {
-                    Toast.makeText(requireContext(), R.string.list_api_short_unresolved, Toast.LENGTH_LONG).show()
-                }
-                DouyinPageKind.UNKNOWN -> {
-                    resetListBatchState(ListApiMode.None, null, null)
-                    Toast.makeText(requireContext(), "已按普通链接打开网页", Toast.LENGTH_SHORT).show()
-                    startDouyinBrowser(initialUrlFromInput())
-                }
-            }
-        }
-    }
-
-    private suspend fun runCollectsFolderPickFlow() {
-        binding.tvStatus.text = getString(R.string.collects_list_loading)
-        val folders = DouyinListApi.fetchAllCollectsFolders().getOrElse { e ->
-            withContext(Dispatchers.Main) {
-                handleListLoadError(e) { runCollectsFolderPickFlow() }
-            }
-            return
-        }
-        if (folders.isEmpty()) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(requireContext(), R.string.collects_list_empty, Toast.LENGTH_LONG).show()
-                binding.tvStatus.text = getString(R.string.collects_list_empty)
-            }
-            return
-        }
-        showCollectsFolderDialog(folders)
-    }
-
-    private suspend fun showCollectsFolderDialog(folders: List<DouyinCollectsFolderRow>) {
+    private fun showCollectsFolderDialog(folders: List<DouyinCollectsFolderRow>) {
         val labels = folders.map { row ->
             val name = row.name.ifBlank { row.id }
             "$name (${row.id})"
         }.toTypedArray()
-        withContext(Dispatchers.Main) {
-            AlertDialog.Builder(requireContext())
-                .setTitle(R.string.collects_pick_title)
-                .setItems(labels) { _, which ->
-                    val folder = folders[which]
-                    resetListBatchState(ListApiMode.CollectsVideo, secUserId = null, mixId = null, collectsId = folder.id)
-                    listCollectsName = folder.name.ifBlank { folder.id }
-                    listLoadJob = viewLifecycleOwner.lifecycleScope.launch {
-                        fetchListPage(isFirstPage = true)
-                    }
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-    }
-
-    private fun resetListBatchState(
-        mode: ListApiMode,
-        secUserId: String?,
-        mixId: String?,
-        collectsId: String? = null,
-    ) {
-        listApiMode = mode
-        listSecUserId = secUserId
-        listMixId = mixId
-        listCollectsId = collectsId
-        listCollectsName = ""
-        listNextCursor = 0L
-        listHasMore = false
-        videoItems.clear()
-        videoAdapter.setUserPostMode(mode == ListApiMode.UserPost)
-        videoAdapter.submitList(emptyList())
-        updateSelectedCountText()
-        if (mode == ListApiMode.None) {
-            binding.tvStatus.setText(R.string.list_batch_scope_hint)
-        }
-    }
-
-    private fun mergeGridWithNewAweme(
-        existing: List<VideoItemUiModel>,
-        newItems: List<AwemeItem>,
-    ): List<VideoItemUiModel> {
-        val existingIds = existing.map { it.id }.toSet()
-        val newUi = AwemeMapper.toGridItems(newItems).filter { it.id !in existingIds }
-        return existing + newUi
-    }
-
-    private fun refreshListStatusLoading() {
-        binding.tvStatus.text = getString(R.string.list_api_loading)
-    }
-
-    private fun refreshListStatusAfterOk() {
-        val tail = if (listHasMore) getString(R.string.list_api_has_more) else getString(R.string.list_api_no_more)
-        val base = getString(R.string.list_api_status_loaded, videoItems.size, tail)
-        // 开了「隐藏已下载」时把过滤掉多少条说清楚，否则可见项为 0 会被误认为加载失败
-        val hidden = if (hideDownloaded) videoItems.count { it.isDownloaded } else 0
-        binding.tvStatus.text = if (hidden > 0) {
-            getString(R.string.list_api_status_hidden_suffix, base, hidden, videoItems.size - hidden)
-        } else {
-            base
-        }
-    }
-
-    private fun refreshListStatusError(msg: String?) {
-        binding.tvStatus.text = getString(R.string.list_api_error, msg ?: "")
-    }
-
-    /**
-     * 拉取列表页。开启「隐藏已下载」时，一页里可能整页都是已下载项，过滤后可见项为 0 —— 此时 RecyclerView
-     * 撑不满 NestedScrollView，滚动分页永远不会被触发，页面看上去就是「加载了但什么都没有」。
-     * 这里在单页加载完成后自动续拉，直到可见项够撑起一屏、没有更多数据，或达到 [AUTO_FILL_MAX_PAGES] 上限。
-     */
-    private suspend fun fetchListPage(isFirstPage: Boolean) {
-        if (!fetchListPageOnce(isFirstPage)) return
-        var extraPages = 0
-        while (needsAutoFillMorePages() && extraPages < AUTO_FILL_MAX_PAGES) {
-            extraPages++
-            if (!fetchListPageOnce(isFirstPage = false)) return
-        }
-    }
-
-    /** 隐藏已下载后可见项不足一屏且还有下一页时，需要自动多拉几页。 */
-    private fun needsAutoFillMorePages(): Boolean =
-        hideDownloaded &&
-            listApiMode != ListApiMode.None &&
-            listHasMore &&
-            currentDisplayList().size < AUTO_FILL_MIN_VISIBLE
-
-    /** 拉取单页；返回 false 表示未加载（重入/参数缺失）或加载失败，调用方不应继续续拉。 */
-    private suspend fun fetchListPageOnce(isFirstPage: Boolean): Boolean {
-        if (listLoadingMore) return false
-        listLoadingMore = true
-        var ok = false
-        try {
-            refreshListStatusLoading()
-            val result = when (listApiMode) {
-                ListApiMode.UserPost -> {
-                    val sid = listSecUserId ?: return false
-                    val cursor = if (isFirstPage) 0L else listNextCursor
-                    DouyinListApi.fetchUserPostPage(secUserId = sid, maxCursor = cursor)
-                }
-                ListApiMode.UserLike -> {
-                    val sid = listSecUserId ?: return false
-                    val maxC = if (isFirstPage) 0L else listNextCursor
-                    DouyinListApi.fetchUserLikePage(secUserId = sid, maxCursor = maxC)
-                }
-                ListApiMode.UserCollection -> {
-                    val cursor = if (isFirstPage) 0L else listNextCursor
-                    DouyinListApi.fetchUserCollectionPage(cursor = cursor)
-                }
-                ListApiMode.MixAweme -> {
-                    val mid = listMixId ?: return false
-                    val cursor = if (isFirstPage) 0L else listNextCursor
-                    DouyinListApi.fetchMixAwemePage(mixId = mid, cursor = cursor)
-                }
-                ListApiMode.CollectsVideo -> {
-                    val cid = listCollectsId ?: return false
-                    val cursor = if (isFirstPage) 0L else listNextCursor
-                    DouyinListApi.fetchCollectsVideoPage(collectsId = cid, cursor = cursor)
-                }
-                ListApiMode.None -> return false
-            }
-            result.fold(
-                onSuccess = { page ->
-                    val merged = if (isFirstPage) {
-                        AwemeMapper.toGridItems(page.items)
-                    } else {
-                        mergeGridWithNewAweme(videoItems, page.items)
-                    }
-                    videoItems.clear()
-                    videoItems.addAll(merged)
-                    listNextCursor = page.nextCursor
-                    listHasMore = page.hasMore
-                    reapplyDownloadedFlagsToList()
-                    refreshListStatusAfterOk()
-                    ok = true
-                },
-                onFailure = { e ->
-                    handleListLoadError(e) { fetchListPage(isFirstPage) }
-                },
-            )
-        } finally {
-            listLoadingMore = false
-        }
-        return ok
-    }
-
-    /**
-     * 列表加载失败统一处理：登录态失效（[DouyinAuthException]）弹「重新登录 / 同步 Cookie」引导，
-     * 其余错误照旧 Toast。[retry] 为该次加载动作，登录/同步后可自动重试。
-     */
-    private fun handleListLoadError(e: Throwable, retry: (suspend () -> Unit)?) {
-        refreshListStatusError(e.message)
-        if (e is DouyinAuthException) {
-            showSessionExpiredDialog(retry)
-        } else {
-            Toast.makeText(
-                requireContext(),
-                getString(R.string.list_api_error, e.message ?: ""),
-                Toast.LENGTH_LONG,
-            ).show()
-        }
-    }
-
-    private fun showSessionExpiredDialog(retry: (suspend () -> Unit)?) {
         AlertDialog.Builder(requireContext())
-            .setTitle(R.string.session_expired_title)
-            .setMessage(R.string.session_expired_msg)
-            .setPositiveButton(R.string.session_expired_login) { _, _ ->
-                pendingRetryAfterLogin = retry
-                awaitingLoginRetry = true
-                startDouyinBrowser(DouyinWebBrowserActivity.DOUYIN_DEFAULT_HOME_URL)
-            }
-            .setNeutralButton(R.string.session_expired_sync) { _, _ ->
-                syncCookieFromCookieManager()
-                val hasLogin = DouyinCookieSync.cookieTokenSnapshot(DouyinApiClient.globalCookie).hasLoginSession
-                if (hasLogin && retry != null) {
-                    viewLifecycleOwner.lifecycleScope.launch { retry() }
-                }
-            }
+            .setTitle(R.string.collects_pick_title)
+            .setItems(labels) { _, which -> viewModel.onCollectsFolderPicked(folders[which]) }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
-    private fun loadNextListPage() {
-        if (listApiMode == ListApiMode.None || listLoadingMore || !listHasMore) return
-        listLoadJob?.cancel()
-        listLoadJob = viewLifecycleOwner.lifecycleScope.launch {
-            fetchListPage(isFirstPage = false)
-        }
+    private fun showSessionExpiredDialog() {
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.session_expired_title)
+            .setMessage(R.string.session_expired_msg)
+            .setPositiveButton(R.string.session_expired_login) { _, _ ->
+                viewModel.onSessionExpiredLoginChosen()
+            }
+            .setNeutralButton(R.string.session_expired_sync) { _, _ ->
+                viewModel.onSessionExpiredSyncChosen()
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ ->
+                viewModel.onSessionExpiredDismissed()
+            }
+            .setOnCancelListener { viewModel.onSessionExpiredDismissed() }
+            .show()
     }
 
     // -----------------------------------------------------------------------
-    // 查看 TA 的 Post 模式
+    // 「查看 TA 的 Post」模式的视图切换
     // -----------------------------------------------------------------------
 
     /**
-     * 进入「查看 TA 的 Post」模式：
-     * - 用作者的 secUserId 构造主页 URL 填入输入框
-     * - 选中 Post RadioButton，其余不可选
-     * - 显示「返回」按钮
-     * - 自动触发列表加载
+     * 按当前是否处于「查看 TA 的 Post」模式切换界面：锁定 / 解锁列表种类选项、显示 / 隐藏返回按钮。
+     *
+     * 从 `uiState` 驱动而非在进入/退出时一次性设置，这样配置变更后重建的视图也能还原。
      */
-    private fun onAuthorPostsClicked(item: VideoItemUiModel) {
-        val secUid = item.authorSecUserId.takeIf { it.isNotBlank() } ?: run {
-            Toast.makeText(requireContext(), "该作品没有作者ID，无法加载", Toast.LENGTH_SHORT).show()
-            return
+    private fun renderAuthorPostsChrome(inAuthorMode: Boolean) {
+        binding.rbKindLike.isEnabled = !inAuthorMode
+        binding.rbKindCollection.isEnabled = !inAuthorMode
+        binding.rbKindCollectsFolder.isEnabled = !inAuthorMode
+        binding.btnBackToMyPage.visibility = if (inAuthorMode) View.VISIBLE else View.GONE
+        if (inAuthorMode && binding.rgListKind.checkedRadioButtonId != R.id.rbKindPost) {
+            binding.rgListKind.check(R.id.rbKindPost)
         }
-        val authorUrl = "https://www.douyin.com/user/$secUid?from_tab_name=main"
-        enterAuthorPostsMode(authorUrl, item.authorNickname)
     }
 
-    private fun enterAuthorPostsMode(authorUrl: String, nickname: String) {
-        // 填充 URL
+    /** 进入「查看 TA 的 Post」模式：回填作者主页 URL，滚回顶部后触发加载（界面切换由 [render] 负责）。 */
+    private fun enterAuthorPostsMode(authorUrl: String) {
         binding.etUrlInput.setText(authorUrl)
         binding.etUrlInput.clearFocus()
-
-        // 强制选中 Post，其余禁用
-        binding.rgListKind.check(R.id.rbKindPost)
-        binding.rbKindLike.isEnabled = false
-        binding.rbKindCollection.isEnabled = false
-        binding.rbKindCollectsFolder.isEnabled = false
-
-        // 显示返回按钮
-        binding.btnBackToMyPage.visibility = View.VISIBLE
-
-        // 状态栏提示
-        binding.tvStatus.text = getString(R.string.author_posts_mode_hint, nickname)
-
-        // 滚回顶部后触发解析加载
         binding.nestedScrollView.smoothScrollTo(0, 0)
-        binding.nestedScrollView.post { parseAndOpenOrLoadList() }
+        binding.nestedScrollView.post {
+            viewModel.parseAndLoad(authorUrl, ListKindChoice.Post)
+        }
     }
 
-    /** 退出「查看 TA 的 Post」模式，恢复默认状态 */
+    /** 退出「查看 TA 的 Post」模式，恢复默认状态。 */
     private fun exitAuthorPostsMode() {
-        // 恢复输入框为自己的主页
         binding.etUrlInput.setText(indexMainPage)
         binding.etUrlInput.clearFocus()
-
-        // 恢复所有 RadioButton 可选，重置为 Post
-        binding.rbKindLike.isEnabled = true
-        binding.rbKindCollection.isEnabled = true
-        binding.rbKindCollectsFolder.isEnabled = true
         binding.rgListKind.check(R.id.rbKindPost)
-
-        // 隐藏返回按钮
-        binding.btnBackToMyPage.visibility = View.GONE
-
-        // 清空列表与状态
-        resetListBatchState(ListApiMode.None, null, null)
+        viewModel.exitAuthorPostsMode()
     }
 
     // -----------------------------------------------------------------------
-    // 预览占位 —— 后续实现
+    // 杂项
     // -----------------------------------------------------------------------
 
-    /**
-     * 预览当前 item。
-     * - 视频：将列表中所有可预览的视频一并传入播放器，支持上下滑动切换。
-     * - 图集：TODO 后续打开 ImageViewerActivity 的网络 URL 模式。
-     */
-    private fun onPreviewClicked(item: VideoItemUiModel) {
-        if (item.isPhoto) {
-            if (item.imageUrls.isEmpty()) {
-                Toast.makeText(requireContext(), R.string.batch_download_no_play_url, Toast.LENGTH_SHORT).show()
-                return
-            }
-            // 已勾选的图集可在预览里顺手改选图；未勾选 / 已下载的只看不改
-            showPhotoSelection(item.id, editable = item.isSelected && !item.isDownloaded)
-            return
-        }
-
-        // 过滤出所有可预览的视频 item（非图集且有播放地址）
-        val previewable = videoItems.filter { !it.isPhoto && !it.downloadUrl.isNullOrBlank() }
-        val position = previewable.indexOfFirst { it.id == item.id }
-
-        if (position < 0 || item.downloadUrl.isNullOrBlank()) {
-            Toast.makeText(requireContext(), "该视频暂无可用播放地址", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        startActivity(
-            VideoPlayerActivity.createListNetworkIntent(
-                context = requireContext(),
-                urls = ArrayList(previewable.map { it.downloadUrl!! }),
-                titles = ArrayList(previewable.map {
-                    it.authorNickname.ifBlank { getString(R.string.video_player_title) }
-                }),
-                subtitles = ArrayList(previewable.map { it.descRaw.take(60) }),
-                position = position,
-            )
-        )
+    private fun currentListKind(): ListKindChoice = when (binding.rgListKind.checkedRadioButtonId) {
+        R.id.rbKindLike -> ListKindChoice.Like
+        R.id.rbKindCollection -> ListKindChoice.Collection
+        R.id.rbKindCollectsFolder -> ListKindChoice.CollectsFolder
+        else -> ListKindChoice.Post
     }
 
-    companion object {
-        /** 「隐藏已下载」时，可见项少于这个数就自动续拉下一页（3 列网格约一屏）。 */
-        private const val AUTO_FILL_MIN_VISIBLE = 9
+    private fun readClipboardText(): String? {
+        val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        return clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+    }
 
-        /** 单次加载最多为「隐藏已下载」自动续拉的额外页数，防止整个列表都已下载时无限翻页。 */
-        private const val AUTO_FILL_MAX_PAGES = 5
+    private fun startDouyinBrowser(initialUrl: String?) {
+        startActivity(DouyinWebBrowserActivity.createIntent(requireContext(), initialUrl))
+    }
+
+    private fun initialUrlFromInput(): String? = normalizeUrl(binding.etUrlInput.text?.toString())
+
+    private fun normalizeUrl(raw: String?): String? {
+        val trimmed = raw?.trim().orEmpty()
+        if (trimmed.isEmpty()) return null
+        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            trimmed
+        } else {
+            "https://$trimmed"
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            requireContext(), Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private fun toast(resId: Int, long: Boolean = false) {
+        Toast.makeText(
+            requireContext(),
+            resId,
+            if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    private fun toast(text: String, long: Boolean = false) {
+        Toast.makeText(
+            requireContext(),
+            text,
+            if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT,
+        ).show()
     }
 }
