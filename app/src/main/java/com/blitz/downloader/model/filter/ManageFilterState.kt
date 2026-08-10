@@ -1,11 +1,12 @@
 package com.blitz.downloader.model.filter
 
 /**
- * 管理页六层筛选的完整状态快照。
+ * 管理页七层筛选的完整状态快照。
  *
- * 六层是**叠加**关系而非互斥的单选（详见 CLAUDE.md「管理页的筛选栈」）：
- * 搜索 / 作者 / 标签多选 / 归属 / 标签数量 / 标签修改次数。
- * 其中作者与搜索、标签之间互斥（设置其一时清掉另外两个），其余各层可同时生效。
+ * 七层是**叠加**关系而非互斥的单选（详见 CLAUDE.md「管理页的筛选栈」）：
+ * 搜索 / 作者 / 标签多选 / 标签精细检索 / 归属 / 标签数量 / 标签修改次数。
+ * 其中作者与搜索、标签之间互斥，标签多选与标签精细检索之间也互斥
+ * （同一时刻只有一种标签口径），其余各层可同时生效。
  *
  * 这个类是 Activity（Toolbar / 抽屉 / 筛选对话框）与各 Tab 取数之间的唯一契约：
  * 条件从一处产生、整体传下去，避免每加一层筛选就多一对 getter/setter。
@@ -19,6 +20,8 @@ data class ManageFilterState(
     val authorName: String = "",
     /** 标签多选，空集合表示不过滤（标签栏上的「全部」）。交集 / 并集由设置页决定。 */
     val tags: Set<String> = emptySet(),
+    /** 标签精细检索，与 [tags] 互斥；`isActive` 为 false 表示这一层未激活。 */
+    val tagQuery: TagQuery = TagQuery(),
     val sort: ManageSortOrder = ManageSortOrder.DEFAULT,
     val relation: ManageRelationFilter = ManageRelationFilter.DEFAULT,
     /** 标签数量档位，**空集合 = 不筛选**，多个档位取并集。 */
@@ -42,16 +45,25 @@ data class ManageFilterState(
     /**
      * 会影响 Toolbar 菜单**标题**的那几层筛选。
      *
-     * 菜单标题只回显归属 / 标签数量 / 标签修改次数三层，订阅方据此判断要不要
+     * 菜单标题回显归属 / 标签数量 / 标签修改次数 / 标签精细检索四层，订阅方据此判断要不要
      * `invalidateOptionsMenu()`。**不要**改成整个 [ManageFilterState] 都订阅：
      * 搜索词每敲一个字都会变，菜单跟着重建会把 SearchView 一起重建掉，导致无法输入。
      */
-    val menuTitleSignature: Triple<ManageRelationFilter, Set<ManageTagCountFilter>, ManageTagEditCountFilter>
-        get() = Triple(relation, tagCounts, tagEditCount)
+    val menuTitleSignature: MenuTitleSignature
+        get() = MenuTitleSignature(relation, tagCounts, tagEditCount, tagQuery)
 
-    /** 选中标签时调用：标签与搜索、作者互斥，不清就会出现「点了标签但列表还按搜索/作者筛」。 */
+    /**
+     * 选中标签时调用：标签与搜索、作者互斥，不清就会出现「点了标签但列表还按搜索/作者筛」；
+     * 与标签精细检索同样互斥，否则两种标签口径会同时生效。
+     */
     fun withTags(newTags: Set<String>): ManageFilterState =
-        copy(tags = newTags, searchQuery = "", authorSecId = "", authorName = "")
+        copy(
+            tags = newTags,
+            tagQuery = TagQuery(),
+            searchQuery = "",
+            authorSecId = "",
+            authorName = "",
+        )
 
     /** 启用搜索时清掉作者筛选（二者互斥）；[tags] 不动，退出搜索后仍回到之前选中的标签。 */
     fun withSearchQuery(query: String): ManageFilterState {
@@ -66,7 +78,39 @@ data class ManageFilterState(
         return if (sec.isBlank() && name.isBlank()) {
             copy(authorSecId = "", authorName = "")
         } else {
-            copy(authorSecId = sec, authorName = name, searchQuery = "", tags = emptySet())
+            copy(
+                authorSecId = sec,
+                authorName = name,
+                searchQuery = "",
+                tags = emptySet(),
+                tagQuery = TagQuery(),
+            )
         }
     }
+
+    /**
+     * 应用标签精细检索：与标签多选、搜索、作者三者互斥，一并清掉。
+     * 传 `TagQuery()`（未激活）即清除本层筛选。
+     */
+    fun withTagQuery(query: TagQuery): ManageFilterState =
+        copy(
+            tagQuery = query,
+            tags = emptySet(),
+            searchQuery = "",
+            authorSecId = "",
+            authorName = "",
+        )
 }
+
+/**
+ * 影响 Toolbar 菜单标题的筛选层快照。
+ *
+ * 独立成类而不是继续用 `Triple`：位置到头了，而且具名字段能让「为什么只订阅这几层」
+ * 一目了然（见 [ManageFilterState.menuTitleSignature]）。
+ */
+data class MenuTitleSignature(
+    val relation: ManageRelationFilter,
+    val tagCounts: Set<ManageTagCountFilter>,
+    val tagEditCount: ManageTagEditCountFilter,
+    val tagQuery: TagQuery,
+)
