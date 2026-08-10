@@ -191,7 +191,7 @@ suspend fun resolveShortUrl(shortUrl: String): String? {
 
 ---
 
-## 集成到 ListDownloadFragment
+## 集成到批量下载页（`ListDownloadViewModel`）
 
 ### 方案 A：混合方案（推荐）
 
@@ -237,7 +237,7 @@ suspend fun resolveShortUrl(shortUrl: String): String? {
 ### 下一步编码
 
 1. **测试 API 可用性**：
-   - 在 `ListDownloadFragment` 中调用 `DouyinParser.fetchUserVideos()`
+   - 在 `ListDownloadViewModel` 中调用 `DouyinParser.fetchUserVideos()`
    - 检查是否能返回数据（可能需要 Cookie）
 
 2. **提取 Cookie**：

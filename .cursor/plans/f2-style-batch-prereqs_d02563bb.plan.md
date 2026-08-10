@@ -181,7 +181,10 @@ flowchart LR
   - **B. WebView 辅助**：只用电 WebView **刷 Cookie / uifid**，真正列表仍走 OkHttp（减少部分反爬阻力，但签名仍要）。
   - **C. 仅展示 + 降级**：列表数据从「公开页面 JSON 嵌入」解析（脆弱），或只对单链批量打开 WebView（慢）。
 
-当前 `[ListDownloadFragment.kt](d:\workplace\BlitzDownloader\app\src\main\java\com\blitz\downloader\ui\ListDownloadFragment.kt)` 已有 WebView 占位；若走 A/B，需要新增 **Repository 层**（不放在 Fragment 里拼签名）。
+当前 `[ListDownloadFragment.kt](d:\workplace\BlitzDownloader\app\src\main\java\com\blitz\downloader\fragment\ListDownloadFragment.kt)` 已有 WebView 占位；若走 A/B，需要新增 **Repository 层**（不放在 Fragment 里拼签名）。
+
+> 注：包结构已于 2026-08 重整（`ui/` 拆为 `fragment/` `adapter/` `dialog/` `model/`），
+> 且列表取数已上提到 `viewmodel/ListDownloadViewModel`，Fragment 不再直接调接口。
 
 ---
 

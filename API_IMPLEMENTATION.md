@@ -6,7 +6,8 @@
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  ListDownloadFragment (UI 层)                       │
+│  ListDownloadFragment (UI 层，只渲染)               │
+│  ListDownloadViewModel (取数与状态)                 │
 └─────────────────┬───────────────────────────────────┘
                   │
 ┌─────────────────▼───────────────────────────────────┐
@@ -176,7 +177,7 @@ videos.forEach { video ->
 
 1. **测试 API 可用性**：先不加签名，看是否能返回数据
 2. **提取签名 JS**：从抖音页面或 f2 项目获取算法
-3. **集成到 UI**：在 `ListDownloadFragment` 中调用 `DouyinParser`
+3. **集成到 UI**：在 `ListDownloadViewModel` 中调用 `DouyinParser`（Fragment 只渲染，不直接调接口）
 
 ## 参考资源
 

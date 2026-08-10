@@ -162,15 +162,16 @@ Room 的 Boolean 落库为 INTEGER（0/1），默认 0 = 未看过。**只置位
 | 图集（`ImageViewerActivity`） | ❌ 不走播放页 |
 | 列表页的网络预览（`createNetworkIntent` / `createListNetworkIntent`） | ❌ 拿不到 aweme id |
 
-链路：`ManageVideoFragment.openVideoPlayer` 把 `awemeIds` 与 `filePaths` 并行传给
+链路：`ManageVideoViewModel.openVideoPlayer` 把 `awemeIds` 与 `filePaths` 并行传给
 `VideoPlayerActivity.createListFileIntent` → 播放页 `loadItemAtIndex` 每次加载都调 `markWatched(index)`
 → `DownloadedVideoRepository.markWatched` 写库（同一 id 一次会话只写一次；用独立
 `CoroutineScope(Dispatchers.IO)` 而非 lifecycleScope，滑到下一条后立刻退出也要写完）。
 **没传 `EXTRA_LIST_AWEME_IDS` 就完全不写库**，这是区分"管理页"与其他入口的唯一开关。
 
 **UI**：管理页视频卡片在点赞数徽标**右侧**显示「未看过」（`watched == false`）。点开时列表先就地
-标掉（`ManageGridAdapter.markWatched`），播放页里滑动看过的那些由 `ManageVideoFragment.onResume`
-回查 `getWatchedAwemeIdSet` 补上——两条路径分工，别指望其中一条覆盖全部。
+标掉（`ManageTabViewModel.markWatched`），播放页里滑动看过的那些由 `ManageVideoFragment.onResume`
+→ `ManageVideoViewModel.refreshWatchedFlags` 回查 `getWatchedAwemeIdSet` 补上——两条路径分工，
+别指望其中一条覆盖全部（ViewModel 不随 `onResume` 重建，`init` 或 StateFlow 自动收集**代替不了**回查那条）。
 图片 Tab 不显示这个标记（adapter 的 `showWatchedBadge = false`），因为图集永远不会置位。
 
 ### 索引
