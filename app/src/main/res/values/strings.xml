@@ -118,6 +118,14 @@
     <string name="manage_bump_tag_edit_count">仅次数 +1</string>
     <string name="manage_bump_tag_edit_count_confirm">把已选的 %1$d 条记录的标签修改次数各 +1（不改动标签本身）。\n\n注意：重复执行会重复累加。</string>
     <string name="manage_bump_tag_edit_count_done">已更新 %1$d 条记录</string>
+
+    <!-- 标签精细检索（仅视频 Tab）：以一个基准标签为起点，逐行叠加集合运算 -->
+    <string name="manage_tag_query_op_and">包含</string>
+    <string name="manage_tag_query_op_not">不包含</string>
+    <string name="manage_tag_query_op_or">或（取并集）</string>
+    <string name="manage_tag_query_symbol_and">且</string>
+    <string name="manage_tag_query_symbol_not">且非</string>
+    <string name="manage_tag_query_symbol_or">或</string>
     <string name="manage_menu_backup_db">备份数据库</string>
     <string name="manage_menu_restore_db">恢复备份</string>
     <string name="manage_backup_confirm_title">备份数据库</string>
