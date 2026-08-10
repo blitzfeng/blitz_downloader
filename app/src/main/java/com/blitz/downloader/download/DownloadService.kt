@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -18,6 +19,8 @@ import com.blitz.downloader.R
 import com.blitz.downloader.activity.ManageActivity
 import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.model.VideoItemUiModel
+import com.blitz.downloader.util.MediaOrientationProbe
+import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
@@ -110,6 +113,15 @@ class DownloadService : Service() {
         val recordedIds = mutableSetOf<String>()
         result.succeededItems.forEach { item ->
             val meta = job.metas[item.id] ?: return@forEach
+            // 落盘后立刻探测呈现宽高并随写库一并存下（v14）。
+            // filePath 是相对 Environment.getExternalStorageDirectory() 的路径，
+            // 与 MediaExportManager.resolveExportFiles 的拼接方式保持一致。
+            // 图集的 filePath 指向首图，即探测首图。
+            val relPath = result.succeededPaths[item.id].orEmpty()
+            @Suppress("DEPRECATION")
+            val size = relPath.takeIf { it.isNotBlank() }?.let { p ->
+                MediaOrientationProbe.probe(File(Environment.getExternalStorageDirectory(), p))
+            }
             repo.recordSuccessfulDownload(
                 awemeId = item.id,
                 downloadType = meta.downloadType,
@@ -126,6 +138,8 @@ class DownloadService : Service() {
                 userRelation = meta.userRelation,
                 diggCount = meta.diggCount,
                 collectCount = meta.collectCount,
+                mediaWidth = size?.width ?: 0,
+                mediaHeight = size?.height ?: 0,
             )
             if (meta.linkCollectFolderTag && meta.collectionType.isNotBlank()) {
                 tagRepo.ensureCollectFolderTagLinked(awemeId = item.id, folderName = meta.collectionType)
