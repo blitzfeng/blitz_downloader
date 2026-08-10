@@ -349,37 +349,69 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
     private val exportCountScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * 导出前的宽高懒回填（v14）：对 `mediaWidth == 0` 的记录探测本地文件，写库并**同步更新内存副本**。
+     * 导出前的宽高懒回填（v14）：对 `mediaWidth == 0` 的记录探测本地文件，写库并**同步更新内存副本**
+     * （包括 [loaded] 里对应 Tab 的快照，见 [mergeProbedSizesIntoLoaded]）。
      *
      * 返回回填后的实体列表——`resolveExportFiles` 读的是内存对象而不是数据库，
-     * 只写库不更新内存会让本次导出全部落进竖屏包。
+     * 只写库不更新内存会让本次导出全部落进竖屏包。同步更新 [loaded] 快照是为了让
+     * **同一页面内的重复导出**命中已探测过的宽高，不再重新弹「正在识别视频方向…」。
      *
      * 探测失败保持 0（归竖屏），**不写哨兵值**：下次导出再探一次，代价几毫秒，
      * 换来 `0` 语义单一（只表示「不知道」）。写库失败也不影响本次导出（内存里已是探测结果）。
      *
+     * 待探测集合额外要求文件仍存在：文件已被删除的记录探测永远返回 null、`mediaWidth` 永远是 0，
+     * 若不排除会让进度分母里混入「探了也白探」的记录——反正 `resolveExportFiles` 后面也会跳过它们。
+     *
      * **必须在 IO 线程调用。**
      */
-    private suspend fun backfillMediaSizes(entities: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> {
-        val pending = entities.filter { it.mediaWidth == 0 && it.filePath.isNotBlank() }
+    private suspend fun backfillMediaSizes(
+        tab: Int,
+        entities: List<DownloadedVideoEntity>,
+    ): List<DownloadedVideoEntity> {
+        @Suppress("DEPRECATION")
+        val root = Environment.getExternalStorageDirectory()
+        val pending = entities.filter {
+            it.mediaWidth == 0 && it.filePath.isNotBlank() && File(root, it.filePath).isFile
+        }
         if (pending.isEmpty()) return entities
 
         _lanPreparing.value = LanPrepareProgress(done = 0, total = pending.size)
-        @Suppress("DEPRECATION")
-        val root = Environment.getExternalStorageDirectory()
         val probed = HashMap<String, MediaOrientationProbe.Size>(pending.size)
-        pending.forEachIndexed { index, e ->
-            MediaOrientationProbe.probe(File(root, e.filePath))?.let { size ->
-                probed[e.awemeId] = size
-                runCatching { repo.updateMediaSize(e.awemeId, size.width, size.height) }
+        try {
+            pending.forEachIndexed { index, e ->
+                MediaOrientationProbe.probe(File(root, e.filePath))?.let { size ->
+                    probed[e.awemeId] = size
+                    runCatching { repo.updateMediaSize(e.awemeId, size.width, size.height) }
+                }
+                _lanPreparing.value = LanPrepareProgress(done = index + 1, total = pending.size)
             }
-            _lanPreparing.value = LanPrepareProgress(done = index + 1, total = pending.size)
+        } finally {
+            // 无论正常探测完还是中途抛异常，都要收掉进度对话框——它是 setCancelable(false)，
+            // 不清掉用户就再也关不掉了。
+            _lanPreparing.value = null
         }
-        _lanPreparing.value = null
 
         if (probed.isEmpty()) return entities
+        mergeProbedSizesIntoLoaded(tab, probed)
         return entities.map { e ->
             probed[e.awemeId]?.let { e.copy(mediaWidth = it.width, mediaHeight = it.height) } ?: e
         }
+    }
+
+    /**
+     * 把刚探测到的宽高按 `awemeId` 合并进 [loaded] 里对应 Tab 的快照。
+     *
+     * 只更新命中的记录的 `mediaWidth` / `mediaHeight`，其余字段与 `hasMore` 原样保留；
+     * Fragment 之后一次普通的 [setLoaded] 仍会整体覆盖它，这里只是让「导出、不离开页面、再导出一次」
+     * 这条常见路径不必重新探测。
+     */
+    private fun mergeProbedSizesIntoLoaded(tab: Int, probed: Map<String, MediaOrientationProbe.Size>) {
+        val snapshot = loaded[tab] ?: return
+        if (snapshot.entities.isEmpty()) return
+        val merged = snapshot.entities.map { e ->
+            probed[e.awemeId]?.let { e.copy(mediaWidth = it.width, mediaHeight = it.height) } ?: e
+        }
+        loaded[tab] = snapshot.copy(entities = merged)
     }
 
     fun startLanExport(tab: Int, entities: List<DownloadedVideoEntity>) {
@@ -393,7 +425,7 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val files = withContext(Dispatchers.IO) {
                 // 图片 Tab 不分包，探测对本次导出毫无用处，直接跳过回填。
-                val resolved = if (split) backfillMediaSizes(entities) else entities
+                val resolved = if (split) backfillMediaSizes(tab, entities) else entities
                 MediaExportManager.resolveExportFiles(resolved)
             }
             if (files.isEmpty()) {

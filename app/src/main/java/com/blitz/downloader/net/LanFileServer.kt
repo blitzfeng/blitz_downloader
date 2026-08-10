@@ -42,7 +42,8 @@ class LanFileServer(
      *
      * 只有管理页**视频 Tab** 的导出传 `true`：图片 Tab 不分包，
      * `false` 时两条方向路由一律 404、首页不渲染方向按钮也不分组，
-     * 行为与本功能上线前逐字节一致。
+     * 结构与交互行为与本功能上线前一致（首页 CSS 仍统一内联 `.splitrow` / `.splitbtn` /
+     * `h2` 等规则，不代表逐字节相同）。
      */
     private val splitByOrientation: Boolean = false,
     private val onTransfer: ((TransferEvent) -> Unit)? = null,

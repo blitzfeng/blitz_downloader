@@ -684,12 +684,16 @@ class ManageActivity : AppCompatActivity() {
      * 取消 / 过滤已导出（只导出 `exportCount == 0` 的）/ 确认（全部导出，允许重复）。
      */
     private fun handleExportLan() {
-        val entities = viewModel.selectedEntities(currentTab)
+        // tab 与 entities 必须在同一时刻捕获：确认对话框展示期间用户仍可切 Tab，
+        // 若在按钮回调里再读 currentTab 就可能与这里捕获的 entities 对不上——
+        // 本分支起 splitByOrientation 也由 tab 决定，错配会导致按错误的口径分包/不分包。
+        val tab = currentTab
+        val entities = viewModel.selectedEntities(tab)
         if (entities.isEmpty()) return
         val notExported = entities.filter { it.exportCount <= 0 }
         val exportedCount = entities.size - notExported.size
         if (exportedCount == 0) {
-            startLanExport(entities)
+            startLanExport(tab, entities)
             return
         }
         AlertDialog.Builder(this)
@@ -703,22 +707,22 @@ class ManageActivity : AppCompatActivity() {
                 ),
             )
             .setPositiveButton(R.string.manage_export_lan_reexport_confirm) { _, _ ->
-                startLanExport(entities)
+                startLanExport(tab, entities)
             }
             // 中间键 = 过滤已导出：全都导出过时过滤结果为空，只提示不起服务
             .setNeutralButton(R.string.manage_export_lan_reexport_filter) { _, _ ->
                 if (notExported.isEmpty()) {
                     Toast.makeText(this, R.string.manage_export_lan_reexport_none, Toast.LENGTH_LONG).show()
                 } else {
-                    startLanExport(notExported)
+                    startLanExport(tab, notExported)
                 }
             }
             .setNegativeButton(R.string.manage_confirm_cancel, null)
             .show()
     }
 
-    private fun startLanExport(entities: List<DownloadedVideoEntity>) {
-        viewModel.startLanExport(currentTab, entities)
+    private fun startLanExport(tab: Int, entities: List<DownloadedVideoEntity>) {
+        viewModel.startLanExport(tab, entities)
     }
 
     private fun onLanStartFailed(failure: LanStartFailure) {

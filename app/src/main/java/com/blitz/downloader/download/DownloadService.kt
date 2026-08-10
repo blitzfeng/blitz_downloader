@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 前台批量下载服务：把批量下载从 Fragment 生命周期里搬出来，避免「离开页面/退到后台就断」。
@@ -111,40 +112,46 @@ class DownloadService : Service() {
         val repo = BlitzApp.instance.downloadedVideoRepository
         val tagRepo = VideoTagRepository(applicationContext)
         val recordedIds = mutableSetOf<String>()
-        result.succeededItems.forEach { item ->
-            val meta = job.metas[item.id] ?: return@forEach
-            // 落盘后立刻探测呈现宽高并随写库一并存下（v14）。
-            // filePath 是相对 Environment.getExternalStorageDirectory() 的路径，
-            // 与 MediaExportManager.resolveExportFiles 的拼接方式保持一致。
-            // 图集的 filePath 指向首图，即探测首图。
-            val relPath = result.succeededPaths[item.id].orEmpty()
-            @Suppress("DEPRECATION")
-            val size = relPath.takeIf { it.isNotBlank() }?.let { p ->
-                MediaOrientationProbe.probe(File(Environment.getExternalStorageDirectory(), p))
+        // BatchDownloadCoordinator.downloadSelected 内部的 withContext(Dispatchers.IO) 在这里已经
+        // 返回，协程已回到本服务的 Dispatchers.Default；而宽高探测（MediaOrientationProbe，其 KDoc
+        // 明确要求「必须在 IO 线程调用」）与后续 Room 写入都是阻塞 IO，必须显式切回 IO 调度器，
+        // 避免占用 CPU 调度池（Default）线程。
+        withContext(Dispatchers.IO) {
+            result.succeededItems.forEach { item ->
+                val meta = job.metas[item.id] ?: return@forEach
+                // 落盘后立刻探测呈现宽高并随写库一并存下（v14）。
+                // filePath 是相对 Environment.getExternalStorageDirectory() 的路径，
+                // 与 MediaExportManager.resolveExportFiles 的拼接方式保持一致。
+                // 图集的 filePath 指向首图，即探测首图。
+                val relPath = result.succeededPaths[item.id].orEmpty()
+                @Suppress("DEPRECATION")
+                val size = relPath.takeIf { it.isNotBlank() }?.let { p ->
+                    MediaOrientationProbe.probe(File(Environment.getExternalStorageDirectory(), p))
+                }
+                repo.recordSuccessfulDownload(
+                    awemeId = item.id,
+                    downloadType = meta.downloadType,
+                    userName = meta.userName,
+                    mediaType = meta.mediaType,
+                    filePath = relPath,
+                    coverPath = result.succeededCovers[item.id].orEmpty(),
+                    createTime = meta.createTime,
+                    desc = meta.desc,
+                    collectionType = meta.collectionType,
+                    collectId = meta.collectId,
+                    videoAuthorSecUserId = meta.videoAuthorSecUserId,
+                    sourceOwnerSecUserId = meta.sourceOwnerSecUserId,
+                    userRelation = meta.userRelation,
+                    diggCount = meta.diggCount,
+                    collectCount = meta.collectCount,
+                    mediaWidth = size?.width ?: 0,
+                    mediaHeight = size?.height ?: 0,
+                )
+                if (meta.linkCollectFolderTag && meta.collectionType.isNotBlank()) {
+                    tagRepo.ensureCollectFolderTagLinked(awemeId = item.id, folderName = meta.collectionType)
+                }
+                recordedIds += item.id
             }
-            repo.recordSuccessfulDownload(
-                awemeId = item.id,
-                downloadType = meta.downloadType,
-                userName = meta.userName,
-                mediaType = meta.mediaType,
-                filePath = result.succeededPaths[item.id].orEmpty(),
-                coverPath = result.succeededCovers[item.id].orEmpty(),
-                createTime = meta.createTime,
-                desc = meta.desc,
-                collectionType = meta.collectionType,
-                collectId = meta.collectId,
-                videoAuthorSecUserId = meta.videoAuthorSecUserId,
-                sourceOwnerSecUserId = meta.sourceOwnerSecUserId,
-                userRelation = meta.userRelation,
-                diggCount = meta.diggCount,
-                collectCount = meta.collectCount,
-                mediaWidth = size?.width ?: 0,
-                mediaHeight = size?.height ?: 0,
-            )
-            if (meta.linkCollectFolderTag && meta.collectionType.isNotBlank()) {
-                tagRepo.ensureCollectFolderTagLinked(awemeId = item.id, folderName = meta.collectionType)
-            }
-            recordedIds += item.id
         }
 
         // 通知仍停留在批量下载页的界面：这些项已入库，可就地打「已下载」角标并取消勾选。
