@@ -49,6 +49,8 @@ import com.blitz.downloader.viewmodel.ManageStats
 import com.blitz.downloader.viewmodel.ManageViewModel
 import com.blitz.downloader.viewmodel.ZipProgress
 import com.google.android.material.tabs.TabLayoutMediator
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -166,9 +168,16 @@ class ManageActivity : AppCompatActivity() {
                         invalidateOptionsMenu()
                     }
                 }
-                // 筛选条件变化 → 菜单标题回显当前筛选状态
+                // 筛选条件变化 → 菜单标题回显当前筛选状态。
+                //
+                // **只看影响菜单标题的那三层**：搜索词也在 filters 里，若整体订阅，
+                // 每敲一个字都会 invalidateOptionsMenu() → 菜单重新 inflate →
+                // SearchView 被整个重建（折叠、清空、丢焦点），根本没法输入。
                 launch {
-                    viewModel.filters.collect { invalidateOptionsMenu() }
+                    viewModel.filters
+                        .map { all -> all.mapValues { (_, f) -> f.menuTitleSignature } }
+                        .distinctUntilChanged()
+                        .collect { invalidateOptionsMenu() }
                 }
                 launch { viewModel.authors.collect { onAuthorsLoaded(it) } }
                 launch { viewModel.stats.collect { showStatsDialog(it) } }

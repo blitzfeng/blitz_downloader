@@ -39,6 +39,16 @@ data class ManageFilterState(
     /** 作者筛选的分组键（`secUserId` 优先，无则昵称）；未按作者筛选时为 null。 */
     val authorKey: String? get() = authorSecId.ifBlank { authorName }.ifBlank { null }
 
+    /**
+     * 会影响 Toolbar 菜单**标题**的那几层筛选。
+     *
+     * 菜单标题只回显归属 / 标签数量 / 标签修改次数三层，订阅方据此判断要不要
+     * `invalidateOptionsMenu()`。**不要**改成整个 [ManageFilterState] 都订阅：
+     * 搜索词每敲一个字都会变，菜单跟着重建会把 SearchView 一起重建掉，导致无法输入。
+     */
+    val menuTitleSignature: Triple<ManageRelationFilter, Set<ManageTagCountFilter>, ManageTagEditCountFilter>
+        get() = Triple(relation, tagCounts, tagEditCount)
+
     /** 选中标签时调用：标签与搜索、作者互斥，不清就会出现「点了标签但列表还按搜索/作者筛」。 */
     fun withTags(newTags: Set<String>): ManageFilterState =
         copy(tags = newTags, searchQuery = "", authorSecId = "", authorName = "")
