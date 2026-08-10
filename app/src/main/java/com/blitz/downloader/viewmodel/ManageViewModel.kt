@@ -348,13 +348,20 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val exportCountScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** [backfillMediaSizes] 的返回值：回填后的实体列表 + 本次实际探测到的 `<awemeId, 宽高>`。 */
+    private data class BackfillResult(
+        val entities: List<DownloadedVideoEntity>,
+        val probed: Map<String, MediaOrientationProbe.Size>,
+    )
+
     /**
-     * 导出前的宽高懒回填（v14）：对 `mediaWidth == 0` 的记录探测本地文件，写库并**同步更新内存副本**
-     * （包括 [loaded] 里对应 Tab 的快照，见 [mergeProbedSizesIntoLoaded]）。
+     * 导出前的宽高懒回填（v14）：对 `mediaWidth == 0` 的记录探测本地文件并写库。
      *
      * 返回回填后的实体列表——`resolveExportFiles` 读的是内存对象而不是数据库，
-     * 只写库不更新内存会让本次导出全部落进竖屏包。同步更新 [loaded] 快照是为了让
-     * **同一页面内的重复导出**命中已探测过的宽高，不再重新弹「正在识别视频方向…」。
+     * 只写库不更新内存会让本次导出全部落进竖屏包。同时把本次实际探测到的结果一并返回，
+     * 由调用方（[startLanExport]）切回 Main 线程后合并进 [loaded]（见 [mergeProbedSizesIntoLoaded]），
+     * 使**同一页面内的重复导出**命中已探测过的宽高，不再重新弹「正在识别视频方向…」。
+     * 这个函数本身**不直接碰 [loaded]**——它跑在 IO 线程，[loaded] 只能在 Main 线程写。
      *
      * 探测失败保持 0（归竖屏），**不写哨兵值**：下次导出再探一次，代价几毫秒，
      * 换来 `0` 语义单一（只表示「不知道」）。写库失败也不影响本次导出（内存里已是探测结果）。
@@ -365,15 +372,14 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
      * **必须在 IO 线程调用。**
      */
     private suspend fun backfillMediaSizes(
-        tab: Int,
         entities: List<DownloadedVideoEntity>,
-    ): List<DownloadedVideoEntity> {
+    ): BackfillResult {
         @Suppress("DEPRECATION")
         val root = Environment.getExternalStorageDirectory()
         val pending = entities.filter {
             it.mediaWidth == 0 && it.filePath.isNotBlank() && File(root, it.filePath).isFile
         }
-        if (pending.isEmpty()) return entities
+        if (pending.isEmpty()) return BackfillResult(entities, emptyMap())
 
         _lanPreparing.value = LanPrepareProgress(done = 0, total = pending.size)
         val probed = HashMap<String, MediaOrientationProbe.Size>(pending.size)
@@ -391,11 +397,11 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
             _lanPreparing.value = null
         }
 
-        if (probed.isEmpty()) return entities
-        mergeProbedSizesIntoLoaded(tab, probed)
-        return entities.map { e ->
+        if (probed.isEmpty()) return BackfillResult(entities, emptyMap())
+        val merged = entities.map { e ->
             probed[e.awemeId]?.let { e.copy(mediaWidth = it.width, mediaHeight = it.height) } ?: e
         }
+        return BackfillResult(merged, probed)
     }
 
     /**
@@ -404,6 +410,9 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
      * 只更新命中的记录的 `mediaWidth` / `mediaHeight`，其余字段与 `hasMore` 原样保留；
      * Fragment 之后一次普通的 [setLoaded] 仍会整体覆盖它，这里只是让「导出、不离开页面、再导出一次」
      * 这条常见路径不必重新探测。
+     *
+     * **必须在 Main 线程调用**——[loaded] 是普通 `mutableMapOf`，与 [setLoaded] 共用同一份存储，
+     * 两者都只能在 Main 线程写，否则并发 `put` 是未定义行为。
      */
     private fun mergeProbedSizesIntoLoaded(tab: Int, probed: Map<String, MediaOrientationProbe.Size>) {
         val snapshot = loaded[tab] ?: return
@@ -423,9 +432,19 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
         // 只有视频 Tab 分横屏/竖屏包；图片 Tab 的行为与改动前完全一致。
         val split = tab == TAB_VIDEO
         viewModelScope.launch {
+            // 图片 Tab 不分包，探测对本次导出毫无用处，直接跳过回填。
+            val resolved = if (split) {
+                val backfill = withContext(Dispatchers.IO) { backfillMediaSizes(entities) }
+                // 切回 Main（viewModelScope 默认 Dispatchers.Main.immediate）后再合并进 loaded，
+                // 与 setLoaded 保持同一线程写，避免和列表刷新竞态（见 mergeProbedSizesIntoLoaded 文档）。
+                if (backfill.probed.isNotEmpty()) {
+                    mergeProbedSizesIntoLoaded(tab, backfill.probed)
+                }
+                backfill.entities
+            } else {
+                entities
+            }
             val files = withContext(Dispatchers.IO) {
-                // 图片 Tab 不分包，探测对本次导出毫无用处，直接跳过回填。
-                val resolved = if (split) backfillMediaSizes(tab, entities) else entities
                 MediaExportManager.resolveExportFiles(resolved)
             }
             if (files.isEmpty()) {
