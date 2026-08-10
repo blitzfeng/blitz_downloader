@@ -126,6 +126,8 @@
     <string name="manage_tag_query_symbol_and">且</string>
     <string name="manage_tag_query_symbol_not">且非</string>
     <string name="manage_tag_query_symbol_or">或</string>
+    <string name="manage_tag_query_empty">没有符合「%1$s」的视频</string>
+    <string name="manage_tag_query_none">未设置</string>
     <string name="manage_menu_backup_db">备份数据库</string>
     <string name="manage_menu_restore_db">恢复备份</string>
     <string name="manage_backup_confirm_title">备份数据库</string>
