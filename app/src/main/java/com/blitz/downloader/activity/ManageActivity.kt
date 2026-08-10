@@ -44,6 +44,7 @@ import com.blitz.downloader.model.filter.ManageSortOrder
 import com.blitz.downloader.model.filter.ManageTagCountFilter
 import com.blitz.downloader.model.filter.ManageTagEditCountFilter
 import com.blitz.downloader.viewmodel.LanExportState
+import com.blitz.downloader.viewmodel.LanPrepareProgress
 import com.blitz.downloader.viewmodel.LanStartFailure
 import com.blitz.downloader.viewmodel.ManageStats
 import com.blitz.downloader.viewmodel.ManageViewModel
@@ -79,6 +80,7 @@ class ManageActivity : AppCompatActivity() {
     private var zipProgressDialog: ProgressDialog? = null
     private var lanDialog: AlertDialog? = null
     private var lanStatusView: TextView? = null
+    private var lanPrepareDialog: ProgressDialog? = null
 
     private val currentTab: Int get() = binding.viewPager.currentItem
     private val isInSelectionMode: Boolean get() = viewModel.selectionOf(currentTab).inSelectionMode
@@ -185,6 +187,7 @@ class ManageActivity : AppCompatActivity() {
                 launch { viewModel.zipResult.collect { onZipFinished(it) } }
                 launch { viewModel.lanState.collect { renderLanState(it) } }
                 launch { viewModel.lanError.collect { onLanStartFailed(it) } }
+                launch { viewModel.lanPreparing.collect { renderLanPreparing(it) } }
             }
         }
     }
@@ -729,6 +732,29 @@ class ManageActivity : AppCompatActivity() {
     }
 
     /**
+     * 导出前的宽高回填探测进度（v14）。历史记录首次导出可能要探几百个文件、耗时数秒，
+     * 没有提示界面会像卡死；之后是纯读库，这个对话框不会再出现。
+     */
+    @Suppress("DEPRECATION")
+    private fun renderLanPreparing(progress: LanPrepareProgress?) {
+        if (progress == null) {
+            lanPrepareDialog?.dismiss()
+            lanPrepareDialog = null
+            return
+        }
+        val dialog = lanPrepareDialog ?: ProgressDialog(this).apply {
+            setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
+            setMessage(getString(R.string.manage_export_lan_preparing))
+            setCancelable(false)
+            isIndeterminate = false
+            show()
+            lanPrepareDialog = this
+        }
+        dialog.max = progress.total
+        dialog.progress = progress.done
+    }
+
+    /**
      * 局域网导出对话框。用自定义 View 而不是 `setMessage`，因为传输状态行要在服务运行期间
      * 随传输事件实时刷新（`setMessage` 在 `show()` 之后改不动）。
      */
@@ -756,6 +782,18 @@ class ManageActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.dialog_lan_export, null)
         content.findViewById<TextView>(R.id.tvLanHint).text =
             getString(R.string.manage_export_lan_hint, state.fileCount)
+        content.findViewById<TextView>(R.id.tvLanSplit).apply {
+            if (state.splitByOrientation && (state.landscapeCount > 0 || state.portraitCount > 0)) {
+                text = getString(
+                    R.string.manage_export_lan_split_hint,
+                    state.landscapeCount,
+                    state.portraitCount,
+                )
+                visibility = View.VISIBLE
+            } else {
+                visibility = View.GONE
+            }
+        }
         content.findViewById<TextView>(R.id.tvLanUrl).text = state.url
         lanStatusView = content.findViewById<TextView>(R.id.tvLanStatus).apply {
             setText(R.string.manage_export_lan_status_idle)
@@ -791,6 +829,8 @@ class ManageActivity : AppCompatActivity() {
         lanStatusView = null
         zipProgressDialog?.dismiss()
         zipProgressDialog = null
+        lanPrepareDialog?.dismiss()
+        lanPrepareDialog = null
         super.onDestroy()
     }
 
