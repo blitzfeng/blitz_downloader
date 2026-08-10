@@ -20,6 +20,15 @@
         android:textColor="?android:attr/textColorSecondary" />
 
     <TextView
+        android:id="@+id/tvLanSplit"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textSize="13sp"
+        android:visibility="gone"
+        android:textColor="?android:attr/textColorSecondary" />
+
+    <TextView
         android:id="@+id/tvLanUrl"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

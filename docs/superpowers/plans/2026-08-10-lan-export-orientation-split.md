@@ -478,7 +478,7 @@ import java.io.File
             )
 ```
 
-这段代码已在服务的下载协程（IO 上下文）里，`MediaOrientationProbe` 的「必须在 IO 线程调用」要求已满足，**不需要**再包一层 `withContext`。
+`DownloadService` 的协程作用域是 `Dispatchers.Default`（不是 IO）；`BatchDownloadCoordinator.downloadSelected` 内部虽有自己的 `withContext(Dispatchers.IO)`，但函数返回后协程已经切回 `Default`。因此这段写库循环必须显式包一层 `withContext(Dispatchers.IO)`，`MediaOrientationProbe` 的「必须在 IO 线程调用」要求才算满足。
 
 `recordSuccessfulDownload` 在全仓库只有这一个调用点，不存在多处等价性问题。
 

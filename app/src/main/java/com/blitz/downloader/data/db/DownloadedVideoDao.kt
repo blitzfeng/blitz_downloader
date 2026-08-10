@@ -132,6 +132,13 @@ interface DownloadedVideoDao {
     suspend fun getAuthorCountsAll(): List<AuthorCount>
 
     /**
+     * 回填媒体呈现宽高（v14）。只更新这两列，不动其他字段——
+     * 懒回填发生在导出流程中，不该顺带覆盖用户可能刚改过的标签计数等。
+     */
+    @Query("UPDATE downloaded_videos SET mediaWidth = :width, mediaHeight = :height WHERE awemeId = :awemeId")
+    suspend fun updateMediaSize(awemeId: String, width: Int, height: Int)
+
+    /**
      * 作者聚合投影：显示昵称（最新）+ 作品数 + 稳定 ID。
      * [secUserId] 为空表示该组无稳定 ID（老记录），此时上层按 [name] 匹配。
      */

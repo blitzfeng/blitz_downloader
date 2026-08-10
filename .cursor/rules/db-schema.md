@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v13**
+> **当前版本：v14**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -34,6 +34,7 @@
 | v11 | `downloaded_videos` 新增 `exportCount`（已成功导出到电脑的次数） |
 | v12 | `downloaded_videos` 新增 `tagEditCount`（用户修改标签的次数） |
 | v13 | `downloaded_videos` 新增 `watched`（是否已看过） |
+| v14 | `downloaded_videos` 新增 `mediaWidth` / `mediaHeight`（媒体呈现宽高，用于局域网导出分横屏/竖屏包） |
 
 > **注意**：v4 的 `likeType` 与 `downloadType` 语义重叠，v5 通过重建表删除，**后续不要再加同类冗余字段**。
 
@@ -65,6 +66,8 @@
 | `exportCount` | INTEGER | `0` | 已成功导出到电脑的次数（v11 新增，见下方规则） |
 | `tagEditCount` | INTEGER | `0` | 用户修改标签的次数（v12 新增，见下方规则） |
 | `watched` | INTEGER(Bool) | `0`(false) | 是否已看过（v13 新增，见下方规则） |
+| `mediaWidth` | INTEGER | `0` | 媒体呈现宽度（像素，v14 新增，见下方规则） |
+| `mediaHeight` | INTEGER | `0` | 媒体呈现高度（像素，v14 新增，见下方规则） |
 
 ### `downloadType` 枚举值
 
@@ -173,6 +176,29 @@ Room 的 Boolean 落库为 INTEGER（0/1），默认 0 = 未看过。**只置位
 → `ManageVideoViewModel.refreshWatchedFlags` 回查 `getWatchedAwemeIdSet` 补上——两条路径分工，
 别指望其中一条覆盖全部（ViewModel 不随 `onResume` 重建，`init` 或 StateFlow 自动收集**代替不了**回查那条）。
 图片 Tab 不显示这个标记（adapter 的 `showWatchedBadge = false`），因为图集永远不会置位。
+
+### `mediaWidth` / `mediaHeight` 写入规则（v14）
+
+媒体文件的**呈现宽高**（播放器/查看器里看到的那个方向），只服务于局域网导出的横屏/竖屏分包。
+
+**唯一来源是本地文件**：`util/MediaOrientationProbe` 用 `MediaMetadataRetriever` 读宽高并按
+`METADATA_KEY_VIDEO_ROTATION` 修正（90/270 交换宽高），图片走 `BitmapFactory` 只读边界 + EXIF 修正。
+**不要**改成用抖音接口的 `video.width/height`——接口值不保证含旋转修正，历史记录也没有这个字段，
+混用会让同一张表出现两种口径。
+
+**两个写入时机**（调同一个 probe，口径必然一致）：
+
+1. 下载落盘后，由 `DownloadService` 随 `recordSuccessfulDownload` 一并写入（图集探首图）；
+2. 局域网导出前（**仅视频 Tab**），由 `ManageViewModel.backfillMediaSizes` 对 `mediaWidth == 0`
+   的记录懒探测，`DownloadedVideoRepository.updateMediaSize` 只更新这两列、不整行覆盖。
+
+`0` = 未知，语义单一——**探测失败不写哨兵值**，下次导出再探一次（几毫秒），换来不必区分
+「没探过」和「探过但失败」。旧记录默认 0，不做历史批量回填。
+
+**方向不落库**：由 `MediaOrientation.of(w, h)` 现算，`w > h` 才算横屏；方形（1:1）、`0`、负数
+一律归竖屏。存原始宽高而非方向枚举，是为了以后想按分辨率筛选/排序时不必再加列。
+
+图集记录也会写入（探首图），当前分包用不上——图片 Tab 不参与分包——纯为后续留数据。
 
 ### 索引
 
@@ -296,4 +322,4 @@ tags(tagName)          video_tags(awemeId, tagName)
 - **管理页展示**：`userRelation` 按 `|` 拆分渲染 chip；`videoAuthorSecUserId` 用于按作者分组/过滤。
 - **下载写入时**：调用 `DownloadedVideoRepository.recordSuccessfulDownload()`，`like` 场景传 `buildUserRelationFromLike(aweme.collectStat)`，`collects` 场景传 `buildUserRelationFromCollection(aweme.userDigged, folderName)`。
 - **标签功能**：通过 `VideoTagRepository` 操作，视频删除时标签自动级联删除，无需手动清理。
-- **新增数据库字段**：当前版本为 **v13**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_13_14` 并将 version 改为 14。
+- **新增数据库字段**：当前版本为 **v14**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_14_15` 并将 version 改为 15。

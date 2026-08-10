@@ -128,6 +128,8 @@ class DownloadedVideoRepository(context: Context) {
         userRelation: String = "",
         diggCount: Long = 0L,
         collectCount: Long = 0L,
+        mediaWidth: Int = 0,
+        mediaHeight: Int = 0,
     ) {
         dao.insert(
             DownloadedVideoEntity(
@@ -146,8 +148,18 @@ class DownloadedVideoRepository(context: Context) {
                 userRelation = userRelation,
                 diggCount = diggCount,
                 collectCount = collectCount,
+                mediaWidth = mediaWidth,
+                mediaHeight = mediaHeight,
             ),
         )
+    }
+
+    /**
+     * 回填媒体呈现宽高（v14），供局域网导出前的懒探测使用。
+     * 只更新这两列，不整行覆盖。
+     */
+    suspend fun updateMediaSize(awemeId: String, width: Int, height: Int) {
+        dao.updateMediaSize(awemeId, width, height)
     }
 
     companion object {

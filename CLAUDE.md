@@ -57,12 +57,12 @@ api/signing (DouyinWebSigner, XBogusSigner, ABogusSigner, Sm3)
    │
    ▼
 util (DouyinCookieStore, DouyinCookieSync, DouyinTokenBootstrap, DouyinVerifyFpGenerator,
-      UrlUtils, NumberFormatUtils, MediaPermissions, DiggBadgeStyle)
+      UrlUtils, NumberFormatUtils, MediaPermissions, DiggBadgeStyle, MediaOrientationProbe)
 
 data + data/db (Room: AppDatabase, DownloadedVideoEntity/Dao, TagEntity/Dao, VideoTagEntity/Dao
                 + DownloadedVideoRepository, VideoTagRepository, DatabaseBackupManager)
 
-model (VideoItemUiModel, ManageGridItem)
+model (VideoItemUiModel, ManageGridItem, MediaOrientation)
 model/filter (ManageFilterState, ManageRelationFilter, ManageSortOrder,
               ManageTagCountFilter, ManageTagEditCountFilter)
 
@@ -173,6 +173,16 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 - **ZIP 导出**：`MediaExportManager.exportToZip(...)` 打包到 `Download/bDouyin/export/bDouyin_export_<时间戳>.zip`（`Deflater.NO_COMPRESSION` 只打包不二次压缩），完成后 `MediaScannerConnection.scanFile` 触发扫描,使其立刻能通过 MTP 看到。手机连电脑拷这一个文件。
 - **局域网导出**：`net.LanFileServer`（零依赖手写 HTTP/1.1，仅 GET）。电脑同 WiFi 用浏览器打开 `http://<ip>:<port>/` 逐个或 `/all.zip` 打包下载。**服务生命周期由 `ManageViewModel` 持有**，`onCleared()` / 对话框 dismiss 时 `stop()`——放在 ViewModel 里是为了让转屏不掐断电脑那边正在下载的文件（原先由 Activity 持有、`onDestroy` 即停）。
 
+**局域网导出的横屏 / 竖屏分包（视频 Tab 专属）**：电脑端页面除「打包下载全部」外，另有 `/landscape.zip` 与 `/portrait.zip` 两个方向包，文件列表也按方向分组。三条打包路由共用 `LanFileServer.serveZip(...)` 的同一份流式实现，`exportCount` 语义不变（整包完整写出 → 包内每条记录 +1）。
+
+- **方向判定的唯一来源是本地文件**：`util/MediaOrientationProbe` 读 `MediaMetadataRetriever` 的宽高并按 `VIDEO_ROTATION` 修正（90/270 交换宽高），图片走 `BitmapFactory` 只读边界 + EXIF 修正。**不要**改成用抖音接口的 `video.width/height`——接口值不保证含旋转修正，历史记录也没有这个字段，混用会让同一张表出现两种口径。
+- 结果缓存在 `downloaded_videos.mediaWidth/mediaHeight`（v14），**两个写入时机**：下载落盘后由 `DownloadService` 随写库一并写入；局域网导出前由 `ManageViewModel.backfillMediaSizes` 对 `mediaWidth == 0` 的记录懒探测回填。两条路径调同一个 probe，口径必然一致。
+- 懒回填**只在视频 Tab 执行**（图片 Tab 不分包，探测纯属浪费用户时间），且回填后**必须同步更新内存里的 entities**——`resolveExportFiles` 读的是内存对象，只写库会让本次导出全部落进竖屏包。
+- 方向由 `MediaOrientation.of(w, h)` 现算，`w > h` 才算横屏：方形、0（未探测/探测失败）、负数一律归竖屏。探测失败**不写哨兵值**，保持 0。
+- `MediaExportManager.resolveExportFiles` **不做探测 IO**，只读 entity 字段；回填是调用方的职责。
+- 图片 Tab 传 `splitByOrientation = false`，两条方向路由 404、页面不分组，行为与本功能上线前完全一致。**不要**顺手给图集也分包——图集是一条记录多个文件，拆开会把一个图集散进两个包。
+- 首页分组渲染时，`/f?i=N` 的 `N` 仍是**完整 files 列表**里的下标，不按分组重排，否则单文件下载链接会指错文件。
+
 关键约束：**图集的 `filePath` 只存了第一张图（`base_01.jpg`）**，导出时必须扫描同目录 `base_\d+.<ext>` 的全部兄弟文件——逻辑与 `ImageViewerActivity.findImageSet` 一致，改一处需同步。
 
 导出计数（`exportCount`，v11）：**只有局域网导出会累加**——`LanFileServer` 把某条记录字节完整写出 socket 后回调 `TransferEvent`，由 `DownloadedVideoRepository.incrementExportCount(...)` 做 `SET exportCount = exportCount + 1` 的原子累加（**不要**改成"读实体→改→整行 update"，并发写会互相覆盖）。ZIP 导出、`HEAD` 探测、中途断连都不累加。它只表示"手机已完整发出"，不代表电脑落盘，只作提示与二次确认依据。语义细节见 `.cursor/rules/db-schema.md` 的 exportCount 小节。
@@ -212,9 +222,10 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 
 **数据库结构的权威文档是 `.cursor/rules/db-schema.md`，改 `data/db/` 之前先读它。** 要点：
 
-- `AppDatabase` 当前 **version = 13**（v13 新增 `watched`）。三张表：`downloaded_videos`、`video_tags`、`tags`。
-- 所有迁移 `MIGRATION_1_2 .. MIGRATION_12_13` 都在 `AppDatabase` 里显式列出。builder 上虽然还挂着 `fallbackToDestructiveMigration()` 作兜底，但**不要**依赖它来"对付过去"——漏写迁移 = 用户数据被清空。新增字段时：写 `MIGRATION_13_14` → `version = 14` → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。
+- `AppDatabase` 当前 **version = 14**（v14 新增 `mediaWidth` / `mediaHeight`）。三张表：`downloaded_videos`、`video_tags`、`tags`。
+- 所有迁移 `MIGRATION_1_2 .. MIGRATION_13_14` 都在 `AppDatabase` 里显式列出。builder 上虽然还挂着 `fallbackToDestructiveMigration()` 作兜底，但**不要**依赖它来"对付过去"——漏写迁移 = 用户数据被清空。新增字段时：写 `MIGRATION_14_15` → `version = 15` → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。
 - `watched`（是否已看过）只由**管理页进入视频播放页**置位：`ManageVideoViewModel.openVideoPlayer` 把 `awemeIds` 随 `createListFileIntent` 传给播放页，播放页每加载一条就写库（含上下滑动切到的）。列表侧「未看过」标记的刷新分两条路：点开那条就地标掉，滑动看过的靠 `ManageVideoFragment.onResume` → `refreshWatchedFlags()` 回查——**别把其中一条删掉当冗余**，也别指望 ViewModel 的 `init` 或 StateFlow 自动收集能替代 `onResume` 那条（ViewModel 不随 `onResume` 重建）。
+- `mediaWidth` / `mediaHeight`（v14）存媒体的**呈现宽高**（已做旋转 / EXIF 修正），`0` = 未知。只服务于局域网导出的横屏/竖屏分包，方向由 `MediaOrientation.of` 现算、不落库。图集也会写（探首图），当前不用，为后续留数据。详见上方「导出管道」。
 - 备份/恢复走 `DatabaseBackupManager`（入口在 `SettingsActivity` 设置页，由 MainActivity Toolbar 的设置图标进入；实际读写在 `SettingsViewModel`，对话框与「恢复后重启进程」留在 `SettingsActivity`；管理页菜单已不再有这两项）——它直接操作 SQLite 文件，改库结构后要确认导入旧备份的兼容处理。备份写到公共 `Download/bDouyin/backup`（存活于卸载、可 MTP 看到）。**恢复有两条路径**：`restoreFrom(entry)` 直接 File 读取，但**重装/换签名后备份文件在 MediaStore 被孤儿化**（owner 清空 + `.db` 属非媒体，`READ_MEDIA_*` 不覆盖）会抛 `SecurityException`；此时 UI 引导改用 SAF（`ACTION_OPEN_DOCUMENT` → `restoreFromStream`），授权 Uri 绕过归属校验。别把恢复退回成"只 File 读取"。
 - `userRelation` 是 `|` 分隔的多标签字符串（`"like"`、`"like|<夹名>"`、`"<夹名>"`）；写入时统一通过 `DownloadedVideoRepository.buildUserRelationFromLike(...)` / `buildUserRelationFromCollection(...)` 构造，**不要**手拼。
 - 打标签有**两组入口**，别混用：程序自动用 `VideoTagRepository.setTags` / `addTags` / `ensureCollectFolderTagLinked`（只写 `video_tags`）；**UI 上的用户编辑一律走 `setTagsAsUserEdit` / `addTagsAsUserEdit`**，它们额外给 `downloaded_videos.tagEditCount` 累加（一次编辑算一次，集合没变化不计）。新增标签编辑入口时用错会让「改过几次」的统计漏计或虚增。

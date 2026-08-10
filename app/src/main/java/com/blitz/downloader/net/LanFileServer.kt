@@ -2,6 +2,7 @@ package com.blitz.downloader.net
 
 import android.util.Log
 import com.blitz.downloader.download.MediaExportManager
+import com.blitz.downloader.model.MediaOrientation
 import java.io.BufferedOutputStream
 import java.io.FileInputStream
 import java.io.InputStream
@@ -24,7 +25,8 @@ import kotlin.concurrent.thread
  *
  * 设计取舍：
  * - **零第三方依赖**：手写请求行 + 头解析，只支持 GET，够用即可，不引入 NanoHTTPD。
- * - 路由：`/` 列表页；`/f?i=N` 下载第 N 个文件；`/all.zip` 流式打包全部文件。
+ * - 路由：`/` 列表页；`/f?i=N` 下载第 N 个文件；`/all.zip` 流式打包全部文件；
+ *   开启 [splitByOrientation] 时另有 `/landscape.zip`、`/portrait.zip` 按画面方向分包。
  * - 单文件带 `Content-Length`（浏览器可显示进度）；zip 流长度未知，用 `Connection: close` 收尾。
  * - 每个连接开一个 daemon 线程处理，简单可靠；导出文件数量级不大，无需线程池。
  *
@@ -35,6 +37,15 @@ import kotlin.concurrent.thread
  */
 class LanFileServer(
     private val files: List<MediaExportManager.ExportFile>,
+    /**
+     * 是否按画面方向分包（横屏 / 竖屏）。
+     *
+     * 只有管理页**视频 Tab** 的导出传 `true`：图片 Tab 不分包，
+     * `false` 时两条方向路由一律 404、首页不渲染方向按钮也不分组，
+     * 结构与交互行为与本功能上线前一致（首页 CSS 仍统一内联 `.splitrow` / `.splitbtn` /
+     * `h2` 等规则，不代表逐字节相同）。
+     */
+    private val splitByOrientation: Boolean = false,
     private val onTransfer: ((TransferEvent) -> Unit)? = null,
 ) {
 
@@ -56,6 +67,16 @@ class LanFileServer(
         val label: String,
         val isZip: Boolean,
     )
+
+    /** 横屏子集；[splitByOrientation] 为 false 时恒为空。 */
+    private val landscapeFiles: List<MediaExportManager.ExportFile> by lazy {
+        if (splitByOrientation) files.filter { it.orientation == MediaOrientation.LANDSCAPE } else emptyList()
+    }
+
+    /** 竖屏子集；[splitByOrientation] 为 false 时恒为空。 */
+    private val portraitFiles: List<MediaExportManager.ExportFile> by lazy {
+        if (splitByOrientation) files.filter { it.orientation == MediaOrientation.PORTRAIT } else emptyList()
+    }
 
     @Volatile private var running = false
     private var serverSocket: ServerSocket? = null
@@ -144,7 +165,13 @@ class LanFileServer(
         val query = target.substringAfter("?", "")
         when {
             path == "/" -> serveIndex(out, writeBody)
-            path == "/all.zip" -> serveZip(out, writeBody)
+            path == "/all.zip" -> serveZip(out, writeBody, files, "bDouyin_export.zip", ZIP_LABEL_ALL)
+            path == "/landscape.zip" -> serveOrientationZip(
+                out, writeBody, landscapeFiles, "bDouyin_export_landscape.zip", ZIP_LABEL_LANDSCAPE,
+            )
+            path == "/portrait.zip" -> serveOrientationZip(
+                out, writeBody, portraitFiles, "bDouyin_export_portrait.zip", ZIP_LABEL_PORTRAIT,
+            )
             path == "/f" -> serveFile(out, parseIntParam(query, "i"), writeBody)
             else -> writeText(out, "404 Not Found", "not found")
         }
@@ -169,6 +196,12 @@ class LanFileServer(
         sb.append(".meta{color:#6e6e73;font-size:13px;margin-bottom:16px}")
         sb.append(".allbtn{display:block;text-align:center;background:#0071e3;color:#fff;text-decoration:none;")
         sb.append("padding:14px;border-radius:12px;font-size:16px;margin-bottom:16px}")
+        sb.append(".splitrow{display:flex;gap:10px;margin-bottom:16px}")
+        sb.append(".splitbtn{flex:1;text-align:center;background:#fff;color:#0071e3;text-decoration:none;")
+        sb.append("padding:12px 8px;border-radius:12px;font-size:15px;border:1px solid #d2d2d7}")
+        sb.append(".splitbtn .sub{display:block;color:#8e8e93;font-size:12px;margin-top:2px}")
+        sb.append("h2{font-size:13px;color:#6e6e73;font-weight:600;margin:18px 0 8px;")
+        sb.append("text-transform:none;letter-spacing:.02em}")
         sb.append("ul{list-style:none;padding:0;margin:0}")
         sb.append("li{background:#fff;border-radius:10px;margin-bottom:8px;padding:12px 14px;")
         sb.append("display:flex;justify-content:space-between;align-items:center;gap:12px}")
@@ -180,13 +213,23 @@ class LanFileServer(
         if (files.isNotEmpty()) {
             sb.append("<a class=\"allbtn\" href=\"/all.zip\">⬇ 打包下载全部 (zip)</a>")
         }
-        sb.append("<ul>")
-        files.forEachIndexed { i, ef ->
-            sb.append("<li><a class=\"file\" href=\"/f?i=$i\">")
-            sb.append(escapeHtml(ef.entryName))
-            sb.append("</a><span class=\"size\">").append(humanSize(ef.file.length())).append("</span></li>")
+        if (splitByOrientation) {
+            // 方向按钮：数量为 0 的那个不渲染（对应路由也会 404）
+            val hasAny = landscapeFiles.isNotEmpty() || portraitFiles.isNotEmpty()
+            if (hasAny) {
+                sb.append("<div class=\"splitrow\">")
+                appendSplitButton(sb, "/landscape.zip", "⬇ 横屏", landscapeFiles)
+                appendSplitButton(sb, "/portrait.zip", "⬇ 竖屏", portraitFiles)
+                sb.append("</div>")
+            }
+            appendGroup(sb, "横屏", landscapeFiles)
+            appendGroup(sb, "竖屏", portraitFiles)
+        } else {
+            sb.append("<ul>")
+            files.forEach { ef -> appendFileItem(sb, ef) }
+            sb.append("</ul>")
         }
-        sb.append("</ul></div></body></html>")
+        sb.append("</div></body></html>")
 
         val body = sb.toString().toByteArray(Charsets.UTF_8)
         writeHeader(
@@ -199,6 +242,46 @@ class LanFileServer(
         )
         if (writeBody) out.write(body)
         out.flush()
+    }
+
+    /** 方向包按钮；该方向没有文件时不渲染（对应路由也会 404）。 */
+    private fun appendSplitButton(
+        sb: StringBuilder,
+        href: String,
+        title: String,
+        subset: List<MediaExportManager.ExportFile>,
+    ) {
+        if (subset.isEmpty()) return
+        val bytes = subset.sumOf { it.file.length() }
+        sb.append("<a class=\"splitbtn\" href=\"").append(href).append("\">")
+        sb.append(escapeHtml(title)).append(" ").append(subset.size).append(" 个")
+        sb.append("<span class=\"sub\">").append(humanSize(bytes)).append("</span></a>")
+    }
+
+    /** 一个方向分组：小标题 + 文件列表；空分组整个跳过。 */
+    private fun appendGroup(
+        sb: StringBuilder,
+        title: String,
+        subset: List<MediaExportManager.ExportFile>,
+    ) {
+        if (subset.isEmpty()) return
+        sb.append("<h2>── ").append(escapeHtml(title)).append(" (").append(subset.size).append(") ──</h2>")
+        sb.append("<ul>")
+        subset.forEach { ef -> appendFileItem(sb, ef) }
+        sb.append("</ul>")
+    }
+
+    /**
+     * 单个文件条目。
+     *
+     * `/f?i=N` 的 `N` 是该文件在**完整 [files] 列表**中的下标，分组渲染时不重排索引——
+     * 否则分组会把单文件下载链接指到错误的文件上。
+     */
+    private fun appendFileItem(sb: StringBuilder, ef: MediaExportManager.ExportFile) {
+        val index = files.indexOf(ef)
+        sb.append("<li><a class=\"file\" href=\"/f?i=$index\">")
+        sb.append(escapeHtml(ef.entryName))
+        sb.append("</a><span class=\"size\">").append(humanSize(ef.file.length())).append("</span></li>")
     }
 
     private fun serveFile(out: OutputStream, index: Int, writeBody: Boolean) {
@@ -231,13 +314,44 @@ class LanFileServer(
         notifyTransfer(TransferEvent(setOf(ef.awemeId), ef.entryName, isZip = false))
     }
 
-    private fun serveZip(out: OutputStream, writeBody: Boolean) {
+    /**
+     * 方向包入口。未开启分包、或该方向一个文件都没有时返回 404——
+     * 首页本就不渲染空方向的按钮，正常操作点不到，直接访问 URL 时明确报 404 比返回空 zip 更诚实。
+     */
+    private fun serveOrientationZip(
+        out: OutputStream,
+        writeBody: Boolean,
+        subset: List<MediaExportManager.ExportFile>,
+        downloadName: String,
+        label: String,
+    ) {
+        if (!splitByOrientation || subset.isEmpty()) {
+            writeText(out, "404 Not Found", "not found")
+            return
+        }
+        serveZip(out, writeBody, subset, downloadName, label)
+    }
+
+    /**
+     * 流式打包 [subset] 并写出。三条打包路由（`/all.zip`、`/landscape.zip`、`/portrait.zip`）
+     * 共用本实现，语义完全一致。
+     *
+     * @param downloadName 浏览器另存为的文件名。
+     * @param label        [TransferEvent.label]，用于手机端状态行展示。
+     */
+    private fun serveZip(
+        out: OutputStream,
+        writeBody: Boolean,
+        subset: List<MediaExportManager.ExportFile>,
+        downloadName: String,
+        label: String,
+    ) {
         // zip 长度未知：不发 Content-Length，靠 Connection: close 通知浏览器传输结束。
         writeHeader(
             out, "200 OK",
             linkedMapOf(
                 "Content-Type" to "application/zip",
-                "Content-Disposition" to contentDisposition("bDouyin_export.zip"),
+                "Content-Disposition" to contentDisposition(downloadName),
                 "Connection" to "close",
             ),
         )
@@ -250,7 +364,7 @@ class LanFileServer(
         // 整包语义：任一条目失败（客户端断开等）即整包不可用，不计数
         val sentIds = LinkedHashSet<String>()
         var aborted = false
-        for (ef in files) {
+        for (ef in subset) {
             if (!ef.file.isFile) continue
             try {
                 zos.putNextEntry(ZipEntry(ef.entryName))
@@ -268,7 +382,7 @@ class LanFileServer(
             out.flush()
         }.isSuccess
         if (!aborted && finished && sentIds.isNotEmpty()) {
-            notifyTransfer(TransferEvent(sentIds, ZIP_LABEL, isZip = true))
+            notifyTransfer(TransferEvent(sentIds, label, isZip = true))
         }
     }
 
@@ -361,8 +475,14 @@ class LanFileServer(
         private const val STREAM_BUFFER = 64 * 1024
         private const val MAX_LINE = 8 * 1024
 
-        /** 整包传输事件的展示名。 */
-        const val ZIP_LABEL = "all.zip"
+        /** `/all.zip` 传输事件的展示名。 */
+        const val ZIP_LABEL_ALL = "all.zip"
+
+        /** `/landscape.zip` 传输事件的展示名。 */
+        const val ZIP_LABEL_LANDSCAPE = "landscape.zip"
+
+        /** `/portrait.zip` 传输事件的展示名。 */
+        const val ZIP_LABEL_PORTRAIT = "portrait.zip"
 
         /**
          * 取本机在 WiFi/局域网下的 IPv4 站点本地地址（192.168.x / 10.x / 172.16-31.x）。

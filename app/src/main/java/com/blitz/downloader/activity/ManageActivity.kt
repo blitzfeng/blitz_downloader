@@ -44,6 +44,7 @@ import com.blitz.downloader.model.filter.ManageSortOrder
 import com.blitz.downloader.model.filter.ManageTagCountFilter
 import com.blitz.downloader.model.filter.ManageTagEditCountFilter
 import com.blitz.downloader.viewmodel.LanExportState
+import com.blitz.downloader.viewmodel.LanPrepareProgress
 import com.blitz.downloader.viewmodel.LanStartFailure
 import com.blitz.downloader.viewmodel.ManageStats
 import com.blitz.downloader.viewmodel.ManageViewModel
@@ -79,6 +80,7 @@ class ManageActivity : AppCompatActivity() {
     private var zipProgressDialog: ProgressDialog? = null
     private var lanDialog: AlertDialog? = null
     private var lanStatusView: TextView? = null
+    private var lanPrepareDialog: ProgressDialog? = null
 
     private val currentTab: Int get() = binding.viewPager.currentItem
     private val isInSelectionMode: Boolean get() = viewModel.selectionOf(currentTab).inSelectionMode
@@ -185,6 +187,7 @@ class ManageActivity : AppCompatActivity() {
                 launch { viewModel.zipResult.collect { onZipFinished(it) } }
                 launch { viewModel.lanState.collect { renderLanState(it) } }
                 launch { viewModel.lanError.collect { onLanStartFailed(it) } }
+                launch { viewModel.lanPreparing.collect { renderLanPreparing(it) } }
             }
         }
     }
@@ -681,12 +684,16 @@ class ManageActivity : AppCompatActivity() {
      * 取消 / 过滤已导出（只导出 `exportCount == 0` 的）/ 确认（全部导出，允许重复）。
      */
     private fun handleExportLan() {
-        val entities = viewModel.selectedEntities(currentTab)
+        // tab 与 entities 必须在同一时刻捕获：确认对话框展示期间用户仍可切 Tab，
+        // 若在按钮回调里再读 currentTab 就可能与这里捕获的 entities 对不上——
+        // 本分支起 splitByOrientation 也由 tab 决定，错配会导致按错误的口径分包/不分包。
+        val tab = currentTab
+        val entities = viewModel.selectedEntities(tab)
         if (entities.isEmpty()) return
         val notExported = entities.filter { it.exportCount <= 0 }
         val exportedCount = entities.size - notExported.size
         if (exportedCount == 0) {
-            startLanExport(entities)
+            startLanExport(tab, entities)
             return
         }
         AlertDialog.Builder(this)
@@ -700,22 +707,22 @@ class ManageActivity : AppCompatActivity() {
                 ),
             )
             .setPositiveButton(R.string.manage_export_lan_reexport_confirm) { _, _ ->
-                startLanExport(entities)
+                startLanExport(tab, entities)
             }
             // 中间键 = 过滤已导出：全都导出过时过滤结果为空，只提示不起服务
             .setNeutralButton(R.string.manage_export_lan_reexport_filter) { _, _ ->
                 if (notExported.isEmpty()) {
                     Toast.makeText(this, R.string.manage_export_lan_reexport_none, Toast.LENGTH_LONG).show()
                 } else {
-                    startLanExport(notExported)
+                    startLanExport(tab, notExported)
                 }
             }
             .setNegativeButton(R.string.manage_confirm_cancel, null)
             .show()
     }
 
-    private fun startLanExport(entities: List<DownloadedVideoEntity>) {
-        viewModel.startLanExport(currentTab, entities)
+    private fun startLanExport(tab: Int, entities: List<DownloadedVideoEntity>) {
+        viewModel.startLanExport(tab, entities)
     }
 
     private fun onLanStartFailed(failure: LanStartFailure) {
@@ -726,6 +733,29 @@ class ManageActivity : AppCompatActivity() {
                 getString(R.string.manage_export_lan_failed, failure.message)
         }
         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+    }
+
+    /**
+     * 导出前的宽高回填探测进度（v14）。历史记录首次导出可能要探几百个文件、耗时数秒，
+     * 没有提示界面会像卡死；之后是纯读库，这个对话框不会再出现。
+     */
+    @Suppress("DEPRECATION")
+    private fun renderLanPreparing(progress: LanPrepareProgress?) {
+        if (progress == null) {
+            lanPrepareDialog?.dismiss()
+            lanPrepareDialog = null
+            return
+        }
+        val dialog = lanPrepareDialog ?: ProgressDialog(this).apply {
+            setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
+            setMessage(getString(R.string.manage_export_lan_preparing))
+            setCancelable(false)
+            isIndeterminate = false
+            show()
+            lanPrepareDialog = this
+        }
+        dialog.max = progress.total
+        dialog.progress = progress.done
     }
 
     /**
@@ -756,6 +786,18 @@ class ManageActivity : AppCompatActivity() {
         val content = layoutInflater.inflate(R.layout.dialog_lan_export, null)
         content.findViewById<TextView>(R.id.tvLanHint).text =
             getString(R.string.manage_export_lan_hint, state.fileCount)
+        content.findViewById<TextView>(R.id.tvLanSplit).apply {
+            if (state.splitByOrientation && (state.landscapeCount > 0 || state.portraitCount > 0)) {
+                text = getString(
+                    R.string.manage_export_lan_split_hint,
+                    state.landscapeCount,
+                    state.portraitCount,
+                )
+                visibility = View.VISIBLE
+            } else {
+                visibility = View.GONE
+            }
+        }
         content.findViewById<TextView>(R.id.tvLanUrl).text = state.url
         lanStatusView = content.findViewById<TextView>(R.id.tvLanStatus).apply {
             setText(R.string.manage_export_lan_status_idle)
@@ -791,6 +833,8 @@ class ManageActivity : AppCompatActivity() {
         lanStatusView = null
         zipProgressDialog?.dismiss()
         zipProgressDialog = null
+        lanPrepareDialog?.dismiss()
+        lanPrepareDialog = null
         super.onDestroy()
     }
 
