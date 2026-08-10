@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaScannerConnection
 import android.os.Environment
 import com.blitz.downloader.data.db.DownloadedVideoEntity
+import com.blitz.downloader.model.MediaOrientation
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
@@ -44,7 +45,21 @@ object MediaExportManager {
      * `downloaded_videos.exportCount` 累加。图集会解析成多个 [ExportFile]，
      * 它们共享同一个 [awemeId]（计数按记录算，不按文件算）。
      */
-    data class ExportFile(val file: File, val entryName: String, val awemeId: String)
+    data class ExportFile(
+        val file: File,
+        val entryName: String,
+        val awemeId: String,
+        /**
+         * 所属记录的画面方向，由 [DownloadedVideoEntity.mediaWidth] / `mediaHeight` 派生。
+         *
+         * 只有局域网导出的分包用它（[com.blitz.downloader.net.LanFileServer]）；
+         * ZIP 导出拿到但不使用。图集解析出的多个文件**共享所属记录的方向**——
+         * 图片 Tab 不参与分包，无需逐张判定。
+         *
+         * 宽高为 0（未探测 / 探测失败）时按 [MediaOrientation.PORTRAIT] 处理。
+         */
+        val orientation: MediaOrientation,
+    )
 
     /** ZIP 导出结果。 */
     data class ZipResult(val zipFile: File, val fileCount: Int)
@@ -59,6 +74,9 @@ object MediaExportManager {
     /**
      * 把选中记录解析为磁盘上实际存在的文件列表；`filePath` 为空或文件已被删除的项自动跳过。
      * [ExportFile.entryName] 已做同名去重（追加 `_2` / `_3` …），可直接用作 ZIP 条目名或下载文件名。
+     *
+     * [ExportFile.orientation] 直接由记录的 `mediaWidth` / `mediaHeight` 派生，**本函数不做探测 IO**。
+     * 需要准确方向的调用方（局域网导出）应在调用前完成宽高回填。
      */
     fun resolveExportFiles(entities: List<DownloadedVideoEntity>): List<ExportFile> {
         @Suppress("DEPRECATION")
@@ -69,9 +87,11 @@ object MediaExportManager {
             if (e.filePath.isBlank()) continue
             val first = File(root, e.filePath)
             val files = if (e.mediaType.equals("image", ignoreCase = true)) findImageSet(first) else listOf(first)
+            // 方向只读 entity 字段，不在这里做探测 IO——回填是调用方（ManageViewModel）的职责。
+            val orientation = MediaOrientation.of(e.mediaWidth, e.mediaHeight)
             for (f in files) {
                 if (!f.isFile) continue
-                out.add(ExportFile(f, uniqueName(f.name, usedNames), e.awemeId))
+                out.add(ExportFile(f, uniqueName(f.name, usedNames), e.awemeId, orientation))
             }
         }
         return out
