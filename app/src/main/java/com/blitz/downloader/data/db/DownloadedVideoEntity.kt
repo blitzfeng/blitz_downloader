@@ -135,4 +135,22 @@ data class DownloadedVideoEntity(
      * 旧记录默认为 false（不做历史回填）。
      */
     val watched: Boolean = false,
+    /**
+     * 媒体文件的**呈现宽度**（像素，v14 新增）。`0` = 未知。
+     *
+     * 由 [com.blitz.downloader.util.MediaOrientationProbe] 读本地文件得出，已做旋转 / EXIF 修正，
+     * **不是**抖音接口下发的 `video.width`——接口值不保证含旋转修正，且历史记录根本没有。
+     *
+     * 两个写入时机：
+     * 1. 下载落盘后，由 [com.blitz.downloader.download.DownloadService] 随写库一并写入；
+     * 2. 局域网导出前（仅视频 Tab），由 [com.blitz.downloader.viewmodel.ManageViewModel]
+     *    对 `mediaWidth == 0` 的记录懒探测并回填。
+     *
+     * 探测失败**保持 0，不写哨兵值**：下次导出会再探一次（几毫秒），换来 `0` 语义单一。
+     * 消费方是 [com.blitz.downloader.model.MediaOrientation.of]，`0` 会被判为竖屏。
+     * 旧记录默认 0，不做历史批量回填。
+     */
+    val mediaWidth: Int = 0,
+    /** 媒体文件的**呈现高度**（像素，v14 新增）。`0` = 未知，语义与 [mediaWidth] 完全一致。 */
+    val mediaHeight: Int = 0,
 )
