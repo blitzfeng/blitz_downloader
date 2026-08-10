@@ -8,19 +8,22 @@ import android.os.Process
 import android.view.MenuItem
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.blitz.downloader.R
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.db.DatabaseBackupManager
 import com.blitz.downloader.databinding.ActivitySettingsBinding
-import kotlinx.coroutines.Dispatchers
+import com.blitz.downloader.viewmodel.SettingsEvent
+import com.blitz.downloader.viewmodel.SettingsViewModel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.system.exitProcess
 
 /**
@@ -33,6 +36,11 @@ import kotlin.system.exitProcess
 class SettingsActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
+
+    private val viewModel: SettingsViewModel by viewModels()
+
+    @Suppress("DEPRECATION")
+    private var progressDialog: ProgressDialog? = null
 
     /** SAF 文件选择器：选中备份 .db 后经授权 Uri 恢复，绕过 MediaStore 归属限制（重装后可用）。 */
     private val restoreFilePickerLauncher =
@@ -59,9 +67,68 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         binding.itemBackupDb.setOnClickListener { confirmAndBackup() }
-        binding.itemRestoreDb.setOnClickListener { pickAndRestoreBackup() }
+        binding.itemRestoreDb.setOnClickListener { viewModel.loadBackups() }
         binding.itemTagFilterMode.setOnClickListener { showTagFilterModeDialog() }
         refreshTagFilterModeSummary()
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { viewModel.busy.collect { renderBusy(it) } }
+                launch { viewModel.events.collect { handleEvent(it) } }
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun renderBusy(kind: SettingsViewModel.BusyKind?) {
+        if (kind == null) {
+            progressDialog?.dismiss()
+            progressDialog = null
+            return
+        }
+        if (progressDialog != null) return
+        progressDialog = ProgressDialog(this).apply {
+            setMessage(
+                getString(
+                    if (kind == SettingsViewModel.BusyKind.BACKUP) {
+                        R.string.manage_backup_doing
+                    } else {
+                        R.string.manage_restore_doing
+                    },
+                ),
+            )
+            setCancelable(false)
+            show()
+        }
+    }
+
+    private fun handleEvent(event: SettingsEvent) {
+        when (event) {
+            is SettingsEvent.BackupDone ->
+                toast(getString(R.string.manage_backup_done, event.file.absolutePath))
+            is SettingsEvent.BackupFailed ->
+                toast(getString(R.string.manage_backup_failed, event.message))
+            is SettingsEvent.ShowBackupPicker -> showBackupPicker(event.backups)
+            SettingsEvent.NoBackupsFound -> {
+                // 没有可列出的备份：直接走文件选择（备份可能存在但已孤儿化，列不出/读不了）
+                toast(getString(R.string.manage_restore_no_backups))
+                launchRestoreFilePicker()
+            }
+            SettingsEvent.RestoreDone -> restartApp()
+            is SettingsEvent.RestoreFailed ->
+                toast(getString(R.string.manage_restore_failed, event.message))
+            SettingsEvent.RestoreNeedsFilePicker -> showRestoreDeniedHint()
+        }
+    }
+
+    private fun toast(text: CharSequence) {
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+    }
+
+    override fun onDestroy() {
+        progressDialog?.dismiss()
+        progressDialog = null
+        super.onDestroy()
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -109,70 +176,30 @@ class SettingsActivity : AppCompatActivity() {
 
     // ── 备份 / 恢复 ────────────────────────────────────────────────────────────
 
-    /** 二次确认后在 IO 线程执行 [DatabaseBackupManager.backupNow]，结果用 Toast 提示。 */
+    /** 二次确认后交给 ViewModel 执行备份，结果用 Toast 提示。 */
     private fun confirmAndBackup() {
         AlertDialog.Builder(this)
             .setTitle(R.string.manage_backup_confirm_title)
             .setMessage(R.string.manage_backup_confirm_msg)
-            .setPositiveButton(android.R.string.ok) { _, _ -> doBackup() }
+            .setPositiveButton(android.R.string.ok) { _, _ -> viewModel.backup() }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
-    }
-
-    private fun doBackup() {
-        @Suppress("DEPRECATION")
-        val progress = ProgressDialog(this).apply {
-            setMessage(getString(R.string.manage_backup_doing))
-            setCancelable(false)
-            show()
-        }
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { DatabaseBackupManager.backupNow(applicationContext) }
-            }
-            progress.dismiss()
-            result.fold(
-                onSuccess = { file ->
-                    Toast.makeText(
-                        this@SettingsActivity,
-                        getString(R.string.manage_backup_done, file.absolutePath),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                },
-                onFailure = { e ->
-                    Toast.makeText(
-                        this@SettingsActivity,
-                        getString(R.string.manage_backup_failed, e.message ?: e.javaClass.simpleName),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                },
-            )
-        }
     }
 
     /**
      * 列出已有备份让用户选；首项固定为「从文件选择」（SAF），用于重装后备份文件被孤儿化、
      * 无法直接 File 读取的场景。选定后二次确认并执行恢复。
      */
-    private fun pickAndRestoreBackup() {
-        lifecycleScope.launch {
-            val backups = withContext(Dispatchers.IO) { DatabaseBackupManager.listBackups() }
-            if (backups.isEmpty()) {
-                // 没有可列出的备份：直接走文件选择（备份可能存在但已孤儿化，列不出/读不了）
-                Toast.makeText(this@SettingsActivity, R.string.manage_restore_no_backups, Toast.LENGTH_LONG).show()
-                launchRestoreFilePicker()
-                return@launch
+    private fun showBackupPicker(backups: List<DatabaseBackupManager.BackupEntry>) {
+        val labels = (listOf(getString(R.string.manage_restore_from_file)) +
+            backups.map { it.displayLabel() }).toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manage_restore_pick_title)
+            .setItems(labels) { _, which ->
+                if (which == 0) launchRestoreFilePicker() else confirmAndRestore(backups[which - 1])
             }
-            val labels = (listOf(getString(R.string.manage_restore_from_file)) +
-                backups.map { it.displayLabel() }).toTypedArray()
-            AlertDialog.Builder(this@SettingsActivity)
-                .setTitle(R.string.manage_restore_pick_title)
-                .setItems(labels) { _, which ->
-                    if (which == 0) launchRestoreFilePicker() else confirmAndRestore(backups[which - 1])
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun launchRestoreFilePicker() {
@@ -187,82 +214,28 @@ class SettingsActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle(R.string.manage_restore_confirm_title)
             .setMessage(R.string.manage_restore_confirm_msg)
-            .setPositiveButton(android.R.string.ok) { _, _ -> doRestoreUri(uri) }
+            .setPositiveButton(android.R.string.ok) { _, _ -> viewModel.restoreFromUri(uri) }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
-    }
-
-    private fun doRestoreUri(uri: Uri) {
-        @Suppress("DEPRECATION")
-        val progress = ProgressDialog(this).apply {
-            setMessage(getString(R.string.manage_restore_doing))
-            setCancelable(false)
-            show()
-        }
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    contentResolver.openInputStream(uri)?.use { input ->
-                        DatabaseBackupManager.restoreFromStream(applicationContext, input)
-                    } ?: throw java.io.IOException("无法打开所选文件")
-                }
-            }
-            progress.dismiss()
-            result.fold(
-                onSuccess = { restartApp() },
-                onFailure = { e ->
-                    Toast.makeText(
-                        this@SettingsActivity,
-                        getString(R.string.manage_restore_failed, e.message ?: e.javaClass.simpleName),
-                        Toast.LENGTH_LONG,
-                    ).show()
-                },
-            )
-        }
     }
 
     private fun confirmAndRestore(entry: DatabaseBackupManager.BackupEntry) {
         AlertDialog.Builder(this)
             .setTitle(R.string.manage_restore_confirm_title)
             .setMessage(R.string.manage_restore_confirm_msg)
-            .setPositiveButton(android.R.string.ok) { _, _ -> doRestore(entry) }
+            .setPositiveButton(android.R.string.ok) { _, _ -> viewModel.restoreFrom(entry) }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
-    private fun doRestore(entry: DatabaseBackupManager.BackupEntry) {
-        @Suppress("DEPRECATION")
-        val progress = ProgressDialog(this).apply {
-            setMessage(getString(R.string.manage_restore_doing))
-            setCancelable(false)
-            show()
-        }
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { DatabaseBackupManager.restoreFrom(applicationContext, entry) }
-            }
-            progress.dismiss()
-            result.fold(
-                onSuccess = { restartApp() },
-                onFailure = { e ->
-                    if (e is SecurityException) {
-                        // 备份文件被孤儿化（重装/换签名），File 读取被拒 → 引导改用文件选择器
-                        AlertDialog.Builder(this@SettingsActivity)
-                            .setTitle(R.string.manage_restore_confirm_title)
-                            .setMessage(R.string.manage_restore_denied_hint)
-                            .setPositiveButton(R.string.manage_restore_from_file) { _, _ -> launchRestoreFilePicker() }
-                            .setNegativeButton(android.R.string.cancel, null)
-                            .show()
-                    } else {
-                        Toast.makeText(
-                            this@SettingsActivity,
-                            getString(R.string.manage_restore_failed, e.message ?: e.javaClass.simpleName),
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                },
-            )
-        }
+    /** 备份文件被孤儿化（重装 / 换签名），File 读取被拒 → 引导改用文件选择器。 */
+    private fun showRestoreDeniedHint() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manage_restore_confirm_title)
+            .setMessage(R.string.manage_restore_denied_hint)
+            .setPositiveButton(R.string.manage_restore_from_file) { _, _ -> launchRestoreFilePicker() }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     /**

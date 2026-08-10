@@ -7,23 +7,24 @@ import android.text.InputType
 import android.view.MenuItem
 import android.widget.EditText
 import android.widget.Toast
-import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
-import com.blitz.downloader.data.VideoTagRepository
-import com.blitz.downloader.databinding.ActivityTagManageBinding
 import com.blitz.downloader.adapter.TagManageAdapter
-import kotlinx.coroutines.Dispatchers
+import com.blitz.downloader.databinding.ActivityTagManageBinding
+import com.blitz.downloader.viewmodel.TagManageEvent
+import com.blitz.downloader.viewmodel.TagManageViewModel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * 标签管理页，由 [ManageActivity] 通过菜单进入。
@@ -39,7 +40,8 @@ class TagManageActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityTagManageBinding
     private lateinit var adapter: TagManageAdapter
-    private lateinit var repo: VideoTagRepository
+
+    private val viewModel: TagManageViewModel by viewModels()
 
     /** 标记当前顺序是否已被用户修改，onPause 时才需要写库。 */
     private var orderDirty = false
@@ -68,18 +70,44 @@ class TagManageActivity : AppCompatActivity() {
             insets
         }
 
-        repo = VideoTagRepository(this)
-
         setupRecyclerView()
 
         binding.fabAddTag.setOnClickListener { showAddTagDialog() }
 
-        loadTags()
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.events.collect { handleEvent(it) }
+            }
+        }
+        viewModel.loadTags()
     }
 
     override fun onPause() {
         super.onPause()
-        if (orderDirty) persistOrder()
+        if (!orderDirty) return
+        orderDirty = false
+        // 落库跑在 viewModelScope 里，不会因为页面开始销毁而被取消
+        viewModel.persistOrder(adapter.getTagList())
+    }
+
+    private fun handleEvent(event: TagManageEvent) = when (event) {
+        is TagManageEvent.TagsLoaded -> adapter.submitList(event.tags)
+        is TagManageEvent.TagCreated -> {
+            adapter.addItem(event.name)
+            binding.rvTagManage.scrollToPosition(adapter.itemCount - 1)
+            orderDirty = true
+        }
+        is TagManageEvent.TagRenamed -> adapter.renameAt(event.position, event.newName)
+        is TagManageEvent.TagDeleted -> {
+            adapter.removeAt(event.position)
+            orderDirty = true
+            toast("已删除「${event.name}」")
+        }
+        is TagManageEvent.TagAlreadyExists -> toast("标签「${event.name}」已存在")
+    }
+
+    private fun toast(text: CharSequence) {
+        Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -135,25 +163,6 @@ class TagManageActivity : AppCompatActivity() {
         itemTouchHelper.attachToRecyclerView(binding.rvTagManage)
     }
 
-    // ── 数据加载 ──────────────────────────────────────────────────────────────
-
-    private fun loadTags() {
-        lifecycleScope.launch {
-            val tags = withContext(Dispatchers.IO) { repo.getAvailableTags() }
-            adapter.submitList(tags)
-        }
-    }
-
-    // ── 排序持久化 ─────────────────────────────────────────────────────────────
-
-    private fun persistOrder() {
-        orderDirty = false
-        val ordered = adapter.getTagList()
-        lifecycleScope.launch(Dispatchers.IO) {
-            repo.reorderTags(ordered)
-        }
-    }
-
     // ── 对话框：新建标签 ──────────────────────────────────────────────────────
 
     private fun showAddTagDialog() {
@@ -164,22 +173,10 @@ class TagManageActivity : AppCompatActivity() {
             .setPositiveButton("确定") { _, _ ->
                 val name = et.text.toString().trim()
                 if (name.isBlank()) {
-                    Toast.makeText(this, "标签名不能为空", Toast.LENGTH_SHORT).show()
+                    toast("标签名不能为空")
                     return@setPositiveButton
                 }
-                lifecycleScope.launch {
-                    val exists = withContext(Dispatchers.IO) {
-                        repo.getAvailableTags().any { it.equals(name, ignoreCase = false) }
-                    }
-                    if (exists) {
-                        Toast.makeText(this@TagManageActivity, "标签「$name」已存在", Toast.LENGTH_SHORT).show()
-                        return@launch
-                    }
-                    withContext(Dispatchers.IO) { repo.createTag(name) }
-                    adapter.addItem(name)
-                    binding.rvTagManage.scrollToPosition(adapter.itemCount - 1)
-                    orderDirty = true
-                }
+                viewModel.createTag(name)
             }
             .setNegativeButton("取消", null)
             .show()
@@ -195,25 +192,12 @@ class TagManageActivity : AppCompatActivity() {
             .setView(et)
             .setPositiveButton("确定") { _, _ ->
                 val newName = et.text.toString().trim()
-                when {
-                    newName.isBlank() -> {
-                        Toast.makeText(this, "标签名不能为空", Toast.LENGTH_SHORT).show()
-                    }
-                    newName == oldName -> { /* 无变化，忽略 */ }
-                    else -> {
-                        lifecycleScope.launch {
-                            val exists = withContext(Dispatchers.IO) {
-                                repo.getAvailableTags().any { it == newName }
-                            }
-                            if (exists) {
-                                Toast.makeText(this@TagManageActivity, "标签「$newName」已存在", Toast.LENGTH_SHORT).show()
-                                return@launch
-                            }
-                            withContext(Dispatchers.IO) { repo.renameTag(oldName, newName) }
-                            adapter.renameAt(position, newName)
-                        }
-                    }
+                if (newName.isBlank()) {
+                    toast("标签名不能为空")
+                    return@setPositiveButton
                 }
+                // 无变化时 ViewModel 内部会直接返回
+                viewModel.renameTag(position, oldName, newName)
             }
             .setNegativeButton("取消", null)
             .show()
@@ -227,14 +211,7 @@ class TagManageActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("删除标签")
             .setMessage("删除「$tagName」后，所有关联该标签的视频将同步解除关联，无法撤销。\n\n确定删除？")
-            .setPositiveButton("删除") { _, _ ->
-                lifecycleScope.launch {
-                    withContext(Dispatchers.IO) { repo.deleteTag(tagName) }
-                    adapter.removeAt(position)
-                    orderDirty = true
-                    Toast.makeText(this@TagManageActivity, "已删除「$tagName」", Toast.LENGTH_SHORT).show()
-                }
-            }
+            .setPositiveButton("删除") { _, _ -> viewModel.deleteTag(position, tagName) }
             .setNegativeButton("取消", null)
             .show()
     }
