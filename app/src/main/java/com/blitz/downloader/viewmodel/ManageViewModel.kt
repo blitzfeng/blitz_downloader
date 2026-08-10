@@ -10,12 +10,14 @@ import com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.download.BatchDownloadCoordinator
 import com.blitz.downloader.download.MediaExportManager
+import com.blitz.downloader.model.MediaOrientation
 import com.blitz.downloader.model.filter.ManageFilterState
 import com.blitz.downloader.model.filter.ManageRelationFilter
 import com.blitz.downloader.model.filter.ManageSortOrder
 import com.blitz.downloader.model.filter.ManageTagCountFilter
 import com.blitz.downloader.model.filter.ManageTagEditCountFilter
 import com.blitz.downloader.net.LanFileServer
+import com.blitz.downloader.util.MediaOrientationProbe
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -320,6 +322,16 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
 
     private var lanServer: LanFileServer? = null
 
+    private val _lanPreparing = MutableStateFlow<LanPrepareProgress?>(null)
+
+    /**
+     * 非 null 表示正在做导出前的宽高回填探测（v14）。
+     *
+     * 只在**确有待探测项**时非 null。历史记录第一次导出可能要探几百个文件、耗时数秒，
+     * 没有进度提示界面会像卡死；之后是纯读库，这个状态不会再出现。
+     */
+    val lanPreparing: StateFlow<LanPrepareProgress?> = _lanPreparing.asStateFlow()
+
     private val _lanState = MutableStateFlow<LanExportState?>(null)
 
     /** 非 null 表示局域网服务运行中。 */
@@ -336,20 +348,60 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val exportCountScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * 导出前的宽高懒回填（v14）：对 `mediaWidth == 0` 的记录探测本地文件，写库并**同步更新内存副本**。
+     *
+     * 返回回填后的实体列表——`resolveExportFiles` 读的是内存对象而不是数据库，
+     * 只写库不更新内存会让本次导出全部落进竖屏包。
+     *
+     * 探测失败保持 0（归竖屏），**不写哨兵值**：下次导出再探一次，代价几毫秒，
+     * 换来 `0` 语义单一（只表示「不知道」）。写库失败也不影响本次导出（内存里已是探测结果）。
+     *
+     * **必须在 IO 线程调用。**
+     */
+    private suspend fun backfillMediaSizes(entities: List<DownloadedVideoEntity>): List<DownloadedVideoEntity> {
+        val pending = entities.filter { it.mediaWidth == 0 && it.filePath.isNotBlank() }
+        if (pending.isEmpty()) return entities
+
+        _lanPreparing.value = LanPrepareProgress(done = 0, total = pending.size)
+        @Suppress("DEPRECATION")
+        val root = Environment.getExternalStorageDirectory()
+        val probed = HashMap<String, MediaOrientationProbe.Size>(pending.size)
+        pending.forEachIndexed { index, e ->
+            MediaOrientationProbe.probe(File(root, e.filePath))?.let { size ->
+                probed[e.awemeId] = size
+                runCatching { repo.updateMediaSize(e.awemeId, size.width, size.height) }
+            }
+            _lanPreparing.value = LanPrepareProgress(done = index + 1, total = pending.size)
+        }
+        _lanPreparing.value = null
+
+        if (probed.isEmpty()) return entities
+        return entities.map { e ->
+            probed[e.awemeId]?.let { e.copy(mediaWidth = it.width, mediaHeight = it.height) } ?: e
+        }
+    }
+
     fun startLanExport(tab: Int, entities: List<DownloadedVideoEntity>) {
         val ip = LanFileServer.localIpv4()
         if (ip == null) {
             _lanError.tryEmit(LanStartFailure.NoWifi)
             return
         }
+        // 只有视频 Tab 分横屏/竖屏包；图片 Tab 的行为与改动前完全一致。
+        val split = tab == TAB_VIDEO
         viewModelScope.launch {
-            val files = withContext(Dispatchers.IO) { MediaExportManager.resolveExportFiles(entities) }
+            val files = withContext(Dispatchers.IO) {
+                // 图片 Tab 不分包，探测对本次导出毫无用处，直接跳过回填。
+                val resolved = if (split) backfillMediaSizes(entities) else entities
+                MediaExportManager.resolveExportFiles(resolved)
+            }
             if (files.isEmpty()) {
                 _lanError.tryEmit(LanStartFailure.NothingToExport)
                 return@launch
             }
             stopLanExport() // 若已有服务在跑，先停掉
-            val server = LanFileServer(files) { event -> onLanTransferComplete(tab, event) }
+            val server = LanFileServer(files, split) { event -> onLanTransferComplete(tab, event) }
             val port = try {
                 server.start()
             } catch (e: Exception) {
@@ -357,7 +409,13 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             lanServer = server
-            _lanState.value = LanExportState(url = "http://$ip:$port/", fileCount = files.size)
+            _lanState.value = LanExportState(
+                url = "http://$ip:$port/",
+                fileCount = files.size,
+                splitByOrientation = split,
+                landscapeCount = if (split) files.count { it.orientation == MediaOrientation.LANDSCAPE } else 0,
+                portraitCount = if (split) files.count { it.orientation == MediaOrientation.PORTRAIT } else 0,
+            )
         }
     }
 
@@ -365,6 +423,7 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
         lanServer?.stop()
         lanServer = null
         _lanState.value = null
+        _lanPreparing.value = null
     }
 
     /**
@@ -459,11 +518,20 @@ data class ZipProgress(val done: Int, val total: Int)
 data class LanExportState(
     val url: String,
     val fileCount: Int,
+    /** 是否按横屏/竖屏分包（仅视频 Tab 为 true）。 */
+    val splitByOrientation: Boolean = false,
+    /** 横屏文件数；[splitByOrientation] 为 false 时恒为 0。 */
+    val landscapeCount: Int = 0,
+    /** 竖屏文件数；[splitByOrientation] 为 false 时恒为 0。 */
+    val portraitCount: Int = 0,
     val transferCount: Int = 0,
     val lastTransfer: Transfer? = null,
 ) {
     data class Transfer(val isZip: Boolean, val label: String, val itemCount: Int)
 }
+
+/** 局域网导出前的宽高回填探测进度（v14）。 */
+data class LanPrepareProgress(val done: Int, val total: Int)
 
 sealed interface LanStartFailure {
     data object NoWifi : LanStartFailure
