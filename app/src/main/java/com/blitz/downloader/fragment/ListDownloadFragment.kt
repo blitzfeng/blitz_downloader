@@ -67,7 +67,7 @@ class ListDownloadFragment : Fragment() {
      * 作者模式下拦返回键，退出作者模式并切回跳转来源 tab。
      *
      * 初始 `false`，启停条件见 [updateBackCallback]。切 tab 不直接向下强转
-     * `requireActivity() as MainActivity`，而是经 [ShellNavViewModel.requestTab] 让外壳去做,
+     * `requireActivity() as` [MainActivity]，而是经 [ShellNavViewModel.requestTab] 让外壳去做,
      * 与「三条通路全部经 ViewModel」的既有约定一致。
      */
     private val backCallback = object : OnBackPressedCallback(false) {
@@ -78,6 +78,16 @@ class ListDownloadFragment : Fragment() {
             if (origin != null) shellNav.requestTab(origin)
         }
     }
+
+    /**
+     * 本页是否处于前台（是可见 tab 的可见子页）。
+     *
+     * 用标志位而不是读 `viewLifecycleOwner.lifecycle.currentState`：Fragment 的分发时序是
+     * `performResume()` 先调 `onResume()`、之后才给 view registry 发 `ON_RESUME`，
+     * `performPause()` 则相反（先发 `ON_PAUSE`、后调 `onPause()`）。在回调里读状态两边都对不齐，
+     * 标志位没有这个问题。
+     */
+    private var isPageResumed = false
 
     private var showFabRunnable: Runnable? = null
 
@@ -182,20 +192,15 @@ class ListDownloadFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        isPageResumed = true
         viewModel.onScreenResumed()
         updateBackCallback()
     }
 
-    /**
-     * 让出返回键。
-     *
-     * 这里**直接置 false** 而不调 [updateBackCallback]：`onPause()` 回调时
-     * `viewLifecycleOwner.lifecycle.currentState` 还是 RESUMED（ON_PAUSE 是在
-     * `performPause()` 调完 `onPause()` 之后才分发的），走 updateBackCallback 会误判成在前台。
-     */
     override fun onPause() {
         super.onPause()
-        backCallback.isEnabled = false
+        isPageResumed = false
+        updateBackCallback()
     }
 
     override fun onDestroyView() {
@@ -404,20 +409,19 @@ class ListDownloadFragment : Fragment() {
     }
 
     /**
-     * 只有「处于作者模式」+「有跳转来源」+「本页在前台」三条同时成立才拦返回键。
+     * 只有「本页在前台」+「处于作者模式」+「有跳转来源」三条同时成立才拦返回键。
      *
-     * **用 RESUMED 判定前台，不能用 `!isHidden`**：本 Fragment 是孙辈
-     * （MainActivity → DownloadFragment → ViewPager2 → 本页），父页被 `hide` 时自己的
-     * `isHidden` 仍是 false，只看它会在管理页按返回时把事件抢走。而 `FragmentStateAdapter`
-     * 只把当前子页设为 RESUMED、MainActivity 只把可见 tab 设为 RESUMED，两层叠加后
-     * 「本页 RESUMED」恰好等价于「它是可见 tab 的可见子页」。
+     * **前台判定不能用 `!isHidden`**：本 Fragment 是孙辈（MainActivity → DownloadFragment
+     * → ViewPager2 → 本页），父页被 `hide` 时自己的 `isHidden` 仍是 false，只看它会在管理页
+     * 按返回时把事件抢走。而 `FragmentStateAdapter` 只把当前子页 resume、MainActivity 只把
+     * 可见 tab resume，两层叠加后「本页 resume 过且未 pause」恰好等价于「它是可见 tab 的可见子页」，
+     * 这就是 [isPageResumed] 的含义。
      */
     private fun updateBackCallback() {
         if (_binding == null) return
-        backCallback.isEnabled =
-            viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
-                viewModel.uiState.value.isAuthorPostsMode &&
-                shellNav.hasAuthorPostsOrigin
+        backCallback.isEnabled = isPageResumed &&
+            viewModel.uiState.value.isAuthorPostsMode &&
+            shellNav.hasAuthorPostsOrigin
     }
 
     /**
