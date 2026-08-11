@@ -261,3 +261,4 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 
 ## 注意项
 - 每次新增需求开发完代码后，都要完善文档
+- ui设计风格要使用material design
