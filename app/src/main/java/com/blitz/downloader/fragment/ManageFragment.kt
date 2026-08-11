@@ -1,30 +1,31 @@
-package com.blitz.downloader.activity
+package com.blitz.downloader.fragment
 
 import android.app.ProgressDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
-import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
 import androidx.core.view.GravityCompat
 import androidx.core.view.MenuItemCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -32,14 +33,13 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.blitz.downloader.R
+import com.blitz.downloader.activity.TagManageActivity
 import com.blitz.downloader.adapter.AuthorFilterAdapter
 import com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount
 import com.blitz.downloader.data.db.DownloadedVideoEntity
-import com.blitz.downloader.databinding.ActivityManageBinding
+import com.blitz.downloader.databinding.FragmentManageBinding
 import com.blitz.downloader.dialog.TagQueryDialog
 import com.blitz.downloader.download.MediaExportManager
-import com.blitz.downloader.fragment.ManageImageFragment
-import com.blitz.downloader.fragment.ManageVideoFragment
 import com.blitz.downloader.model.filter.ManageRelationFilter
 import com.blitz.downloader.model.filter.ManageSortOrder
 import com.blitz.downloader.model.filter.ManageTagCountFilter
@@ -56,22 +56,29 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
- * 管理页外壳：Toolbar、菜单、Tab、作者抽屉、以及各类对话框。
+ * 底部导航「管理」页外壳：Toolbar、菜单、Tab、作者抽屉、以及各类对话框。
  *
  * 筛选条件、多选状态、统计 / 导出的实际工作都在 [ManageViewModel] 里；本类与两个 Tab
- * Fragment **不再直接互相引用**（旧实现靠 `findFragmentByTag("f$position")` 反查，
- * 依赖 ViewPager2 的内部 tag 命名约定，不受 API 保证）。
+ * Fragment **不再直接互相引用**，三条通路（条件下行 / 动作下行 / 数据上行）全部经 ViewModel。
+ *
+ * 两处与改造前不同、改动时容易踩的地方：
+ *
+ * - **菜单走 Toolbar 自身的 API**（[android.widget.Toolbar.inflateMenu] /
+ *   `setOnMenuItemClickListener`），不用 `setSupportActionBar` + `onCreateOptionsMenu`：
+ *   三个 tab 页面同时存活，而 Activity 级 ActionBar 只有一份，谁 set 谁赢。
+ *   原先的 `invalidateOptionsMenu()` 一律换成 [applyMenuState]，它只改既有 MenuItem 的
+ *   `isVisible` / `title`，**不重新 inflate**，所以 SearchView 实例始终不变。
+ * - **返回处理注册在本页**（[backCallback]），且 `isEnabled` 由「本页可见 且（抽屉打开 或
+ *   多选中）」共同决定：被隐藏的页面 `STARTED` 时 callback 仍在册，不让路会抢走别的页面的返回键。
  */
-class ManageActivity : AppCompatActivity() {
+class ManageFragment : Fragment() {
 
-    private lateinit var binding: ActivityManageBinding
+    private var _binding: FragmentManageBinding? = null
+    private val binding get() = _binding!!
 
     private val viewModel: ManageViewModel by viewModels()
 
-    /** onCreate 时保存的默认返回箭头图标，退出多选模式时恢复。 */
-    private var defaultNavIcon: Drawable? = null
-
-    /** 记录当前菜单中的 SearchView，便于切 Tab 时折叠/清空。 */
+    /** 记录当前菜单中的 SearchView，便于切 Tab / 切走本页时折叠、清空。 */
     private var searchMenuItem: MenuItem? = null
 
     /** 作者筛选抽屉的列表 Adapter。 */
@@ -83,44 +90,65 @@ class ManageActivity : AppCompatActivity() {
     private var lanStatusView: TextView? = null
     private var lanPrepareDialog: ProgressDialog? = null
 
-    private val currentTab: Int get() = binding.viewPager.currentItem
+    private val currentTab: Int get() = binding.viewPagerManage.currentItem
     private val isInSelectionMode: Boolean get() = viewModel.selectionOf(currentTab).inSelectionMode
     private val currentSelectionCount: Int get() = viewModel.selectionOf(currentTab).count
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        binding = ActivityManageBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+    /** 抽屉 → 多选 两级返回处理；外壳的「回到下载 tab」优先级更低，由 MainActivity 兜底。 */
+    private val backCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            if (binding.drawerLayout.isDrawerOpen(GravityCompat.END)) {
+                binding.drawerLayout.closeDrawer(GravityCompat.END)
+                return
+            }
+            if (isInSelectionMode) {
+                viewModel.exitSelectionMode(currentTab)
+            }
+        }
+    }
 
-        setSupportActionBar(binding.toolbar)
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?,
+    ): View {
+        _binding = FragmentManageBinding.inflate(inflater, container, false)
+        return binding.root
+    }
 
-        // status bar 高度 → Toolbar 顶部 padding；导航栏 → 内容底部 padding。
-        // padding 施加在内容容器与抽屉上（不是 DrawerLayout 本身，否则会挤压抽屉宽度）。
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        // status bar 高度 → Toolbar / 抽屉顶部 padding。
+        // 抽屉底部不再补 navBars：系统导航栏那块现在被底部导航占着，再补一次会多出一段空白。
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            binding.manageRoot.setPadding(navBars.left, 0, navBars.right, navBars.bottom)
-            binding.toolbar.setPadding(0, statusBars.top, 0, 0)
-            binding.authorDrawer.setPadding(0, statusBars.top, 0, navBars.bottom)
+            binding.toolbarManage.updatePadding(top = statusBars.top)
+            binding.authorDrawer.updatePadding(top = statusBars.top, bottom = 0)
             insets
         }
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
-        defaultNavIcon = binding.toolbar.navigationIcon
+
+        setupMenu()
 
         // 多选时标题可能被右侧菜单挤到省略，点一下 Toolbar 用 Toast 把数量完整弹出来
-        binding.toolbar.setOnClickListener {
+        binding.toolbarManage.setOnClickListener {
             if (isInSelectionMode) {
                 Toast.makeText(
-                    this,
+                    requireContext(),
                     getString(R.string.manage_selected_count, currentSelectionCount),
                     Toast.LENGTH_SHORT,
                 ).show()
             }
         }
+        // 导航图标只在多选态出现（关闭图标 = 退出多选）
+        binding.toolbarManage.setNavigationOnClickListener {
+            if (isInSelectionMode) viewModel.exitSelectionMode(currentTab)
+        }
 
-        binding.viewPager.adapter = ManagePagerAdapter(this)
+        // 子 Fragment 挂在 childFragmentManager 上，它们经 requireParentFragment() 取到本页的 ViewModel
+        binding.viewPagerManage.adapter = ManagePagerAdapter(this)
 
-        TabLayoutMediator(binding.tabLayout, binding.viewPager) { tab, position ->
+        TabLayoutMediator(binding.tabLayoutManage, binding.viewPagerManage) { tab, position ->
             tab.text = when (position) {
                 ManageViewModel.TAB_VIDEO -> getString(R.string.manage_tab_videos)
                 ManageViewModel.TAB_IMAGE -> getString(R.string.manage_tab_images)
@@ -129,58 +157,56 @@ class ManageActivity : AppCompatActivity() {
         }.attach()
 
         // Tab 切换时退出上一个 Tab 的多选模式 / 折叠搜索框
-        binding.viewPager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
-            private var previousItem = ManageViewModel.TAB_VIDEO
-            override fun onPageSelected(position: Int) {
-                viewModel.exitSelectionMode(previousItem)
-                // 搜索范围按 Tab 独立维护；切 Tab 时收起搜索框，旧 Tab 在重新打开时自动是非搜索态
-                collapseAndResetSearch()
-                previousItem = position
-                updateToolbar()
-                invalidateOptionsMenu()
-            }
-        })
+        binding.viewPagerManage.registerOnPageChangeCallback(pageChangeCallback)
 
         setupAuthorDrawer()
         observeViewModel()
 
-        // 返回键：抽屉打开时先收抽屉；其次多选模式先退出多选
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (binding.drawerLayout.isDrawerOpen(GravityCompat.END)) {
-                    binding.drawerLayout.closeDrawer(GravityCompat.END)
-                    return
-                }
-                if (isInSelectionMode) {
-                    viewModel.exitSelectionMode(currentTab)
-                } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
-                }
-            }
-        })
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
+        updateToolbar()
+        updateBackCallback()
+    }
+
+    private val pageChangeCallback = object : ViewPager2.OnPageChangeCallback() {
+        private var previousItem = ManageViewModel.TAB_VIDEO
+        override fun onPageSelected(position: Int) {
+            viewModel.exitSelectionMode(previousItem)
+            // 搜索范围按 Tab 独立维护；切 Tab 时收起搜索框，旧 Tab 在重新打开时自动是非搜索态
+            collapseAndResetSearch()
+            previousItem = position
+            updateToolbar()
+            refreshMenu()
+            updateBackCallback()
+        }
+    }
+
+    /** 切走本页时收起搜索框；隐藏的页面还要让出返回键。 */
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        if (hidden) collapseAndResetSearch()
+        updateBackCallback()
     }
 
     private fun observeViewModel() {
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 // 多选状态变化 → 刷新 Toolbar 标题与菜单
                 launch {
                     viewModel.selection.collect {
                         updateToolbar()
-                        invalidateOptionsMenu()
+                        refreshMenu()
+                        updateBackCallback()
                     }
                 }
                 // 筛选条件变化 → 菜单标题回显当前筛选状态。
                 //
                 // **只看影响菜单标题的那四层**：搜索词也在 filters 里，若整体订阅，
-                // 每敲一个字都会 invalidateOptionsMenu() → 菜单重新 inflate →
-                // SearchView 被整个重建（折叠、清空、丢焦点），根本没法输入。
+                // 每敲一个字都会刷一次菜单，纯属无用功。
                 launch {
                     viewModel.filters
                         .map { all -> all.mapValues { (_, f) -> f.menuTitleSignature } }
                         .distinctUntilChanged()
-                        .collect { invalidateOptionsMenu() }
+                        .collect { refreshMenu() }
                 }
                 launch { viewModel.authors.collect { onAuthorsLoaded(it) } }
                 launch { viewModel.tagQueryTags.collect { onTagQueryTagsLoaded(it) } }
@@ -194,6 +220,13 @@ class ManageActivity : AppCompatActivity() {
         }
     }
 
+    /** 本页可见、且（抽屉打开 或 多选中）时才拦返回键，其余情况让给外壳。 */
+    private fun updateBackCallback() {
+        val binding = _binding ?: return
+        backCallback.isEnabled = !isHidden &&
+            (binding.drawerLayout.isDrawerOpen(GravityCompat.END) || isInSelectionMode)
+    }
+
     // ── 按作者筛选抽屉 ───────────────────────────────────────────────────────────
 
     private fun setupAuthorDrawer() {
@@ -202,7 +235,7 @@ class ManageActivity : AppCompatActivity() {
             authorAdapter.setSelected(author.secUserId.ifBlank { author.name })
             binding.drawerLayout.closeDrawer(GravityCompat.END)
         }
-        binding.rvAuthorFilter.layoutManager = LinearLayoutManager(this)
+        binding.rvAuthorFilter.layoutManager = LinearLayoutManager(requireContext())
         binding.rvAuthorFilter.adapter = authorAdapter
 
         binding.etAuthorSearch.addTextChangedListener(object : TextWatcher {
@@ -225,10 +258,15 @@ class ManageActivity : AppCompatActivity() {
             DrawerLayout.LOCK_MODE_LOCKED_CLOSED, GravityCompat.END,
         )
         binding.drawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
+            override fun onDrawerOpened(drawerView: View) {
+                updateBackCallback()
+            }
+
             override fun onDrawerClosed(drawerView: View) {
                 binding.drawerLayout.setDrawerLockMode(
                     DrawerLayout.LOCK_MODE_LOCKED_CLOSED, GravityCompat.END,
                 )
+                updateBackCallback()
             }
         })
     }
@@ -259,7 +297,7 @@ class ManageActivity : AppCompatActivity() {
         val orders = ManageSortOrder.values()
         val labels = orders.map { getString(it.labelRes) }.toTypedArray()
         val checked = orders.indexOf(viewModel.filtersOf(currentTab).sort)
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_sort_title)
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 viewModel.applySort(currentTab, orders[which])
@@ -279,7 +317,7 @@ class ManageActivity : AppCompatActivity() {
         val filters = ManageRelationFilter.values()
         val labels = filters.map { getString(it.labelRes) }.toTypedArray()
         val checked = filters.indexOf(viewModel.filtersOf(currentTab).relation)
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_relation_title)
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 viewModel.applyRelationFilter(currentTab, filters[which])
@@ -312,7 +350,7 @@ class ManageActivity : AppCompatActivity() {
         val current = viewModel.filtersOf(currentTab).tagCounts
         // 勾选状态在数组里累积，「确定」时才一次性提交，避免每勾一下就重刷列表
         val checked = BooleanArray(filters.size) { filters[it] in current }
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_tag_count_title)
             .setMultiChoiceItems(labels, checked) { _, which, isChecked ->
                 checked[which] = isChecked
@@ -338,7 +376,7 @@ class ManageActivity : AppCompatActivity() {
         } else {
             getString(
                 R.string.manage_menu_filter_tag_count_active,
-                ManageTagCountFilter.shortSummary(this, filters),
+                ManageTagCountFilter.shortSummary(requireContext(), filters),
             )
         }
     }
@@ -353,7 +391,7 @@ class ManageActivity : AppCompatActivity() {
         val filters = ManageTagEditCountFilter.values()
         val labels = filters.map { getString(it.labelRes) }.toTypedArray()
         val checked = filters.indexOf(viewModel.filtersOf(currentTab).tagEditCount)
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_tag_edit_count_title)
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 viewModel.applyTagEditCountFilter(currentTab, filters[which])
@@ -383,12 +421,12 @@ class ManageActivity : AppCompatActivity() {
      */
     private fun onTagQueryTagsLoaded(allTags: List<String>) {
         if (allTags.isEmpty()) {
-            Toast.makeText(this, R.string.manage_set_tags_no_tags, Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.manage_set_tags_no_tags, Toast.LENGTH_SHORT).show()
             return
         }
         val tab = currentTab
         TagQueryDialog.show(
-            context = this,
+            context = requireContext(),
             allTags = allTags,
             current = viewModel.filtersOf(tab).tagQuery,
         ) { query ->
@@ -412,7 +450,7 @@ class ManageActivity : AppCompatActivity() {
     // ── 统计面板 ───────────────────────────────────────────────────────────────
 
     private fun showStatsDialog(stats: ManageStats) {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_stats_title)
             .setMessage(buildStatsText(stats))
             .setPositiveButton(android.R.string.ok, null)
@@ -459,14 +497,29 @@ class ManageActivity : AppCompatActivity() {
 
     // ── 菜单 ───────────────────────────────────────────────────────────────────
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.menu_manage, menu)
-        searchMenuItem = menu.findItem(R.id.action_search)
+    /**
+     * 菜单只在这里 inflate 一次。之后的所有刷新走 [applyMenuState]（改既有 MenuItem 的
+     * `isVisible` / `title`），**不要**再 inflate —— 重新 inflate 会把 SearchView 整个重建，
+     * 折叠、清空、丢焦点，根本没法输入。
+     */
+    private fun setupMenu() {
+        val toolbar = binding.toolbarManage
+        toolbar.menu.clear()
+        toolbar.inflateMenu(R.menu.menu_manage)
+        searchMenuItem = toolbar.menu.findItem(R.id.action_search)
         setupSearchView(searchMenuItem)
-        return true
+        toolbar.setOnMenuItemClickListener { onMenuItemSelected(it) }
+        applyMenuState(toolbar.menu)
     }
 
-    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+    /** 取代 `invalidateOptionsMenu()`：视图还在时按当前状态重刷菜单项。 */
+    private fun refreshMenu() {
+        val binding = _binding ?: return
+        applyMenuState(binding.toolbarManage.menu)
+    }
+
+    /** 取代 `onPrepareOptionsMenu`。 */
+    private fun applyMenuState(menu: Menu) {
         val search = menu.findItem(R.id.action_search)
         val clearInvalid = menu.findItem(R.id.action_clear_invalid)
         val deleteSelected = menu.findItem(R.id.action_delete_selected)
@@ -539,7 +592,6 @@ class ManageActivity : AppCompatActivity() {
             exportZip?.isVisible = false
             exportLan?.isVisible = false
         }
-        return super.onPrepareOptionsMenu(menu)
     }
 
     /** 配置 Toolbar 搜索框：监听文本变化即查询，折叠时清空并恢复正常列表。 */
@@ -572,7 +624,7 @@ class ManageActivity : AppCompatActivity() {
         })
     }
 
-    /** Tab 切换时收起搜索框并清空查询；折叠监听会触发对应 Tab 的非搜索恢复。 */
+    /** Tab 切换 / 切走本页时收起搜索框并清空查询；折叠监听会触发对应 Tab 的非搜索恢复。 */
     private fun collapseAndResetSearch() {
         val item = searchMenuItem ?: return
         if (item.isActionViewExpanded) {
@@ -580,12 +632,9 @@ class ManageActivity : AppCompatActivity() {
         }
     }
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+    /** 取代 `onOptionsItemSelected`；返回箭头那一支由 `setNavigationOnClickListener` 承接。 */
+    private fun onMenuItemSelected(item: MenuItem): Boolean {
         return when (item.itemId) {
-            android.R.id.home -> {
-                handleHomeButton()
-                true
-            }
             R.id.action_set_tags_selected -> {
                 viewModel.requestSetTagsSelected(currentTab)
                 true
@@ -611,7 +660,7 @@ class ManageActivity : AppCompatActivity() {
                 true
             }
             R.id.action_manage_tags -> {
-                startActivity(Intent(this, TagManageActivity::class.java))
+                startActivity(Intent(requireContext(), TagManageActivity::class.java))
                 true
             }
             R.id.action_filter_author -> {
@@ -642,14 +691,14 @@ class ManageActivity : AppCompatActivity() {
                 viewModel.loadStats()
                 true
             }
-            else -> super.onOptionsItemSelected(item)
+            else -> false
         }
     }
 
     private fun confirmDeleteSelected() {
         val count = currentSelectionCount
         if (count == 0) return
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_confirm_delete_title)
             .setMessage(getString(R.string.manage_confirm_delete_msg, count))
             .setPositiveButton(R.string.manage_confirm_ok) { _, _ ->
@@ -660,7 +709,7 @@ class ManageActivity : AppCompatActivity() {
     }
 
     private fun confirmClearInvalid() {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_menu_clear_invalid)
             .setMessage(R.string.manage_clear_invalid_confirm)
             .setPositiveButton(R.string.manage_confirm_ok) { _, _ ->
@@ -676,7 +725,7 @@ class ManageActivity : AppCompatActivity() {
     private fun handleExportZip() {
         val entities = viewModel.selectedEntities(currentTab)
         if (entities.isEmpty()) return
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_export_zip_confirm_title)
             .setMessage(getString(R.string.manage_export_zip_confirm_msg, entities.size))
             .setPositiveButton(android.R.string.ok) { _, _ -> viewModel.exportToZip(entities) }
@@ -691,7 +740,7 @@ class ManageActivity : AppCompatActivity() {
             zipProgressDialog = null
             return
         }
-        val dialog = zipProgressDialog ?: ProgressDialog(this).apply {
+        val dialog = zipProgressDialog ?: ProgressDialog(requireContext()).apply {
             setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
             setMessage(getString(R.string.manage_export_zip_doing))
             setCancelable(false)
@@ -707,7 +756,7 @@ class ManageActivity : AppCompatActivity() {
         result.fold(
             onSuccess = { r ->
                 Toast.makeText(
-                    this,
+                    requireContext(),
                     getString(R.string.manage_export_zip_done, r.fileCount, r.zipFile.absolutePath),
                     Toast.LENGTH_LONG,
                 ).show()
@@ -719,7 +768,7 @@ class ManageActivity : AppCompatActivity() {
                 } else {
                     getString(R.string.manage_export_zip_failed, e.message ?: e.javaClass.simpleName)
                 }
-                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
             },
         )
     }
@@ -743,7 +792,7 @@ class ManageActivity : AppCompatActivity() {
             startLanExport(tab, entities)
             return
         }
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_export_lan_reexport_title)
             .setMessage(
                 getString(
@@ -759,7 +808,11 @@ class ManageActivity : AppCompatActivity() {
             // 中间键 = 过滤已导出：全都导出过时过滤结果为空，只提示不起服务
             .setNeutralButton(R.string.manage_export_lan_reexport_filter) { _, _ ->
                 if (notExported.isEmpty()) {
-                    Toast.makeText(this, R.string.manage_export_lan_reexport_none, Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        requireContext(),
+                        R.string.manage_export_lan_reexport_none,
+                        Toast.LENGTH_LONG,
+                    ).show()
                 } else {
                     startLanExport(tab, notExported)
                 }
@@ -779,7 +832,7 @@ class ManageActivity : AppCompatActivity() {
             is LanStartFailure.StartFailed ->
                 getString(R.string.manage_export_lan_failed, failure.message)
         }
-        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show()
     }
 
     /**
@@ -793,7 +846,7 @@ class ManageActivity : AppCompatActivity() {
             lanPrepareDialog = null
             return
         }
-        val dialog = lanPrepareDialog ?: ProgressDialog(this).apply {
+        val dialog = lanPrepareDialog ?: ProgressDialog(requireContext()).apply {
             setProgressStyle(ProgressDialog.STYLE_HORIZONTAL)
             setMessage(getString(R.string.manage_export_lan_preparing))
             setCancelable(false)
@@ -850,7 +903,7 @@ class ManageActivity : AppCompatActivity() {
             setText(R.string.manage_export_lan_status_idle)
         }
 
-        val dialog = AlertDialog.Builder(this)
+        val dialog = AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_export_lan_title)
             .setView(content)
             .setPositiveButton(R.string.manage_export_lan_stop, null)
@@ -865,15 +918,16 @@ class ManageActivity : AppCompatActivity() {
         lanDialog = dialog
         // 「复制网址」不关闭对话框，让服务继续跑
         dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val cm = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("bDouyin export url", state.url))
-            Toast.makeText(this, R.string.manage_export_lan_copied, Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), R.string.manage_export_lan_copied, Toast.LENGTH_SHORT).show()
         }
     }
 
-    override fun onDestroy() {
-        // 对话框随 Activity 销毁，但服务本身活在 ViewModel 里：
+    override fun onDestroyView() {
+        // 对话框随视图销毁，但服务本身活在 ViewModel 里：
         // 转屏不再中断传输，真正的关闭在 ManageViewModel.onCleared()。
+        // 先摘掉 dismiss 监听再 dismiss，否则会误调 stopLanExport() 把服务停掉。
         lanDialog?.setOnDismissListener(null)
         lanDialog?.dismiss()
         lanDialog = null
@@ -882,28 +936,28 @@ class ManageActivity : AppCompatActivity() {
         zipProgressDialog = null
         lanPrepareDialog?.dismiss()
         lanPrepareDialog = null
-        super.onDestroy()
-    }
-
-    private fun handleHomeButton() {
-        if (isInSelectionMode) {
-            viewModel.exitSelectionMode(currentTab)
-        } else {
-            finish()
-        }
+        searchMenuItem = null
+        // 只摘监听，不把 adapter 置空：FragmentStateAdapter 置空会在 onDestroyView 时机去
+        // 拆 childFragmentManager 里的子 Fragment，容易撞上「onSaveInstanceState 之后不能提交」。
+        // ViewPager2 本身随视图丢弃，adapter 不会泄漏。
+        binding.viewPagerManage.unregisterOnPageChangeCallback(pageChangeCallback)
+        _binding = null
+        super.onDestroyView()
     }
 
     private fun updateToolbar() {
+        val binding = _binding ?: return
         if (isInSelectionMode) {
-            binding.toolbar.setNavigationIcon(R.drawable.ic_close_manage)
-            binding.toolbar.title = getString(R.string.manage_selected_count, currentSelectionCount)
+            binding.toolbarManage.setNavigationIcon(R.drawable.ic_close_manage)
+            binding.toolbarManage.title = getString(R.string.manage_selected_count, currentSelectionCount)
         } else {
-            binding.toolbar.navigationIcon = defaultNavIcon
-            binding.toolbar.title = getString(R.string.manage_title)
+            // 根 tab 没有向上导航，非多选态不显示导航图标
+            binding.toolbarManage.navigationIcon = null
+            binding.toolbarManage.title = getString(R.string.manage_title)
         }
     }
 
-    private class ManagePagerAdapter(activity: AppCompatActivity) : FragmentStateAdapter(activity) {
+    private class ManagePagerAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
         override fun getItemCount(): Int = 2
         override fun createFragment(position: Int): Fragment = when (position) {
             ManageViewModel.TAB_VIDEO -> ManageVideoFragment()

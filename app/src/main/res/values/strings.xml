@@ -57,7 +57,10 @@
     <string name="item_action_preview">预览</string>
     <string name="btn_back_to_my_page">返回我的主页</string>
     <string name="author_posts_mode_hint">正在查看 %1$s 的Post</string>
-    <string name="menu_manage">管理</string>
+    <!-- 首页底部导航栏的三个 tab -->
+    <string name="nav_download">下载</string>
+    <string name="nav_manage">管理</string>
+    <string name="nav_settings">设置</string>
     <string name="manage_title">管理</string>
     <string name="manage_tab_videos">视频</string>
     <string name="manage_tab_images">图片</string>

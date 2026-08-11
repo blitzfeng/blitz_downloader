@@ -7,7 +7,6 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -40,7 +39,10 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image) {
     private var tvEmptyRef: TextView? = null
 
     private val viewModel: ManageImageViewModel by viewModels()
-    private val manageViewModel: ManageViewModel by activityViewModels()
+    // 作用域是外层 ManageFragment（两个 Tab 共享它），不是 Activity——管理页的状态跟着管理页走
+    private val manageViewModel: ManageViewModel by viewModels(
+        ownerProducer = { requireParentFragment() },
+    )
 
     private val tab = ManageViewModel.TAB_IMAGE
 

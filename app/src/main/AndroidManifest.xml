@@ -49,32 +49,28 @@
             android:exported="false"
             android:hardwareAccelerated="true"
             android:label="@string/douyin_browser_title" />
-        <activity
-            android:name=".activity.ManageActivity"
-            android:exported="false"
-            android:label="@string/manage_title" />
-        <activity
-            android:name=".activity.SettingsActivity"
-            android:exported="false"
-            android:label="@string/settings_title"
-            android:parentActivityName=".activity.MainActivity" />
+        <!--
+            管理页与设置页不再是独立 Activity：它们是 MainActivity 底部导航下的两个 Fragment。
+            下面三个页面由管理页启动，返回时 finish() 即落回外壳（tab 仍停在「管理」），
+            parentActivityName 只在无栈场景下兜底。
+        -->
         <activity
             android:name=".activity.TagManageActivity"
             android:exported="false"
             android:label="@string/manage_menu_tags"
-            android:parentActivityName=".activity.ManageActivity" />
+            android:parentActivityName=".activity.MainActivity" />
         <activity
             android:name=".activity.VideoPlayerActivity"
             android:exported="false"
             android:hardwareAccelerated="true"
             android:label="@string/video_player_title"
             android:configChanges="orientation|screenSize|keyboardHidden"
-            android:parentActivityName=".activity.ManageActivity" />
+            android:parentActivityName=".activity.MainActivity" />
         <activity
             android:name=".activity.ImageViewerActivity"
             android:exported="false"
             android:label="@string/image_viewer_title"
-            android:parentActivityName=".activity.ManageActivity" />
+            android:parentActivityName=".activity.MainActivity" />
 
         <service
             android:name=".download.DownloadService"

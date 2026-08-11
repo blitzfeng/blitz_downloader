@@ -1,68 +1,75 @@
-package com.blitz.downloader.activity
+package com.blitz.downloader.fragment
 
 import android.app.ProgressDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Process
-import android.view.MenuItem
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.blitz.downloader.R
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.db.DatabaseBackupManager
-import com.blitz.downloader.databinding.ActivitySettingsBinding
+import com.blitz.downloader.databinding.FragmentSettingsBinding
 import com.blitz.downloader.viewmodel.SettingsEvent
 import com.blitz.downloader.viewmodel.SettingsViewModel
 import kotlinx.coroutines.launch
 import kotlin.system.exitProcess
 
 /**
- * 设置页，由 [MainActivity] 的 Toolbar 设置入口进入。
+ * 底部导航「设置」页。
  *
- * 目前承载数据库备份 / 恢复（原先挂在 [ManageActivity] 的溢出菜单里）。
+ * 承载数据库备份 / 恢复（原先挂在管理页溢出菜单里）与标签筛选模式设置。
  * 恢复走两条路径：直接 File 读取，以及重装 / 换签名导致备份文件在 MediaStore 被孤儿化时
  * 的 SAF 兜底（详见 CLAUDE.md「持久化」一节）。
  */
-class SettingsActivity : AppCompatActivity() {
+class SettingsFragment : Fragment() {
 
-    private lateinit var binding: ActivitySettingsBinding
+    private var _binding: FragmentSettingsBinding? = null
+    private val binding get() = _binding!!
 
     private val viewModel: SettingsViewModel by viewModels()
 
     @Suppress("DEPRECATION")
     private var progressDialog: ProgressDialog? = null
 
-    /** SAF 文件选择器：选中备份 .db 后经授权 Uri 恢复，绕过 MediaStore 归属限制（重装后可用）。 */
+    /**
+     * SAF 文件选择器：选中备份 .db 后经授权 Uri 恢复，绕过 MediaStore 归属限制（重装后可用）。
+     * 必须是 Fragment 的顶层属性——注册要发生在 onCreate 之前。
+     */
     private val restoreFilePickerLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) confirmAndRestoreUri(uri)
         }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        binding = ActivitySettingsBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?,
+    ): View {
+        _binding = FragmentSettingsBinding.inflate(inflater, container, false)
+        return binding.root
+    }
 
-        setSupportActionBar(binding.toolbarSettings)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
 
-        // status bar 高度 → Toolbar 顶部 padding；导航栏 → 内容底部 padding。
-        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
+        // status bar 高度 → Toolbar 顶部 padding；底部导航的 inset 由外壳处理。
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            v.setPadding(navBars.left, 0, navBars.right, 0)
-            binding.toolbarSettings.setPadding(0, statusBars.top, 0, 0)
-            binding.settingsScroll.updatePadding(bottom = navBars.bottom)
+            binding.toolbarSettings.updatePadding(top = statusBars.top)
             insets
         }
 
@@ -71,8 +78,8 @@ class SettingsActivity : AppCompatActivity() {
         binding.itemTagFilterMode.setOnClickListener { showTagFilterModeDialog() }
         refreshTagFilterModeSummary()
 
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { viewModel.busy.collect { renderBusy(it) } }
                 launch { viewModel.events.collect { handleEvent(it) } }
             }
@@ -87,7 +94,7 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
         if (progressDialog != null) return
-        progressDialog = ProgressDialog(this).apply {
+        progressDialog = ProgressDialog(requireContext()).apply {
             setMessage(
                 getString(
                     if (kind == SettingsViewModel.BusyKind.BACKUP) {
@@ -122,23 +129,14 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun toast(text: CharSequence) {
-        Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+        Toast.makeText(requireContext(), text, Toast.LENGTH_LONG).show()
     }
 
-    override fun onDestroy() {
+    override fun onDestroyView() {
         progressDialog?.dismiss()
         progressDialog = null
-        super.onDestroy()
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            android.R.id.home -> {
-                finish()
-                true
-            }
-            else -> super.onOptionsItemSelected(item)
-        }
+        _binding = null
+        super.onDestroyView()
     }
 
     // ── 筛选设置 ───────────────────────────────────────────────────────────────
@@ -148,15 +146,16 @@ class SettingsActivity : AppCompatActivity() {
      * 管理页每次取数时现读 [AppSettings]，所以这里改完不需要通知它。
      */
     private fun showTagFilterModeDialog() {
+        val context = requireContext()
         val options = arrayOf(
             getString(R.string.settings_tag_filter_mode_all),
             getString(R.string.settings_tag_filter_mode_any),
         )
-        val checked = if (AppSettings.isTagFilterMatchAll(this)) 0 else 1
-        AlertDialog.Builder(this)
+        val checked = if (AppSettings.isTagFilterMatchAll(context)) 0 else 1
+        AlertDialog.Builder(context)
             .setTitle(R.string.settings_tag_filter_mode)
             .setSingleChoiceItems(options, checked) { dialog, which ->
-                AppSettings.setTagFilterMatchAll(this, which == 0)
+                AppSettings.setTagFilterMatchAll(context, which == 0)
                 refreshTagFilterModeSummary()
                 dialog.dismiss()
             }
@@ -166,7 +165,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun refreshTagFilterModeSummary() {
         binding.tvTagFilterModeSummary.setText(
-            if (AppSettings.isTagFilterMatchAll(this)) {
+            if (AppSettings.isTagFilterMatchAll(requireContext())) {
                 R.string.settings_tag_filter_mode_all_short
             } else {
                 R.string.settings_tag_filter_mode_any_short
@@ -178,7 +177,7 @@ class SettingsActivity : AppCompatActivity() {
 
     /** 二次确认后交给 ViewModel 执行备份，结果用 Toast 提示。 */
     private fun confirmAndBackup() {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_backup_confirm_title)
             .setMessage(R.string.manage_backup_confirm_msg)
             .setPositiveButton(android.R.string.ok) { _, _ -> viewModel.backup() }
@@ -193,7 +192,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun showBackupPicker(backups: List<DatabaseBackupManager.BackupEntry>) {
         val labels = (listOf(getString(R.string.manage_restore_from_file)) +
             backups.map { it.displayLabel() }).toTypedArray()
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_restore_pick_title)
             .setItems(labels) { _, which ->
                 if (which == 0) launchRestoreFilePicker() else confirmAndRestore(backups[which - 1])
@@ -206,12 +205,16 @@ class SettingsActivity : AppCompatActivity() {
         // db 文件 MIME 不稳定，用 */* 让用户自由选取；SAF 授权 Uri 可绕过归属校验
         runCatching { restoreFilePickerLauncher.launch(arrayOf("*/*")) }
             .onFailure {
-                Toast.makeText(this, R.string.manage_restore_picker_unavailable, Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    requireContext(),
+                    R.string.manage_restore_picker_unavailable,
+                    Toast.LENGTH_LONG,
+                ).show()
             }
     }
 
     private fun confirmAndRestoreUri(uri: Uri) {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_restore_confirm_title)
             .setMessage(R.string.manage_restore_confirm_msg)
             .setPositiveButton(android.R.string.ok) { _, _ -> viewModel.restoreFromUri(uri) }
@@ -220,7 +223,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun confirmAndRestore(entry: DatabaseBackupManager.BackupEntry) {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_restore_confirm_title)
             .setMessage(R.string.manage_restore_confirm_msg)
             .setPositiveButton(android.R.string.ok) { _, _ -> viewModel.restoreFrom(entry) }
@@ -230,7 +233,7 @@ class SettingsActivity : AppCompatActivity() {
 
     /** 备份文件被孤儿化（重装 / 换签名），File 读取被拒 → 引导改用文件选择器。 */
     private fun showRestoreDeniedHint() {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.manage_restore_confirm_title)
             .setMessage(R.string.manage_restore_denied_hint)
             .setPositiveButton(R.string.manage_restore_from_file) { _, _ -> launchRestoreFilePicker() }
@@ -243,15 +246,16 @@ class SettingsActivity : AppCompatActivity() {
      * 重启是最干净的兜底（也避免 UI 显示恢复前已加载的旧数据）。
      */
     private fun restartApp() {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-            ?: Intent(this, MainActivity::class.java)
+        val activity = requireActivity()
+        val launchIntent = activity.packageManager.getLaunchIntentForPackage(activity.packageName)
+            ?: Intent(activity, com.blitz.downloader.activity.MainActivity::class.java)
         launchIntent.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_CLEAR_TASK or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP
         )
         startActivity(launchIntent)
-        finishAffinity()
+        activity.finishAffinity()
         Process.killProcess(Process.myPid())
         exitProcess(0)
     }

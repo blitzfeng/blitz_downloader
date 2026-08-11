@@ -16,7 +16,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.R
-import com.blitz.downloader.activity.ManageActivity
+import com.blitz.downloader.activity.MainActivity
 import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.model.VideoItemUiModel
 import com.blitz.downloader.util.MediaOrientationProbe
@@ -178,8 +178,12 @@ class DownloadService : Service() {
     }
 
     private fun contentIntent(): PendingIntent {
-        val intent = Intent(this, ManageActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        // 落在主外壳的「管理」tab；SINGLE_TOP 让已在栈里的外壳走 onNewIntent 切 tab，
+        // 而不是新建第二个外壳（那样「下载」tab 的状态会丢）。
+        val intent = MainActivity.intentFor(this, MainActivity.TAB_MANAGE).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val flag = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         return PendingIntent.getActivity(this, 0, intent, flag)

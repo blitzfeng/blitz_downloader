@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    底部导航项的图标 / 文字着色。选中态用与 TabLayout 指示器一致的亮粉色，
+    未选中态用次级文字灰，保证两处选中语义在视觉上是同一套。
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="@color/color_dopamine_pink" android:state_checked="true" />
+    <item android:color="@color/text_color_secondary" />
+</selector>

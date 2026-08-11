@@ -27,7 +27,7 @@ import com.blitz.downloader.viewmodel.TagManageViewModel
 import kotlinx.coroutines.launch
 
 /**
- * 标签管理页，由 [ManageActivity] 通过菜单进入。
+ * 标签管理页，由管理页（[com.blitz.downloader.fragment.ManageFragment]）通过菜单进入。
  *
  * 功能：
  * - 展示 `tags` 表中所有标签，按 sortOrder 排序

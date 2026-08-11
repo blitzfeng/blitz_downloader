@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    底部导航「下载」页：Toolbar + 子 Tab（单视频下载 / 列表下载）。
+    结构与改造前的 activity_main.xml 一致，只是搬进 Fragment；控件 id 加了 Download 后缀，
+    避免与同时存活的管理页控件同名（三页共处一棵视图树）。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/downloadRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/color_surface"
+    android:orientation="vertical">
+
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbarDownload"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="?attr/actionBarSize"
+        android:background="@color/color_primary_dark"
+        android:theme="@style/ThemeOverlay.BlitzDownloader.Toolbar"
+        app:popupTheme="@style/ThemeOverlay.MaterialComponents.Light"
+        app:title="@string/app_name" />
+
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/tabLayoutDownload"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:tabGravity="fill"
+        app:tabMode="fixed"
+        app:tabIndicator="@drawable/tab_selected"
+        app:tabIndicatorColor="@color/color_dopamine_pink"
+        app:tabIndicatorHeight="4dp"
+        app:tabIndicatorFullWidth="false"
+        app:tabSelectedTextColor="@color/color_dopamine_pink"
+        app:tabTextColor="@color/text_color_secondary"
+        app:tabRippleColor="@color/color_dopamine_pink" />
+
+    <androidx.viewpager2.widget.ViewPager2
+        android:id="@+id/viewPagerDownload"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+</LinearLayout>

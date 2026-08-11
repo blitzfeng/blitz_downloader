@@ -33,17 +33,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 管理页 Activity 级 ViewModel：**筛选条件**与**多选状态**的唯一权威，外加统计面板、
- * ZIP 导出与局域网导出。
+ * 管理页 ViewModel（作用域是 [com.blitz.downloader.fragment.ManageFragment]）：
+ * **筛选条件**与**多选状态**的唯一权威，外加统计面板、ZIP 导出与局域网导出。
  *
- * 它取代了原先 `ManageActivity` 用
+ * 它取代了原先管理页用
  * `supportFragmentManager.findFragmentByTag("f$position") as? ManageTabFragment`
  * 往下喊话的那套耦合——那依赖 ViewPager2 的内部 tag 命名约定，不受 API 保证。
- * 现在 Activity 与两个 Tab 只通过本 ViewModel 通信：
+ * 现在管理页外壳与两个 Tab 只通过本 ViewModel 通信：
  *
- * - 条件下行：Activity 改 [filters] / [selection] → Tab 观察到自己那一份并应用；
- * - 动作下行：Activity 发 [commands] → 目标 Tab 消费后在自己的 ViewModel 上执行；
- * - 数据上行：Tab 每次列表变化调用 [setLoaded]，Activity 侧据此算「是否已全选」
+ * - 条件下行：外壳改 [filters] / [selection] → Tab 观察到自己那一份并应用；
+ * - 动作下行：外壳发 [commands] → 目标 Tab 消费后在自己的 ViewModel 上执行；
+ * - 数据上行：Tab 每次列表变化调用 [setLoaded]，外壳侧据此算「是否已全选」
  *   与「选中了哪些实体」（导出要用）。
  *
  * 筛选与多选都**按 Tab 独立维护**：视频页搜「张三」不该影响图片页。

@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    底部导航「管理」页：DrawerLayout（右侧作者筛选抽屉）包着 Toolbar + 子 Tab（视频 / 图片）。
+    结构与改造前的 activity_manage.xml 一致，只是搬进 Fragment；抽屉滑出范围止于底部导航之上。
+-->
 <androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/drawerLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
@@ -14,7 +19,7 @@
         android:orientation="vertical">
 
         <com.google.android.material.appbar.MaterialToolbar
-            android:id="@+id/toolbar"
+            android:id="@+id/toolbarManage"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:minHeight="?attr/actionBarSize"
@@ -24,7 +29,7 @@
             app:title="@string/manage_title" />
 
         <com.google.android.material.tabs.TabLayout
-            android:id="@+id/tabLayout"
+            android:id="@+id/tabLayoutManage"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             app:tabGravity="fill"
@@ -38,7 +43,7 @@
             app:tabRippleColor="@color/color_dopamine_pink" />
 
         <androidx.viewpager2.widget.ViewPager2
-            android:id="@+id/viewPager"
+            android:id="@+id/viewPagerManage"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1" />
@@ -83,8 +88,7 @@
             android:textColorHint="@color/text_color_secondary"
             android:textSize="14sp"
             android:autofillHints=""
-            tools:ignore="LabelFor"
-            xmlns:tools="http://schemas.android.com/tools" />
+            tools:ignore="LabelFor" />
 
         <TextView
             android:id="@+id/btnAuthorClear"

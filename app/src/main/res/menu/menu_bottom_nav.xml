@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    首页底部导航栏（Material BottomNavigationView）的三个 tab。
+    顺序固定：下载 → 管理 → 设置，与 MainActivity 的 TAB_* 常量一一对应。
+-->
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <item
+        android:id="@+id/nav_download"
+        android:icon="@drawable/ic_nav_download"
+        android:title="@string/nav_download" />
+
+    <item
+        android:id="@+id/nav_manage"
+        android:icon="@drawable/ic_nav_manage"
+        android:title="@string/nav_manage" />
+
+    <item
+        android:id="@+id/nav_settings"
+        android:icon="@drawable/ic_nav_settings"
+        android:title="@string/nav_settings" />
+
+</menu>

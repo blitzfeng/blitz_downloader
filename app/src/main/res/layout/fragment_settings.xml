@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    设置页布局。
-    结构：Toolbar + 可滚动的分组设置项列表。
-    目前只有「数据管理」一组（备份 / 恢复数据库，原先在管理页溢出菜单里）。
+    底部导航「设置」页布局。
+    结构：Toolbar + 可滚动的分组设置项列表（数据管理 / 筛选）。
+    作为根 tab，不需要返回箭头，Toolbar 只承接标题与状态栏内边距。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -170,7 +170,7 @@
                         android:textColor="@color/text_color_primary"
                         android:textSize="16sp" />
 
-                    <!-- 文案在 SettingsActivity 里按当前设置刷新 -->
+                    <!-- 文案在 SettingsFragment 里按当前设置刷新 -->
                     <TextView
                         android:id="@+id/tvTagFilterModeSummary"
                         android:layout_width="match_parent"
@@ -181,7 +181,6 @@
                         tools:text="@string/settings_tag_filter_mode_all" />
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
-
 
         </LinearLayout>
     </ScrollView>

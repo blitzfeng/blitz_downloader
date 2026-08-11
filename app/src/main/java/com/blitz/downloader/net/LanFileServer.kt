@@ -30,7 +30,7 @@ import kotlin.concurrent.thread
  * - 单文件带 `Content-Length`（浏览器可显示进度）；zip 流长度未知，用 `Connection: close` 收尾。
  * - 每个连接开一个 daemon 线程处理，简单可靠；导出文件数量级不大，无需线程池。
  *
- * 生命周期由调用方（[com.blitz.downloader.activity.ManageActivity]）持有：[start] 后务必在
+ * 生命周期由调用方（[com.blitz.downloader.viewmodel.ManageViewModel]）持有：[start] 后务必在
  * 页面销毁 / 用户停止时调用 [stop]，否则监听线程与端口会泄漏。
  *
  * @param onTransfer 传输完成回调，见 [TransferEvent]。**在连接线程触发**，调用方负责切线程。

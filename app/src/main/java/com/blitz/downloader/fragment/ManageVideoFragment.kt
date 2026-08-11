@@ -7,7 +7,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -34,9 +33,9 @@ import kotlinx.coroutines.launch
 /**
  * 管理页「视频」Tab。
  *
- * 与 Activity 之间**只通过 [ManageViewModel] 通信**（不再有 `ManageTabFragment` 接口，
- * Activity 也不再用 `findFragmentByTag` 反查 Fragment）：
- * 筛选条件与多选状态从 Activity 级 ViewModel 观察下来，菜单动作以命令形式收到，
+ * 与外层 [ManageFragment] 之间**只通过 [ManageViewModel] 通信**（不再有 `ManageTabFragment`
+ * 接口，外层也不用 `findFragmentByTag` 反查 Fragment）：
+ * 筛选条件与多选状态从父 Fragment 级 ViewModel 观察下来，菜单动作以命令形式收到，
  * 列表数据每次变化上报回去供「全选」与「导出选中」使用。
  */
 class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
@@ -47,7 +46,10 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
     private var tvEmptyRef: TextView? = null
 
     private val viewModel: ManageVideoViewModel by viewModels()
-    private val manageViewModel: ManageViewModel by activityViewModels()
+    // 作用域是外层 ManageFragment（两个 Tab 共享它），不是 Activity——管理页的状态跟着管理页走
+    private val manageViewModel: ManageViewModel by viewModels(
+        ownerProducer = { requireParentFragment() },
+    )
 
     private val tab = ManageViewModel.TAB_VIDEO
 
