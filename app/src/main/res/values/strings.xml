@@ -236,6 +236,8 @@
     <string name="manage_export_lan_stop">停止服务</string>
     <string name="manage_export_lan_copied">网址已复制</string>
     <!-- 视频卡片左下角的「未看过」标记（点赞数右侧） -->
+    <!-- 管理页卡片作者行的无障碍描述：点击加载该作者的发布作品 -->
+    <string name="manage_author_posts_desc">加载 %1$s 的发布作品</string>
     <string name="manage_unwatched_label">未看过</string>
     <!-- 局域网导出：传输状态与「已导出」标记 -->
     <string name="manage_exported_label">已导出</string>

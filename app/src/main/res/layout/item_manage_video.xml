@@ -144,16 +144,43 @@
             android:paddingTop="6dp"
             android:paddingBottom="7dp">
 
-            <!-- 作者名 -->
-            <TextView
-                android:id="@+id/tvUsername"
-                android:layout_width="match_parent"
+            <!--
+                作者行：点击加载 TA 的发布作品。
+                wrap_content 而不是 match_parent —— 热区只包住图标+文字，右侧空白不可点，避免误触。
+                父容器是 match_parent 的纵向 LinearLayout，会把本行夹在卡片宽度内，
+                所以长昵称的 ellipsize 照常生效。
+                background 常驻这里、不在代码里切：没有 sec_user_id 的旧记录只把 isClickable
+                置 false（不可点的 View 不会起水波），Adapter 里就不用解析主题属性。
+            -->
+            <LinearLayout
+                android:id="@+id/authorRow"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:maxLines="1"
-                android:ellipsize="end"
-                android:textSize="11sp"
-                android:textStyle="bold"
-                android:textColor="?android:attr/textColorPrimary" />
+                android:minHeight="32dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:background="?attr/selectableItemBackground">
+
+                <!-- 与列表下载页「查看TA的Post」按钮共用同一个图标，语义可迁移 -->
+                <ImageView
+                    android:id="@+id/ivAuthorIcon"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
+                    android:layout_marginEnd="4dp"
+                    android:src="@drawable/ic_author_posts"
+                    app:tint="?android:attr/textColorSecondary"
+                    android:contentDescription="@null" />
+
+                <TextView
+                    android:id="@+id/tvUsername"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:textColor="?android:attr/textColorPrimary" />
+            </LinearLayout>
 
             <!-- 描述文案（空时隐藏） -->
             <TextView

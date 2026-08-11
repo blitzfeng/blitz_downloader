@@ -7,6 +7,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -15,6 +16,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.ImageViewerActivity
+import com.blitz.downloader.activity.MainActivity
 import com.blitz.downloader.adapter.ManageGridAdapter
 import com.blitz.downloader.viewmodel.ManageCommand
 import com.blitz.downloader.viewmodel.ManageEmptyReason
@@ -22,6 +24,7 @@ import com.blitz.downloader.viewmodel.ManageImageViewModel
 import com.blitz.downloader.viewmodel.ManageTabEvent
 import com.blitz.downloader.viewmodel.ManageTabUiState
 import com.blitz.downloader.viewmodel.ManageViewModel
+import com.blitz.downloader.viewmodel.ShellNavViewModel
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -43,6 +46,8 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image) {
     private val manageViewModel: ManageViewModel by viewModels(
         ownerProducer = { requireParentFragment() },
     )
+    /** 外壳级导航中转站（作用域是 Activity），点作者名跳批量下载用。 */
+    private val shellNav: ShellNavViewModel by activityViewModels()
 
     private val tab = ManageViewModel.TAB_IMAGE
 
@@ -57,6 +62,13 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image) {
             onItemClick = { entity -> viewModel.openImageViewer(entity) },
             onItemLongClick = { awemeId -> manageViewModel.enterSelectionMode(tab, awemeId) },
             onSelectionToggle = { awemeId -> manageViewModel.toggleSelection(tab, awemeId) },
+            onAuthorClick = { entity ->
+                shellNav.requestAuthorPosts(
+                    secUserId = entity.videoAuthorSecUserId,
+                    nickname = entity.userName,
+                    originTab = MainActivity.TAB_MANAGE,
+                )
+            },
             supportsUserTags = false,
         )
         val gridManager = GridLayoutManager(requireContext(), 2)

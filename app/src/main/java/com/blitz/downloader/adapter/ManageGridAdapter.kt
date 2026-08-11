@@ -32,12 +32,15 @@ import java.io.File
  * 交互：
  * - **单击 item**：非多选模式下调用 [onItemClick]（打开播放页/图片浏览页），多选模式下调用 [onSelectionToggle]。
  * - **单击用户标签行**：当 [supportsUserTags] 为 true 时调用 [onTagAreaClick]（标签设置弹窗）。
+ * - **单击作者行**：非多选模式下调用 [onAuthorClick]（跳去加载该作者的发布作品）；
+ *   `videoAuthorSecUserId` 为空的旧记录不可点。
  * - **长按 item**：非多选模式下调用 [onItemLongClick]（请求进入多选模式）。
  *
  * @param onItemClick         非多选模式下单击 item 时回调，传递 [DownloadedVideoEntity]。
  * @param onItemLongClick     长按请求进入多选模式，传递 awemeId。
  * @param onSelectionToggle   多选模式下单击，请求切换该条目的选中状态。
  * @param onTagAreaClick      非多选模式下点击用户标签行时回调，传递 awemeId 及当前标签列表。
+ * @param onAuthorClick       非多选模式下点击作者行时回调，传递 [DownloadedVideoEntity]。
  * @param supportsUserTags    是否展示用户自定义标签行并支持点击编辑（视频 Tab 为 true，图片 Tab 为 false）。
  * @param showWatchedBadge    是否展示「未看过」标记（只有视频 Tab 为 true：图集不走播放页，
  *                            `watched` 永远不会置位，显示了就是个消不掉的标记）。
@@ -47,6 +50,7 @@ class ManageGridAdapter(
     private val onItemLongClick: (awemeId: String) -> Unit = {},
     private val onSelectionToggle: (awemeId: String) -> Unit = {},
     private val onTagAreaClick: (awemeId: String, currentTags: List<String>) -> Unit = { _, _ -> },
+    private val onAuthorClick: (entity: DownloadedVideoEntity) -> Unit = {},
     private val supportsUserTags: Boolean = false,
     private val showWatchedBadge: Boolean = false,
 ) : RecyclerView.Adapter<ManageGridAdapter.ViewHolder>() {
@@ -146,6 +150,8 @@ class ManageGridAdapter(
         private val unwatchedBadge: TextView = itemView.findViewById(R.id.tvUnwatchedBadge)
         private val selectedOverlay: View = itemView.findViewById(R.id.viewSelectedOverlay)
         private val checkbox: CheckBox = itemView.findViewById(R.id.cbManageSelect)
+        private val authorRow: LinearLayout = itemView.findViewById(R.id.authorRow)
+        private val authorIcon: ImageView = itemView.findViewById(R.id.ivAuthorIcon)
         private val username: TextView = itemView.findViewById(R.id.tvUsername)
         private val tvDesc: TextView = itemView.findViewById(R.id.tvDesc)
         private val tagContainer: LinearLayout = itemView.findViewById(R.id.tagContainer)
@@ -213,6 +219,7 @@ class ManageGridAdapter(
             bindExportedState(selectionMode, entity.exportCount)
             bindWatchedState(entity.watched)
             bindUserTags(item.userTags)
+            bindAuthorRow(entity)
             bindClickListeners(entity.awemeId)
         }
 
@@ -354,6 +361,32 @@ class ManageGridAdapter(
             checkbox.visibility = if (selectionMode) View.VISIBLE else View.GONE
             checkbox.isChecked = isSelected
             selectedOverlay.visibility = if (selectionMode && isSelected) View.VISIBLE else View.GONE
+        }
+
+        /**
+         * 作者行绑定：可点则显示图标并注册点击，否则彻底不可点。
+         *
+         * `videoAuthorSecUserId` 是 v5 才加入的列（当前库 v14），只有很早期下载的记录会为空。
+         * 做成"可点但弹 Toast 报错"不如让"点不动"在视觉上就看得出来——与 `diggCount <= 0`
+         * 就隐藏点赞徽标是同一个思路。
+         */
+        fun bindAuthorRow(entity: DownloadedVideoEntity) {
+            val canOpen = entity.videoAuthorSecUserId.isNotBlank()
+            authorIcon.visibility = if (canOpen) View.VISIBLE else View.GONE
+            if (canOpen) {
+                val label = entity.userName.ifBlank { entity.awemeId }
+                authorRow.contentDescription =
+                    itemView.context.getString(R.string.manage_author_posts_desc, label)
+                authorRow.setOnClickListener {
+                    // 多选态下卡片任何位置都只做勾选，与 userTagContainer 一致
+                    if (inSelectionMode) onSelectionToggle(entity.awemeId) else onAuthorClick(entity)
+                }
+            } else {
+                authorRow.contentDescription = null
+                // ViewHolder 会复用，两个分支都要显式写：setOnClickListener 会把 clickable 置 true
+                authorRow.setOnClickListener(null)
+                authorRow.isClickable = false
+            }
         }
 
         private fun bindClickListeners(awemeId: String) {
