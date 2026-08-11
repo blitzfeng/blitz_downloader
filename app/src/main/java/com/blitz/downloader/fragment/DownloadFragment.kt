@@ -62,15 +62,18 @@ class DownloadFragment : Fragment() {
             }
         }.attach()
 
-        // 跨 tab 的作者作品请求：本层只负责把子 tab 切到「列表下载」，请求本身交给
-        // ListDownloadFragment 消费。切换是幂等的，重复收到同一请求不会有副作用。
+        // 「把子 tab 切到列表下载」这条 latch 只有本页一个消费者，切完自己清值。
+        // 请求本体（作者是谁）走另一条 latch，由 ListDownloadFragment 消费——本页**不要**
+        // 顺手去观察它：两个消费者共享一条 conflated StateFlow、由其中之一清值，正确性就
+        // 依赖了收集器唤醒顺序，理由见 ShellNavViewModel 注释的「铁律」一节。
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                shellNav.authorPostsRequest.collect { request ->
-                    if (request == null) return@collect
+                shellNav.pendingDownloadListTab.collect { pending ->
+                    if (!pending) return@collect
                     if (binding.viewPagerDownload.currentItem != POS_LIST) {
                         binding.viewPagerDownload.setCurrentItem(POS_LIST, false)
                     }
+                    shellNav.consumePendingDownloadListTab()
                 }
             }
         }

@@ -180,6 +180,8 @@ class ListDownloadFragment : Fragment() {
                 launch { viewModel.uiState.collect { render(it) } }
                 launch { viewModel.cookieStatus.collect { renderCookieStatus(it) } }
                 launch { viewModel.events.collect { handleEvent(it) } }
+                // 本页是 authorPostsRequest 这条 latch 的**唯一**消费者（外壳与 DownloadFragment
+                // 各有自己的 latch），所以这里同步清值不会抢掉别人的通知。
                 // 放在 events 收集器之后只是书写顺序，本路径不依赖它——见 consumeAuthorPostsRequest
                 launch {
                     shellNav.authorPostsRequest.collect { request ->
@@ -416,6 +418,13 @@ class ListDownloadFragment : Fragment() {
      * 按返回时把事件抢走。而 `FragmentStateAdapter` 只把当前子页 resume、MainActivity 只把
      * 可见 tab resume，两层叠加后「本页 resume 过且未 pause」恰好等价于「它是可见 tab 的可见子页」，
      * 这就是 [isPageResumed] 的含义。
+     *
+     * **[ShellNavViewModel.hasAuthorPostsOrigin] 不是 flow**，本方法不会对它的变化自动做出反应：
+     * 任何改动来源 tab 的调用点都必须自己再调一次本方法。当前三处——[backCallback]
+     * （`takeAuthorPostsOrigin` 后紧接 `exitAuthorPostsMode` → `render` → 本方法）、
+     * [exitAuthorPostsMode]（显式调）、消费请求（`markAuthorPostsMode` → `render` → 本方法）。
+     * 新增第四处时漏调一次，返回键就会停在错误的启用态。约束同时写在
+     * [ShellNavViewModel] 的 `authorPostsOrigin` 注释里。
      */
     private fun updateBackCallback() {
         if (_binding == null) return

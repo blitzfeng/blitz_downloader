@@ -107,8 +107,11 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
             onAuthorClick = { entity ->
                 shellNav.requestAuthorPosts(
                     secUserId = entity.videoAuthorSecUserId,
-                    nickname = entity.userName,
+                    // 与 ManageGridAdapter 里作者行的显示 / 无障碍文案统一：昵称为空的记录
+                    // 用 awemeId 兜底，否则「正在查看 __ 的作品」会缺个名字
+                    nickname = entity.userName.ifBlank { entity.awemeId },
                     originTab = MainActivity.TAB_MANAGE,
+                    targetTab = MainActivity.TAB_DOWNLOAD,
                 )
             },
             supportsUserTags = true,

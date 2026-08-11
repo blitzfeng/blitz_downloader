@@ -93,31 +93,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 观察 [ShellNavViewModel] 的两条导航请求。
+     * 观察 [ShellNavViewModel.pendingTab]——外壳在中转站里**只认这一条** latch，
+     * 也只负责"切到哪个底部 tab"，不关心是谁、为什么请求的。
      *
-     * 外壳只负责"切到哪个底部 tab"，不关心请求内容——作者请求的实际消费在
-     * [com.blitz.downloader.fragment.ListDownloadFragment]，那里才 `consume`。
-     * 所以这里读到作者请求时**不清它**，只把 tab 切过去。
+     * 跨 tab 业务的其余动作各有自己的 latch 与唯一消费者（下载页子 tab 在
+     * [com.blitz.downloader.fragment.DownloadFragment]、作者请求本体在
+     * [com.blitz.downloader.fragment.ListDownloadFragment]）。
+     * **不要**为了图省事让这里也去观察别人的流：多个消费者共享一条 conflated `StateFlow`、
+     * 由其中之一清值，正确性就依赖了收集器的唤醒顺序——理由与那次事故见 [ShellNavViewModel] 注释。
      */
     private fun observeShellNav() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch {
-                    shellNav.authorPostsRequest.collect { request ->
-                        if (request == null) return@collect
-                        if (currentTab != TAB_DOWNLOAD) {
-                            binding.bottomNav.selectedItemId = itemIdOf(TAB_DOWNLOAD)
-                        }
+                shellNav.pendingTab.collect { tab ->
+                    if (tab == null) return@collect
+                    if (currentTab != tab) {
+                        binding.bottomNav.selectedItemId = itemIdOf(tab)
                     }
-                }
-                launch {
-                    shellNav.pendingTab.collect { tab ->
-                        if (tab == null) return@collect
-                        if (currentTab != tab) {
-                            binding.bottomNav.selectedItemId = itemIdOf(tab)
-                        }
-                        shellNav.consumePendingTab()
-                    }
+                    shellNav.consumePendingTab()
                 }
             }
         }
