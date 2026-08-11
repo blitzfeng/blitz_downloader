@@ -54,7 +54,9 @@ object TagQueryDialog {
         fun baseTag(): String {
             val first = rows.firstOrNull() ?: return ""
             val spinner: Spinner = first.findViewById(R.id.spTagQueryBase)
-            return spinner.selectedItem as? String ?: ""
+            val selected = spinner.selectedItem as? String ?: return ""
+            // 选中占位符视同未选：调用方（buildQuery/refreshChrome）据此把整条规则当作未激活处理。
+            return if (selected == tagHint) "" else selected
         }
 
         fun buildQuery(): TagQuery {
@@ -109,8 +111,11 @@ object TagQueryDialog {
             val row = inflater.inflate(R.layout.item_tag_query_rule, rowsContainer, false)
 
             row.findViewById<Spinner>(R.id.spTagQueryBase).apply {
-                adapter = spinnerAdapter(allTags)
-                val index = allTags.indexOf(current.base).takeIf { it >= 0 } ?: 0
+                // 基准列复用规则行标签列同一套占位口径（tagItems = 占位符 + allTags）：
+                // 找不到 current.base（首次打开为空串，或原基准标签已被删除/改名）时落回占位符，
+                // 而不是静默落到 allTags 的第一个标签——避免「凭空按某个标签筛」或「基准被静默换掉」。
+                adapter = spinnerAdapter(tagItems)
+                val index = tagItems.indexOf(current.base).takeIf { it >= 0 } ?: 0
                 setSelection(index)
                 onItemSelectedListener = onAnySelection
             }
@@ -137,7 +142,9 @@ object TagQueryDialog {
                     rowsContainer.removeView(row)
                     rows.firstOrNull()?.let { newFirst ->
                         val spBase: Spinner = newFirst.findViewById(R.id.spTagQueryBase)
-                        val index = allTags.indexOf(baseBeforeRemoval).takeIf { it >= 0 } ?: 0
+                        // adapter 是 tagItems（占位符 + allTags），下标要按 tagItems 找，
+                        // 不能再用 allTags：两者索引整体错开一位，用错会选中相邻的标签。
+                        val index = tagItems.indexOf(baseBeforeRemoval).takeIf { it >= 0 } ?: 0
                         spBase.setSelection(index)
                     }
                     refreshChrome()
