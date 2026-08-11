@@ -32,14 +32,16 @@ JVM 单元测试目前只有 5 个，都是纯 JVM、不读外部 fixture：`Awe
 ```
 activity (MainActivity, DouyinWebBrowserActivity, ManageActivity, TagManageActivity,
           SettingsActivity, VideoPlayerActivity, ImageViewerActivity)
-fragment (ListDownloadFragment, SingleDownloadFragment, ManageVideoFragment, ManageImageFragment)
+fragment (DownloadFragment → ListDownloadFragment / SingleDownloadFragment（列表下载在前）,
+          ManageFragment → ManageVideoFragment / ManageImageFragment, SettingsFragment)
 adapter  (VideoGridAdapter, ManageGridAdapter, TagManageAdapter, TagFilterAdapter, AuthorFilterAdapter)
 dialog   (PhotoSelectionBottomSheet)
    │  ▲  视图层：只渲染 uiState、转发用户操作、弹对话框与跳转
    ▼  │
 viewmodel (ListDownloadViewModel, ManageViewModel — Activity 级,
            ManageTabViewModel → ManageVideoViewModel / ManageImageViewModel,
-           SettingsViewModel, TagManageViewModel)
+           SettingsViewModel, TagManageViewModel,
+           ShellNavViewModel — Activity 级跨 tab 导航中转)
    │       业务层：网络请求、数据库读写、分页与筛选、状态持有
    ▼
 download (BatchDownloadCoordinator, DouyinVideoHttp, MediaExportManager,
@@ -187,6 +189,42 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 
 导出计数（`exportCount`，v11）：**只有局域网导出会累加**——`LanFileServer` 把某条记录字节完整写出 socket 后回调 `TransferEvent`，由 `DownloadedVideoRepository.incrementExportCount(...)` 做 `SET exportCount = exportCount + 1` 的原子累加（**不要**改成"读实体→改→整行 update"，并发写会互相覆盖）。ZIP 导出、`HEAD` 探测、中途断连都不累加。它只表示"手机已完整发出"，不代表电脑落盘，只作提示与二次确认依据。语义细节见 `.cursor/rules/db-schema.md` 的 exportCount 小节。
 
+### 跨 tab 导航（`ShellNavViewModel`）
+
+底部导航三页之间的跳转请求走 Activity 级的 `ShellNavViewModel`，目前只有一条业务：
+**管理页点卡片上的作者名 → 下载页加载 TA 的发布作品**。
+
+链路（每一跳都幂等，只有终点消费）：
+
+```
+ManageGridAdapter 作者行点击（videoAuthorSecUserId 非空、非多选态）
+  → ManageVideoFragment / ManageImageFragment
+  → ShellNavViewModel.requestAuthorPosts(secUserId, nickname, originTab = TAB_MANAGE)
+      ├─ MainActivity 观察 → 切到 TAB_DOWNLOAD
+      ├─ DownloadFragment 观察 → setCurrentItem(POS_LIST)
+      └─ ListDownloadFragment 观察 → markAuthorPostsMode + enterAuthorPostsMode，然后 consume
+```
+
+三条别踩的规则：
+
+- **请求用 `StateFlow<AuthorPostsRequest?>` + 显式 `consume()`，不要改成一次性事件。**
+  `ListDownloadFragment` 是 ViewPager2 懒创建的，而 `DownloadFragment` 本身也由 `MainActivity`
+  按需 `add`——点下载完成通知冷启动会落在 `TAB_MANAGE`（见 `DownloadService`），那条路径下它
+  压根不存在，`SharedFlow(replay = 0)` 在无订阅者时会把 emit 直接丢弃。这与 `DownloadEvents`
+  用一次性事件并不矛盾：那里有 `onResume` 整表回查兜底，这里没有兜底路径可用。
+  **也不要**改成"靠把列表下载放在第一个子 tab 来保证它已被创建"——tab 顺序是产品决定。
+- **外部入口不复用 `ListDownloadEvent.EnterAuthorPostsMode`**：Fragment 在同一个
+  `repeatOnLifecycle` 块里 `launch` 多个收集器，若 shellNav 那个先跑并同步调进 ViewModel，
+  `events` 收集器可能还没建立订阅。两个入口在 Fragment 侧汇合于 `enterAuthorPostsMode(url)`，
+  共用 ViewModel 的 `markAuthorPostsMode(nickname)` 与 companion 里的 `authorPostsUrl(secUid)`。
+- **返回键用 `isPageResumed` 标志位判定"本页在前台"，不能用 `!isHidden`**：`ListDownloadFragment`
+  是孙辈（`MainActivity` → `DownloadFragment` → `ViewPager2` → 本页），父页被 `hide` 时它自己的
+  `isHidden` 仍是 false，只看它会在管理页按返回时把事件抢走；`onResume`/`onPause` 里维护的
+  `isPageResumed` 才等价于"它是可见 tab 的可见子页"。来源 tab 存在 `ShellNavViewModel` 的私有
+  字段里（与 request 分开存活：request 一被消费就清，来源要活到退出作者模式）。
+
+`videoAuthorSecUserId` 为空的旧记录（该列 v5 引入）作者行不显示图标、也不可点。
+
 ### 管理页的筛选栈
 
 `ManageActivity` 只管 Toolbar / 菜单 / 抽屉 / 对话框；**筛选条件与多选状态的权威在 Activity 级的 `ManageViewModel`**（按 Tab 独立维护），取数在 `ManageTabViewModel` 的两个实现（`ManageVideoViewModel`、`ManageImageViewModel`）里。
@@ -250,6 +288,7 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 - Kotlin/JVM target 是 **11**；**没有**用 Compose，UI 全部是 XML + View Binding + Fragment。
 - 新增页面时先想清楚"网络 / 数据库操作放 ViewModel、其余留视图层"这条线在哪，别把控件操作也搬进 ViewModel（那会引回 Context 依赖）。包结构与 ViewModel 的边界见上方「包结构约定」。
 - 图片加载用 **Coil 2.7**，不是 Glide。
+- 下载页的两个子 tab 顺序是**「列表下载」在前、「单视频下载」在后**（`DownloadFragment.POS_LIST = 0`），因为批量列表是主场景（`BatchListDownloadScope.PRIMARY_TARGET_IS_LOGGED_IN_LISTS = true`）。副作用是列表页成了冷启动第一屏，所以它的 `.nomedia` 创建已挪到 IO 线程——新增开屏逻辑时别再往主线程放磁盘 IO。
 
 ## 项目计划文件
 
