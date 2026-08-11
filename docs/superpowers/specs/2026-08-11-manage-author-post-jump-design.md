@@ -53,20 +53,26 @@ tab 顺序**——顺序是产品决定，可能再变。
 Activity 级共享的外壳导航中转站，三方各自 `by activityViewModels()` 拿同一实例。只有导航状态，
 不碰网络与数据库。
 
+> **终审修正（见文末「终审发现与修正」）**：本节原先的设计是三方共享一条
+> `authorPostsRequest`、只有终点消费，那是错的。下面已是修正后的形状：**一条 latch 一个消费者**。
+
 ```kotlin
 data class AuthorPostsRequest(
     val secUserId: String,
     val nickname: String,
-    val originTab: Int,   // MainActivity.TAB_MANAGE
 )
 
 class ShellNavViewModel : ViewModel() {
-    private val _authorPostsRequest = MutableStateFlow<AuthorPostsRequest?>(null)
-    val authorPostsRequest: StateFlow<AuthorPostsRequest?>
+    // 三条 latch，各有唯一消费者，谁消费谁清值
+    val pendingTab: StateFlow<Int?>                    // → MainActivity
+    val pendingDownloadListTab: StateFlow<Boolean>     // → DownloadFragment
+    val authorPostsRequest: StateFlow<AuthorPostsRequest?>  // → ListDownloadFragment
 
     private var authorPostsOrigin: Int? = null
 
-    fun requestAuthorPosts(secUserId: String, nickname: String, originTab: Int)
+    fun requestAuthorPosts(secUserId: String, nickname: String, originTab: Int, targetTab: Int)
+    fun consumePendingTab()
+    fun consumePendingDownloadListTab()
     fun consumeAuthorPostsRequest()      // 置 null，防止配置变更后重放跳转
     fun takeAuthorPostsOrigin(): Int?    // 返回键用：读并清
     fun clearAuthorPostsOrigin()         // 退出作者模式时清
@@ -76,6 +82,9 @@ class ShellNavViewModel : ViewModel() {
 `authorPostsOrigin` 与 request **分开存放**，因为两者生命周期不同：request 一被消费就该清掉
 （否则转屏后重放一次跳转），而来源 tab 要活到用户退出作者模式为止。
 
+`targetTab` 由调用方传入而不是在 ViewModel 里写死，这样 `ShellNavViewModel` 不用 import
+`MainActivity`，保持与 Activity 的解耦。
+
 ### 数据流
 
 ```
@@ -83,17 +92,22 @@ ManageGridAdapter：昵称点击（videoAuthorSecUserId 非空、非多选态）
   │  onAuthorClick(entity)
   ▼
 ManageVideoFragment / ManageImageFragment
-  │  shellNav.requestAuthorPosts(secUserId, userName, TAB_MANAGE)
+  │  shellNav.requestAuthorPosts(secUserId, userName.ifBlank { awemeId },
+  │                              originTab = TAB_MANAGE, targetTab = TAB_DOWNLOAD)
   ▼
-ShellNavViewModel.authorPostsRequest ── StateFlow 持有，等消费者上线
-  ├─▶ MainActivity 观察 → bottomNav.selectedItemId = nav_download（幂等）
-  ├─▶ DownloadFragment 观察 → viewPagerDownload.setCurrentItem(POS_LIST, false)（幂等）
-  └─▶ ListDownloadFragment 观察 → 消费并 consumeAuthorPostsRequest()
+ShellNavViewModel 一次置三条 latch（各自 StateFlow 持有，等自己的消费者上线）
+  ├─ pendingTab             ─▶ MainActivity        切到 TAB_DOWNLOAD          → consumePendingTab()
+  ├─ pendingDownloadListTab ─▶ DownloadFragment    setCurrentItem(POS_LIST)   → consumePendingDownloadListTab()
+  └─ authorPostsRequest     ─▶ ListDownloadFragment markAuthorPostsMode +
+                                                   enterAuthorPostsMode      → consumeAuthorPostsRequest()
 ```
 
-前两个观察者只做幂等的切 tab，**只有终点消费**。三者都用 `repeatOnLifecycle(STARTED)`：被隐藏的
-tab 页停在 `STARTED`（`MainActivity` 的约定 2），订阅是活的；`StateFlow` 又会把当前值立刻发给新
-订阅者，所以"页面刚被创建出来"这一刻正好能拿到。
+**每条 latch 恰好一个消费者，消费者自己清值**，所以三个收集器谁先被唤醒都不影响结果。
+三者都用 `repeatOnLifecycle(STARTED)`：被隐藏的 tab 页停在 `STARTED`（`MainActivity` 的约定 2），
+订阅是活的；`StateFlow` 又会把当前值立刻发给新订阅者，所以"页面刚被创建出来"这一刻正好能拿到
+仍挂着的 latch。
+
+**绝不能让两个地方观察同一条流、由其中之一清值**（那就是原设计的错），机制见文末。
 
 ### 必须避开的竞态：外部入口不走一次性事件
 
@@ -265,8 +279,8 @@ Robolectric + 修 junit 版本，代价远大于收益。
 | 文件 | 改动 |
 |------|------|
 | `viewmodel/ShellNavViewModel.kt` | **新增** |
-| `activity/MainActivity.kt` | 观察 request → 切下载 tab |
-| `fragment/DownloadFragment.kt` | 交换子 tab 顺序；观察 request → `setCurrentItem(POS_LIST)` |
+| `activity/MainActivity.kt` | 观察 `pendingTab` → 切下载 tab |
+| `fragment/DownloadFragment.kt` | 交换子 tab 顺序；观察 `pendingDownloadListTab` → `setCurrentItem(POS_LIST)` |
 | `fragment/ListDownloadFragment.kt` | 消费 request；返回键 callback；`createNoMediaFile` 挪 IO 线程 |
 | `viewmodel/ListDownloadViewModel.kt` | 抽出 `markAuthorPostsMode(nickname)`，URL 拼接收进 companion |
 | `adapter/ManageGridAdapter.kt` | 新增 `onAuthorClick` 回调与作者行绑定 |
@@ -283,3 +297,81 @@ CLAUDE.md 里还有一批被上一个 commit（页面改造为 tab+页面结构�
 `ManageActivity` / `SettingsActivity`，「管理页的筛选栈」一节还在说「`ManageActivity` 只管
 Toolbar/菜单/抽屉」，「持久化」一节还在说「由 MainActivity Toolbar 的设置图标进入」。这些**不在
 本次范围**，单列为后续待办，避免一个导航改动的 diff 里夹大篇文档重写。
+
+---
+
+## 终审发现与修正（2026-08-11，分支终审后追加）
+
+功能完成、`assembleDebug` 通过之后的全分支终审（whole-branch code review）抓到一个 Critical
+缺陷和若干次要问题。原设计的机制描述有误，本节记录错在哪、以及修正后的形状。
+
+### Critical：三方共享一条 conflated `StateFlow` + 终点同步清值 → 切 tab 会间歇性静默失效
+
+**原设计**：`authorPostsRequest` 一条流被 `MainActivity`（切底部 tab）、`DownloadFragment`
+（切子 tab）、`ListDownloadFragment`（消费并 `consume()` 清值）三方观察，写着
+「每一跳都幂等，只有终点消费」。
+
+**错在哪**：把「幂等」当成了充分条件。幂等只保证"重复收到没坏处"，不保证"收得到"。
+
+- `StateFlow` 是**合并（conflated）**语义：收集器的 slot 被唤醒后读的是 `_state.value` 的
+  **当时值**，不是唤醒它的那个值。终点若先被唤醒，它会在同一次 `setValue` 的派发过程中把值
+  清成 null；另两个收集器随后醒来读到 null，而它们的 `oldState` 本来也是 null（订阅时的初始值），
+  `StateFlowImpl.collect` 里 `oldState != newState` 的判定认为"值没变"→ **直接跳过 emit，
+  连回调都不进**。两个切 tab 动作就此静默丢失。
+- 唤醒顺序 = 内部 slots 数组的下标顺序，而 `AbstractSharedFlow.allocateSlot()` 从 `nextIndex`
+  轮转分配，反复订阅/退订后会洗牌，**没有任何保证**。
+- 更有一条把顺序**系统性倒过来**的路径：API 29+ 上 Activity 的 `ON_START` 由
+  `ReportFragment.onActivityPostStarted` 派发，**晚于** `FragmentActivity.onStart()` 里的
+  `mFragments.dispatchStart()`。即每次 stop→start 循环（按 Home 再回来、转屏）之后，两个
+  Fragment 的收集器都**先于** `MainActivity` 的收集器重新订阅。
+
+**症状**：冷启动那一次侥幸是对的（`ListDownloadFragment` 由 ViewPager2 在首次 layout 才创建，
+订阅最晚），按一次 Home 回来后在管理页点作者名，界面看起来什么都没发生（仍停在管理页），
+而下载页已在后台进了作者模式并发起了网络请求。无日志、无提示——这是本功能唯一的用户可见行为。
+
+**修正**：拆成三条 latch，**每条恰好一个消费者，消费者自己清值**，顺序再也无关。
+新增 `pendingDownloadListTab: StateFlow<Boolean>` 只给 `DownloadFragment`；`MainActivity`
+删掉对 `authorPostsRequest` 的观察，底部 tab 切换改由本来就形状正确的 `pendingTab` 承担
+（`requestAuthorPosts` 多收一个 `targetTab` 参数来置它）。
+
+被否掉的替代方案：**把清值推到下一帧**（`view?.post { consume() }`）。那是把正确性押在帧边界上，
+比原实现更脆，看着能过测试而已。
+
+### Important：请求没有时效，可能被"延迟传送"（接受并记录）
+
+`authorPostsRequest` 会一直等到消费者上线，这是懒创建的必需品，但没有上界。可达路径：
+点作者名 → 外壳已切到下载 tab、但 ViewPager2 还没完成首次 layout（`ListDownloadFragment`
+未创建）→ 用户立刻点「设置」tab → 请求仍挂着 → 等他以后某次回到下载 tab 才被消费 → 界面
+莫名进入某个作者的作品模式，用户已经不记得自己点过。
+
+**处理方式：接受并记录**，写进 `authorPostsRequest` 的 KDoc 与 CLAUDE.md。不加时间戳与过期
+阈值——窗口只有一两帧、影响仅是多加载一次列表，而加过期要引入时钟基准（`elapsedRealtime`
+还得考虑进程重启），收益不匹配。写下来是为了让后人别把它当 bug 反复排查。
+
+### Important：`hasAuthorPostsOrigin` 的隐含约束没写下来
+
+`authorPostsOrigin` 是裸字段不是 flow，`ListDownloadFragment.updateBackCallback()` 无法对它的
+变化自动反应——正确性靠"每个改它的地方都记得手动刷一次返回键状态"。当前三个调用点都补了、
+没有可感知的 bug，但新增第四处漏一次，返回键就会停在错误的启用态。
+
+**处理方式**：约束写进 `authorPostsOrigin` / `hasAuthorPostsOrigin` / `updateBackCallback()`
+的 KDoc 与 CLAUDE.md。**不**改成 flow——当前三个调用点，收益不足。
+
+### Minor
+
+- **昵称空白时两处兜底不一致**：`ManageGridAdapter` 的作者行显示与无障碍文案用
+  `entity.userName.ifBlank { entity.awemeId }`，但两个管理页 Fragment 传给 `requestAuthorPosts`
+  的是裸的 `entity.userName`，昵称为空的记录会让状态栏渲染成「正在查看　的作品」
+  （`author_posts_mode_hint` 少个名字）。已统一到 `ifBlank { awemeId }`。
+- **`strings.xml` 注释错位**：新增的 `manage_author_posts_desc` 及其注释被插在既有注释
+  `<!-- 视频卡片左下角的「未看过」标记 -->` 和它描述的 `manage_unwatched_label` 之间，
+  那条注释于是悬在一个无关的字符串上。已把新增的「注释 + 字符串」整体前移。
+
+### 终审复核后决定**不改**的
+
+| 项 | 裁决 |
+|----|------|
+| `authorRow` 的 `wrap_content` 宽度 | 复核测量链无裁切风险，留着 |
+| `authorPostsUrl` 放在 `ListDownloadViewModel` 的 companion | 等第三个调用方出现时再挪去 `api/AwemeWebUrls` 或 `util/UrlUtils` |
+| `ivAuthorIcon` 的 `contentDescription="@null"` | 纯风格 |
+| 不新增自动化测试 | 维持「测试策略」一节的决定 |

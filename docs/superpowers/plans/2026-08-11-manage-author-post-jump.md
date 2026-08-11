@@ -903,6 +903,11 @@ git commit -m "feature: 管理页作者名可点击，跳批量下载加载 TA �
 
 - [ ] **Step 2: 新增「跨 tab 导航」一节**
 
+> **已被终审修正，不要照抄下面这段。** 下面的「每一跳都幂等，只有终点消费」是错的（三方共享
+> 一条 conflated `StateFlow` 由终点清值 = 依赖收集器唤醒顺序），实际实现已改成「一条 latch
+> 一个消费者」。权威文本见 CLAUDE.md 的「### 跨 tab 导航」一节，来龙去脉见
+> `docs/superpowers/specs/2026-08-11-manage-author-post-jump-design.md` 的「终审发现与修正」。
+
 在「### 管理页的筛选栈」这一节**之前**插入：
 
 ```markdown

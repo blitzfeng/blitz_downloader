@@ -194,19 +194,38 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 底部导航三页之间的跳转请求走 Activity 级的 `ShellNavViewModel`，目前只有一条业务：
 **管理页点卡片上的作者名 → 下载页加载 TA 的发布作品**。
 
-链路（每一跳都幂等，只有终点消费）：
+中转站的形状是**一条 latch 一个消费者，谁消费谁清值**。一次业务要做几个动作，就开几条
+`StateFlow`，每条恰好一个消费者：
 
 ```
 ManageGridAdapter 作者行点击（videoAuthorSecUserId 非空、非多选态）
   → ManageVideoFragment / ManageImageFragment
-  → ShellNavViewModel.requestAuthorPosts(secUserId, nickname, originTab = TAB_MANAGE)
-      ├─ MainActivity 观察 → 切到 TAB_DOWNLOAD
-      ├─ DownloadFragment 观察 → setCurrentItem(POS_LIST)
-      └─ ListDownloadFragment 观察 → markAuthorPostsMode + enterAuthorPostsMode，然后 consume
+  → ShellNavViewModel.requestAuthorPosts(
+        secUserId, nickname, originTab = TAB_MANAGE, targetTab = TAB_DOWNLOAD)
+      ├─ pendingTab              ─▶ MainActivity        切到 TAB_DOWNLOAD → consumePendingTab
+      ├─ pendingDownloadListTab  ─▶ DownloadFragment    setCurrentItem(POS_LIST) → consumePendingDownloadListTab
+      └─ authorPostsRequest      ─▶ ListDownloadFragment markAuthorPostsMode + enterAuthorPostsMode → consumeAuthorPostsRequest
 ```
 
-三条别踩的规则：
+三条 latch 互不相干，收集器谁先醒都不影响结果。`targetTab` 由调用方传入而非写死在
+ViewModel 里，`ShellNavViewModel` 才不用 import `MainActivity`。
 
+四条别踩的规则：
+
+- **一条 latch 只能有一个消费者，绝不能多个地方观察同一条流再由其中之一清值。**
+  这是本功能终审抓到的 Critical 缺陷（原实现让 `MainActivity` / `DownloadFragment` /
+  `ListDownloadFragment` 三方共享 `authorPostsRequest`，只有终点清值）。`StateFlow` 是
+  **合并（conflated）**语义：收集器的 slot 被唤醒后读的是 `_state.value` 的**当时值**，
+  不是唤醒它的那个值。终点若先醒，它会在同一次 `setValue` 的派发里把值清成 null；另两方
+  随后醒来读到 null，而它们的 `oldState` 本来也是 null，`StateFlowImpl.collect` 里
+  `oldState != newState` 判定"值没变"→ **跳过 emit，连回调都不进**，两个切 tab 动作静默丢失。
+  而唤醒顺序 = 内部 slots 数组下标序，`AbstractSharedFlow.allocateSlot()` 轮转分配，
+  反复订阅/退订后会洗牌，**没有任何保证**；更有一条系统性倒序的路径：API 29+ 上 Activity 的
+  `ON_START` 由 `ReportFragment.onActivityPostStarted` 派发，**晚于** `FragmentActivity.onStart()`
+  里的 `mFragments.dispatchStart()`，所以每次 stop→start（按 Home 回来、转屏）之后 Fragment
+  侧的收集器都先于 Activity 侧重新订阅。表现是"冷启动能用、按一次 Home 回来点作者名毫无反应"。
+  **"幂等"不是充分条件**——它只保证重复收到没坏处，不保证收得到。
+  也**不要**用"把清值推到下一帧"（`view?.post { … }`）绕过去，那是把正确性押在帧边界上。
 - **请求用 `StateFlow<AuthorPostsRequest?>` + 显式 `consume()`，不要改成一次性事件。**
   `ListDownloadFragment` 是 ViewPager2 懒创建的，而 `DownloadFragment` 本身也由 `MainActivity`
   按需 `add`——点下载完成通知冷启动会落在 `TAB_MANAGE`（见 `DownloadService`），那条路径下它
@@ -221,9 +240,22 @@ ManageGridAdapter 作者行点击（videoAuthorSecUserId 非空、非多选态�
   是孙辈（`MainActivity` → `DownloadFragment` → `ViewPager2` → 本页），父页被 `hide` 时它自己的
   `isHidden` 仍是 false，只看它会在管理页按返回时把事件抢走；`onResume`/`onPause` 里维护的
   `isPageResumed` 才等价于"它是可见 tab 的可见子页"。来源 tab 存在 `ShellNavViewModel` 的私有
-  字段里（与 request 分开存活：request 一被消费就清，来源要活到退出作者模式）。
+  字段 `authorPostsOrigin` 里（与 request 分开存活：request 一被消费就清，来源要活到退出作者模式）。
+  它**不是 flow**，`updateBackCallback()` 无法对它的变化自动反应——**任何改动它的调用点都必须
+  自己再触发一次返回键状态刷新**。当前三处都补了；新增第四处漏一次，返回键就停在错误的启用态。
 
-`videoAuthorSecUserId` 为空的旧记录（该列 v5 引入）作者行不显示图标、也不可点。
+两条记录在案的已知行为，别当 bug 排查：
+
+- **请求没有时效**：`authorPostsRequest` 会一直等到消费者上线，没有上界。点作者名后外壳已切到
+  下载 tab、但 ViewPager2 还没完成首次 layout（`ListDownloadFragment` 未创建）时立刻切去「设置」，
+  请求会一直挂着，直到用户以后某次回到下载 tab 才被消费，界面莫名进入某个作者的作品模式。
+  **有意不加过期阈值**：窗口只有一两帧，而加过期要引入时间戳与时钟基准，收益不匹配。
+- **连点同一个作者两次**：`MutableStateFlow` 的 setter 对相等值是 no-op，所以第二次点在请求已被
+  消费后才有效（重新置值）；若在消费前连点，第二次是空操作——用户看到的结果一样，无副作用。
+
+`videoAuthorSecUserId` 为空的旧记录（该列 v5 引入）作者行不显示图标、也不可点。昵称为空的记录
+统一用 `awemeId` 兜底（`ManageGridAdapter` 的显示 / 无障碍文案与传给 `requestAuthorPosts` 的
+`nickname` 是同一份口径）。
 
 ### 管理页的筛选栈
 
