@@ -155,12 +155,15 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun queryPage(firstPage: Boolean): List<DownloadedVideoEntity> {
         val f = filters
         return when {
-            // 必须排在最前：精细检索激活时 tags 恒为空（两者互斥），
-            // 排在 `f.tags.isEmpty() && ...` 之后会被那些分支截走。
-            f.tagQuery.isActive -> oneShot(firstPage) { postProcess(loadTagQueryEntities()) }
+            // 作者 / 搜索必须排在 tagQuery 之前：搜索与精细检索刻意不互清（同口径于标签栏多选），
+            // 搜索期间要临时压住规则结果，退出搜索规则结果再自动回来——顺序反了会导致激活精细检索后
+            // 搜索框输入任何文字列表都纹丝不动，看起来像搜索坏了。
             f.hasAuthorFilter -> oneShot(firstPage) { postProcess(loadAuthorEntities()) }
             f.searchQuery.isNotBlank() ->
                 oneShot(firstPage) { postProcess(repo.searchByUserName(mediaType, f.searchQuery)) }
+            // 只需排在 tags 相关分支之前：精细检索激活时 tags 恒为空（两者互斥），
+            // 排在 `f.tags.isEmpty() && ...` 之后会被那些分支截走。
+            f.tagQuery.isActive -> oneShot(firstPage) { postProcess(loadTagQueryEntities()) }
             f.tags.isEmpty() && f.hasMemoryOnlyFilter ->
                 oneShot(firstPage) { postProcess(repo.getAllByMediaType(mediaType)) }
             f.tags.isEmpty() -> {
@@ -303,10 +306,11 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
     /** 当前范围（搜索 / 标签 / 作者 / 全部）在数据库中的全部记录。 */
     private suspend fun loadFullScopeEntities(): List<DownloadedVideoEntity> = withContext(Dispatchers.IO) {
         val f = filters
+        // 顺序与 queryPage(...) 保持一致：author / search 优先于 tagQuery，理由见那边的注释。
         val list = when {
-            f.tagQuery.isActive -> loadTagQueryEntities()
             f.hasAuthorFilter -> loadAuthorEntities()
             f.searchQuery.isNotBlank() -> repo.searchByUserName(mediaType, f.searchQuery)
+            f.tagQuery.isActive -> loadTagQueryEntities()
             f.tags.isEmpty() -> repo.getAllByMediaType(mediaType)
             else -> tagRepo.getVideosByTags(f.tags, tagMatchAll()).filter { it.mediaType == mediaType }
         }
