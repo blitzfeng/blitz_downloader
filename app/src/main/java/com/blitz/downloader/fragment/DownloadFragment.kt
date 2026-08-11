@@ -8,9 +8,15 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import com.blitz.downloader.databinding.FragmentDownloadBinding
+import com.blitz.downloader.viewmodel.ShellNavViewModel
 import com.google.android.material.tabs.TabLayoutMediator
+import kotlinx.coroutines.launch
 
 /**
  * 底部导航「下载」页：内部保留原有的「单视频下载 / 列表下载」两个子 Tab。
@@ -22,6 +28,8 @@ class DownloadFragment : Fragment() {
 
     private var _binding: FragmentDownloadBinding? = null
     private val binding get() = _binding!!
+
+    private val shellNav: ShellNavViewModel by activityViewModels()
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -48,11 +56,24 @@ class DownloadFragment : Fragment() {
 
         TabLayoutMediator(binding.tabLayoutDownload, binding.viewPagerDownload) { tab, position ->
             tab.text = when (position) {
-                POS_SINGLE -> "单视频下载"
                 POS_LIST -> "列表下载"
+                POS_SINGLE -> "单视频下载"
                 else -> ""
             }
         }.attach()
+
+        // 跨 tab 的作者作品请求：本层只负责把子 tab 切到「列表下载」，请求本身交给
+        // ListDownloadFragment 消费。切换是幂等的，重复收到同一请求不会有副作用。
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                shellNav.authorPostsRequest.collect { request ->
+                    if (request == null) return@collect
+                    if (binding.viewPagerDownload.currentItem != POS_LIST) {
+                        binding.viewPagerDownload.setCurrentItem(POS_LIST, false)
+                    }
+                }
+            }
+        }
     }
 
     override fun onDestroyView() {
@@ -65,14 +86,23 @@ class DownloadFragment : Fragment() {
     private class DownloadPagerAdapter(fragment: Fragment) : FragmentStateAdapter(fragment) {
         override fun getItemCount(): Int = 2
         override fun createFragment(position: Int): Fragment = when (position) {
-            POS_SINGLE -> SingleDownloadFragment()
             POS_LIST -> ListDownloadFragment()
+            POS_SINGLE -> SingleDownloadFragment()
             else -> throw IllegalStateException("Unknown download tab: $position")
         }
     }
 
     private companion object {
-        const val POS_SINGLE = 0
-        const val POS_LIST = 1
+        /**
+         * 「列表下载」置首：批量列表是本项目的主场景
+         * （`BatchListDownloadScope.PRIMARY_TARGET_IS_LOGGED_IN_LISTS = true`）。
+         *
+         * 顺带的好处是冷启动落在下载 tab 时 [ListDownloadFragment] 会立刻被创建。
+         * 但**不要**让任何功能的正确性依赖这一点——顺序是产品决定，而且"点下载完成通知
+         * 冷启动"会落在管理 tab，那条路径下本页压根不会被创建。跨 tab 请求靠
+         * [com.blitz.downloader.viewmodel.ShellNavViewModel] 的 StateFlow 兜住。
+         */
+        const val POS_LIST = 0
+        const val POS_SINGLE = 1
     }
 }
