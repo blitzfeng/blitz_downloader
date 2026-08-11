@@ -41,6 +41,12 @@
         android:title="@string/manage_menu_filter_tag_edit_count"
         app:showAsAction="never" />
 
+    <!-- 普通模式下可见：标签精细检索（仅视频 Tab；与标签栏多选互斥，与其他层叠加） -->
+    <item
+        android:id="@+id/action_filter_tag_query"
+        android:title="@string/manage_menu_filter_tag_query"
+        app:showAsAction="never" />
+
     <!-- 普通模式下可见：列表排序 -->
     <item
         android:id="@+id/action_sort"

@@ -20,6 +20,7 @@ import com.blitz.downloader.activity.VideoPlayerActivity
 import com.blitz.downloader.adapter.ManageGridAdapter
 import com.blitz.downloader.adapter.TagFilterAdapter
 import com.blitz.downloader.model.filter.ManageTagCountFilter
+import com.blitz.downloader.util.TagQueryFormatter
 import com.blitz.downloader.viewmodel.ManageCommand
 import com.blitz.downloader.viewmodel.ManageEmptyReason
 import com.blitz.downloader.viewmodel.ManageTabEvent
@@ -187,6 +188,10 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
                 getString(R.string.manage_tag_filter_empty_any, names)
             }
         }
+        is ManageEmptyReason.TagRules -> getString(
+            R.string.manage_tag_query_empty,
+            TagQueryFormatter.format(requireContext(), reason.query),
+        )
         is ManageEmptyReason.TagCounts -> getString(
             R.string.manage_tag_count_empty,
             ManageTagCountFilter.shortSummary(requireContext(), reason.filters),

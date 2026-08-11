@@ -215,6 +215,15 @@ class VideoTagRepository(context: Context) {
         videoTagDao.getAllTags()
 
     /**
+     * 打了该标签的全部 awemeId（供「标签精细检索」在内存里做集合运算）。
+     *
+     * 精细检索要的是几个标签各自的 id 集合、而不是实体，交给调用方按
+     * [com.blitz.downloader.model.filter.TagQuery] 的左结合语义组合。
+     */
+    suspend fun getAwemeIdsByTag(tagName: String): List<String> =
+        videoTagDao.getAwemeIdsByTag(tagName)
+
+    /**
      * 按标签筛选视频，返回完整 [DownloadedVideoEntity] 列表，按下载时间倒序。
      */
     suspend fun getVideosByTag(tagName: String): List<DownloadedVideoEntity> =

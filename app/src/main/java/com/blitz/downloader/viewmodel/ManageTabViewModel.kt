@@ -15,6 +15,7 @@ import com.blitz.downloader.model.filter.ManageRelationFilter
 import com.blitz.downloader.model.filter.ManageSortOrder
 import com.blitz.downloader.model.filter.ManageTagCountFilter
 import com.blitz.downloader.model.filter.ManageTagEditCountFilter
+import com.blitz.downloader.model.filter.TagQuery
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -154,9 +155,15 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun queryPage(firstPage: Boolean): List<DownloadedVideoEntity> {
         val f = filters
         return when {
+            // 作者 / 搜索必须排在 tagQuery 之前：搜索与精细检索刻意不互清（同口径于标签栏多选），
+            // 搜索期间要临时压住规则结果，退出搜索规则结果再自动回来——顺序反了会导致激活精细检索后
+            // 搜索框输入任何文字列表都纹丝不动，看起来像搜索坏了。
             f.hasAuthorFilter -> oneShot(firstPage) { postProcess(loadAuthorEntities()) }
             f.searchQuery.isNotBlank() ->
                 oneShot(firstPage) { postProcess(repo.searchByUserName(mediaType, f.searchQuery)) }
+            // 只需排在 tags 相关分支之前：精细检索激活时 tags 恒为空（两者互斥），
+            // 排在 `f.tags.isEmpty() && ...` 之后会被那些分支截走。
+            f.tagQuery.isActive -> oneShot(firstPage) { postProcess(loadTagQueryEntities()) }
             f.tags.isEmpty() && f.hasMemoryOnlyFilter ->
                 oneShot(firstPage) { postProcess(repo.getAllByMediaType(mediaType)) }
             f.tags.isEmpty() -> {
@@ -196,6 +203,22 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             repo.getByMediaTypeAndUserName(mediaType, filters.authorName)
         }
+
+    /**
+     * 「标签精细检索」的取数：先在 SQL 侧把每个涉及标签的 awemeId 捞出来，
+     * 再按 [TagQuery] 的左结合语义在内存里做集合运算，最后与本 Tab 的全量记录取交。
+     *
+     * 不新增 `WHERE awemeId IN (:ids)` 的 DAO：涉及标签最多几个（查询次数可控），
+     * 而算出来的 id 集合可能上千，会撞 SQLite 的变量数上限。全量读一次该 mediaType
+     * 的代价与「标签数量 / 标签修改次数」两层的做法一致。
+     */
+    private suspend fun loadTagQueryEntities(): List<DownloadedVideoEntity> {
+        val query = filters.tagQuery
+        val idsByTag = query.involvedTags.associateWith { tagRepo.getAwemeIdsByTag(it).toSet() }
+        val ids = query.evaluate(idsByTag)
+        if (ids.isEmpty()) return emptyList()
+        return repo.getAllByMediaType(mediaType).filter { it.awemeId in ids }
+    }
 
     // -----------------------------------------------------------------------
     // 内存侧筛选与排序
@@ -283,9 +306,11 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
     /** 当前范围（搜索 / 标签 / 作者 / 全部）在数据库中的全部记录。 */
     private suspend fun loadFullScopeEntities(): List<DownloadedVideoEntity> = withContext(Dispatchers.IO) {
         val f = filters
+        // 顺序与 queryPage(...) 保持一致：author / search 优先于 tagQuery，理由见那边的注释。
         val list = when {
             f.hasAuthorFilter -> loadAuthorEntities()
             f.searchQuery.isNotBlank() -> repo.searchByUserName(mediaType, f.searchQuery)
+            f.tagQuery.isActive -> loadTagQueryEntities()
             f.tags.isEmpty() -> repo.getAllByMediaType(mediaType)
             else -> tagRepo.getVideosByTags(f.tags, tagMatchAll()).filter { it.mediaType == mediaType }
         }
@@ -407,6 +432,7 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
         return when {
             f.hasAuthorFilter -> ManageEmptyReason.Author(f.authorName)
             f.searchQuery.isNotBlank() -> ManageEmptyReason.Search(f.searchQuery)
+            f.tagQuery.isActive -> ManageEmptyReason.TagRules(f.tagQuery)
             f.tags.isNotEmpty() -> ManageEmptyReason.Tags(f.tags, tagMatchAll())
             f.tagCounts.isNotEmpty() -> ManageEmptyReason.TagCounts(f.tagCounts)
             f.tagEditCount.isActive -> ManageEmptyReason.TagEditCount(f.tagEditCount)
@@ -444,6 +470,9 @@ sealed interface ManageEmptyReason {
     data class Author(val name: String) : ManageEmptyReason
     data class Search(val query: String) : ManageEmptyReason
     data class Tags(val names: Set<String>, val matchAll: Boolean) : ManageEmptyReason
+
+    /** 标签精细检索无结果。命名避开 `TagQuery`，免得与同名的条件类混淆。 */
+    data class TagRules(val query: TagQuery) : ManageEmptyReason
     data class TagCounts(val filters: Set<ManageTagCountFilter>) : ManageEmptyReason
     data class TagEditCount(val filter: ManageTagEditCountFilter) : ManageEmptyReason
     data object Relation : ManageEmptyReason

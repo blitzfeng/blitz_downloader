@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    「标签精细检索」对话框内容。规则行由 TagQueryDialog 动态加进 llTagQueryRows，
+    行数很少（用户手动一行行加），不值得上 RecyclerView。
+    外层 ScrollView 是为了行数多时仍能滚到「确定」按钮。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="20dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="4dp">
+
+        <LinearLayout
+            android:id="@+id/llTagQueryRows"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <!-- 左结合的行序语义靠置灰的基准标签名看不出来，这行实时表达式用于消除误解 -->
+        <TextView
+            android:id="@+id/tvTagQueryPreview"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:textColor="?android:attr/textColorPrimary"
+            android:textSize="14sp" />
+
+    </LinearLayout>
+
+</ScrollView>

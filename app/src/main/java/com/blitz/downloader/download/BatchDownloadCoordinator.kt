@@ -442,9 +442,16 @@ object BatchDownloadCoordinator {
         return "${user}_${body}"
     }
 
-    /** 去掉 `#xxx`、`＃xxx` 等形式的话题标签，并折叠空白。 */
+    /**
+     * 去掉 `#xxx`、`＃xxx` 等形式的话题标签，并折叠空白。
+     *
+     * 标签体用 `*` 而非 `+`：形如 `"#短发控#"` 这种首尾都带 `#` 的写法，标签体在第二个
+     * `#` 处已经结束，此时只允许「零个」非井号字符也要能吃掉这个孤立的收尾 `#`——用 `+`
+     * 会漏掉它，导致 descClean 残留一个孤立 `#`（非空），不会触发下面的 videoId 回退，
+     * 同一作者名下这类作品会因文件名相同而互相覆盖。
+     */
     internal fun stripHashtagTopics(raw: String): String =
-        Regex("[#＃][^\\s#＃]+").replace(raw, " ")
+        Regex("[#＃][^\\s#＃]*").replace(raw, " ")
             .replace(Regex("\\s+"), " ")
             .trim()
 

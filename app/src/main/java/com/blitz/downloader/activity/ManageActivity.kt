@@ -36,6 +36,7 @@ import com.blitz.downloader.adapter.AuthorFilterAdapter
 import com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.databinding.ActivityManageBinding
+import com.blitz.downloader.dialog.TagQueryDialog
 import com.blitz.downloader.download.MediaExportManager
 import com.blitz.downloader.fragment.ManageImageFragment
 import com.blitz.downloader.fragment.ManageVideoFragment
@@ -172,7 +173,7 @@ class ManageActivity : AppCompatActivity() {
                 }
                 // 筛选条件变化 → 菜单标题回显当前筛选状态。
                 //
-                // **只看影响菜单标题的那三层**：搜索词也在 filters 里，若整体订阅，
+                // **只看影响菜单标题的那四层**：搜索词也在 filters 里，若整体订阅，
                 // 每敲一个字都会 invalidateOptionsMenu() → 菜单重新 inflate →
                 // SearchView 被整个重建（折叠、清空、丢焦点），根本没法输入。
                 launch {
@@ -182,6 +183,7 @@ class ManageActivity : AppCompatActivity() {
                         .collect { invalidateOptionsMenu() }
                 }
                 launch { viewModel.authors.collect { onAuthorsLoaded(it) } }
+                launch { viewModel.tagQueryTags.collect { onTagQueryTagsLoaded(it) } }
                 launch { viewModel.stats.collect { showStatsDialog(it) } }
                 launch { viewModel.zipProgress.collect { renderZipProgress(it) } }
                 launch { viewModel.zipResult.collect { onZipFinished(it) } }
@@ -371,6 +373,42 @@ class ManageActivity : AppCompatActivity() {
         }
     }
 
+    // ── 标签精细检索 ───────────────────────────────────────────────────────────
+
+    /**
+     * 可选标签加载完成 → 弹规则对话框。
+     *
+     * **在这里捕获 tab**：对话框展示期间用户仍可切 Tab，若等到「确定」回调里再读
+     * `currentTab`，条件就会落到另一个 Tab 上（与 [handleExportLan] 同一类坑）。
+     */
+    private fun onTagQueryTagsLoaded(allTags: List<String>) {
+        if (allTags.isEmpty()) {
+            Toast.makeText(this, R.string.manage_set_tags_no_tags, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val tab = currentTab
+        TagQueryDialog.show(
+            context = this,
+            allTags = allTags,
+            current = viewModel.filtersOf(tab).tagQuery,
+        ) { query ->
+            viewModel.applyTagQuery(tab, query)
+        }
+    }
+
+    /**
+     * 菜单标题：未筛选时用原文案，筛选中则附上规则条数。
+     * 只回显条数而不是完整表达式——表达式可能很长，塞进菜单项会被截断。
+     */
+    private fun tagQueryMenuTitle(): String {
+        val query = viewModel.filtersOf(currentTab).tagQuery
+        return if (!query.isActive) {
+            getString(R.string.manage_menu_filter_tag_query)
+        } else {
+            getString(R.string.manage_menu_filter_tag_query_active, query.activeRuleCount)
+        }
+    }
+
     // ── 统计面板 ───────────────────────────────────────────────────────────────
 
     private fun showStatsDialog(stats: ManageStats) {
@@ -440,6 +478,7 @@ class ManageActivity : AppCompatActivity() {
         val filterRelation = menu.findItem(R.id.action_filter_relation)
         val filterTagCount = menu.findItem(R.id.action_filter_tag_count)
         val filterTagEditCount = menu.findItem(R.id.action_filter_tag_edit_count)
+        val filterTagQuery = menu.findItem(R.id.action_filter_tag_query)
         val sort = menu.findItem(R.id.action_sort)
         val stats = menu.findItem(R.id.action_stats)
 
@@ -458,6 +497,7 @@ class ManageActivity : AppCompatActivity() {
             filterRelation?.isVisible = false
             filterTagCount?.isVisible = false
             filterTagEditCount?.isVisible = false
+            filterTagQuery?.isVisible = false
             sort?.isVisible = false
             stats?.isVisible = false
             deleteSelected?.isVisible = true
@@ -488,6 +528,9 @@ class ManageActivity : AppCompatActivity() {
             if (onVideoTab) filterTagCount?.title = tagCountMenuTitle()
             filterTagEditCount?.isVisible = onVideoTab
             if (onVideoTab) filterTagEditCount?.title = tagEditCountMenuTitle()
+            // 标签精细检索同样只在有标签功能的视频 Tab 下显示
+            filterTagQuery?.isVisible = onVideoTab
+            if (onVideoTab) filterTagQuery?.title = tagQueryMenuTitle()
             sort?.isVisible = true
             stats?.isVisible = true
             deleteSelected?.isVisible = false
@@ -585,6 +628,10 @@ class ManageActivity : AppCompatActivity() {
             }
             R.id.action_filter_tag_edit_count -> {
                 showTagEditCountFilterDialog()
+                true
+            }
+            R.id.action_filter_tag_query -> {
+                viewModel.loadTagsForQuery()
                 true
             }
             R.id.action_sort -> {
