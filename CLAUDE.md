@@ -209,7 +209,7 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 | 标签数量（0..5+，**可多选取并集**） | `tagCounts`（空集 = 不筛选） | 只在内存（`postProcess`） |
 | 标签修改次数（0..5 / >5） | `tagEditCount` | 只在内存（`postProcess`，读 `tagEditCount`） |
 
-作者 / 搜索 / 标签三者互斥的清理规则收敛在 `ManageFilterState.withAuthor` / `withSearchQuery` / `withTags`，**不要**在调用处手动清另外两个。
+作者 / 搜索 / 标签 / 标签精细检索四者的互斥清理规则收敛在 `ManageFilterState.withAuthor` / `withSearchQuery` / `withTags` / `withTagQuery` 这四个 `with*` 方法里（`withAuthor` / `withTags` 会清 `tagQuery`；`withTagQuery` 会清 `tags` / `searchQuery` / `authorSecId` / `authorName`），**不要**在调用处手动清另外几个。
 
 几条别踩的规则：
 
@@ -219,7 +219,7 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 - 这两层都**隶属于归属筛选之下**（共用 `scopeByRelation`）：归属为 OFF 时仍按 `EXCLUDE_UNASSIGNED` 收窄，只有用户显式选「仅看无归属」才听用户的。原因是他人主页 post 记录基本没打过标签、更没改过，不排掉「0 个标签」「改过 0 次」就全是它们。
 - 非分页路径（搜索 / 标签 / 作者 / 全选）统一走 `ManageTabViewModel.postProcess(...)` = 归属 → 标签数 → 标签修改次数 → 排序。新增取数入口别绕过它，否则筛选会"漏一层"。
 - 「标签精细检索」（`TagQuery`）与标签栏多选**互斥**：任一生效即清掉另一个，清理规则只写在 `ManageFilterState.withTagQuery` / `withTags` 里，调用处不手动清。求值是**从上到下左结合**（`((A ∩ B) ∪ C) − D`），行序影响结果——**不要**改成「先与非、后或」的优先级，界面上看不出优先级。
-- 精细检索的取数分支必须排在 `queryPage` / `loadFullScopeEntities` 的 `when` **最前面**：它激活时 `tags` 恒为空，排在后面会被 `f.tags.isEmpty() && …` 那些分支截走。它自己就是 `oneShot` 全量路径，**不要**再塞进 `hasMemoryOnlyFilter`。
+- 精细检索的取数分支必须排在 `queryPage` / `loadFullScopeEntities` 的 `when` 里 **`tags` 相关分支之前**：它激活时 `tags` 恒为空，排在 `f.tags.isEmpty() && …` 之后会被那些分支截走。但**不得**再往前压过 `searchQuery` / `hasAuthorFilter`——搜索与精细检索不像标签栏那样互斥（`withSearchQuery` 故意不清 `tagQuery`），搜索优先只是「搜索期间临时压住规则」，退出搜索（清空输入框）规则结果要自动回来；压过 search 会让搜索框输入任何文字都不生效，看起来像搜索被吞掉了。它自己就是 `oneShot` 全量路径，**不要**再塞进 `hasMemoryOnlyFilter`。
 
 ### 持久化（Room）
 
