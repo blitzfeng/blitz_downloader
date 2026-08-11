@@ -4,12 +4,15 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.blitz.downloader.R
 import com.blitz.downloader.databinding.ActivityMainBinding
 import com.blitz.downloader.fragment.DownloadFragment
@@ -17,6 +20,8 @@ import com.blitz.downloader.fragment.ManageFragment
 import com.blitz.downloader.fragment.SettingsFragment
 import com.blitz.downloader.util.DouyinCookieStore
 import com.blitz.downloader.util.MediaPermissions
+import com.blitz.downloader.viewmodel.ShellNavViewModel
+import kotlinx.coroutines.launch
 
 /**
  * 应用主外壳：底部导航栏 + 三个常驻页面（下载 / 管理 / 设置）。
@@ -41,6 +46,9 @@ class MainActivity : AppCompatActivity() {
 
     /** 当前显示的 tab，取值见 [TAB_DOWNLOAD] / [TAB_MANAGE] / [TAB_SETTINGS]。 */
     private var currentTab: Int = TAB_DOWNLOAD
+
+    /** 外壳导航中转站，跨 tab 的跳转请求都经它传递，见 [ShellNavViewModel]。 */
+    private val shellNav: ShellNavViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,6 +89,38 @@ class MainActivity : AppCompatActivity() {
         // selectTab（它自身幂等），否则冷启动落在第一项时页面不会被 add 进来。
         binding.bottomNav.selectedItemId = itemIdOf(startTab)
         selectTab(startTab)
+        observeShellNav()
+    }
+
+    /**
+     * 观察 [ShellNavViewModel] 的两条导航请求。
+     *
+     * 外壳只负责"切到哪个底部 tab"，不关心请求内容——作者请求的实际消费在
+     * [com.blitz.downloader.fragment.ListDownloadFragment]，那里才 `consume`。
+     * 所以这里读到作者请求时**不清它**，只把 tab 切过去。
+     */
+    private fun observeShellNav() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    shellNav.authorPostsRequest.collect { request ->
+                        if (request == null) return@collect
+                        if (currentTab != TAB_DOWNLOAD) {
+                            binding.bottomNav.selectedItemId = itemIdOf(TAB_DOWNLOAD)
+                        }
+                    }
+                }
+                launch {
+                    shellNav.pendingTab.collect { tab ->
+                        if (tab == null) return@collect
+                        if (currentTab != tab) {
+                            binding.bottomNav.selectedItemId = itemIdOf(tab)
+                        }
+                        shellNav.consumePendingTab()
+                    }
+                }
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
