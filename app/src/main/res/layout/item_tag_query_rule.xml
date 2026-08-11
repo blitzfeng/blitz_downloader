@@ -35,7 +35,7 @@
         android:id="@+id/spTagQueryOp"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_weight="1.1" />
+        android:layout_weight="1" />
 
     <Spinner
         android:id="@+id/spTagQueryTag"
@@ -43,14 +43,19 @@
         android:layout_height="wrap_content"
         android:layout_weight="1" />
 
+    <!--
+        textColor 必须显式写：?android:attr/borderlessButtonStyle 在本 App 主题下把文字色
+        解析成 textColorPrimaryInverse（纯白），白底白字什么都看不见。
+    -->
     <Button
         android:id="@+id/btnTagQueryRowAction"
         style="?android:attr/borderlessButtonStyle"
-        android:layout_width="44dp"
+        android:layout_width="40dp"
         android:layout_height="44dp"
         android:minWidth="0dp"
         android:paddingHorizontal="0dp"
         android:text="@string/manage_tag_query_add"
+        android:textColor="?android:attr/textColorPrimary"
         android:textSize="20sp" />
 
 </LinearLayout>

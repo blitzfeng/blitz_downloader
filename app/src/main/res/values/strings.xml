@@ -122,7 +122,7 @@
     <!-- 标签精细检索（仅视频 Tab）：以一个基准标签为起点，逐行叠加集合运算 -->
     <string name="manage_tag_query_op_and">包含</string>
     <string name="manage_tag_query_op_not">不包含</string>
-    <string name="manage_tag_query_op_or">或（取并集）</string>
+    <string name="manage_tag_query_op_or">或</string>
     <string name="manage_tag_query_symbol_and">且</string>
     <string name="manage_tag_query_symbol_not">且非</string>
     <string name="manage_tag_query_symbol_or">或</string>

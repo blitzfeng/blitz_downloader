@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    「标签精细检索」三个下拉框收起态显示的文字。
+
+    不用平台的 android.R.layout.simple_spinner_item：它带 android:ellipsize="marquee"，
+    在本行这种「0dp + layout_weight」的加权布局里，Spinner 会在 LinearLayout 第一趟
+    （宽度还是 0）就把子 View 的文本 Layout 建好并缓存下来，第二趟拿到真实宽度后不再重建，
+    结果行宽恒为 0 —— 文字一个都画不出来（控件在、颜色对、位置对，就是不显示）。
+
+    这里用 ellipsize="end" + match_parent，让文本 Layout 随控件宽度正常重建；
+    颜色也显式写死，不依赖平台 spinnerItemStyle（它在本 App 主题下会解析成看不见的颜色）。
+-->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/text1"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:ellipsize="end"
+    android:maxLines="1"
+    android:minHeight="?android:attr/listPreferredItemHeightSmall"
+    android:gravity="center_vertical"
+    android:textColor="?android:attr/textColorPrimary"
+    android:textSize="14sp" />

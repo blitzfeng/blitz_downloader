@@ -102,7 +102,7 @@ object TagQueryDialog {
         }
 
         fun spinnerAdapter(items: List<String>): ArrayAdapter<String> =
-            ArrayAdapter(context, android.R.layout.simple_spinner_item, items).apply {
+            ArrayAdapter(context, R.layout.item_tag_query_spinner_text, items).apply {
                 setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
             }
 
