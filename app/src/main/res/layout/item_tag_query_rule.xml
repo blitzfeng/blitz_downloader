@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    「标签精细检索」的一行规则：[基准标签] [运算符] [标签]  [＋/－]
+
+    首列有两个控件：第一行显示可选的 spTagQueryBase，第二行起显示置灰的 tvTagQueryBase
+    （左侧参与运算的其实是「上一行的累积结果」，但按草图仍展示为基准标签名）。
+    两者互斥显隐，由 TagQueryDialog 统一维护。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="4dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <Spinner
+        android:id="@+id/spTagQueryBase"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1" />
+
+    <TextView
+        android:id="@+id/tvTagQueryBase"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:paddingHorizontal="8dp"
+        android:textColor="?android:attr/textColorSecondary"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+    <Spinner
+        android:id="@+id/spTagQueryOp"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.1" />
+
+    <Spinner
+        android:id="@+id/spTagQueryTag"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1" />
+
+    <Button
+        android:id="@+id/btnTagQueryRowAction"
+        style="?android:attr/borderlessButtonStyle"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:minWidth="0dp"
+        android:paddingHorizontal="0dp"
+        android:text="@string/manage_tag_query_add"
+        android:textSize="20sp" />
+
+</LinearLayout>

@@ -128,6 +128,15 @@
     <string name="manage_tag_query_symbol_or">或</string>
     <string name="manage_tag_query_empty">没有符合「%1$s」的视频</string>
     <string name="manage_tag_query_none">未设置</string>
+    <string name="manage_menu_filter_tag_query">标签精细检索</string>
+    <!-- 菜单标题只回显规则条数：表达式可能很长，塞进菜单会被截断 -->
+    <string name="manage_menu_filter_tag_query_active">标签精细检索（%1$d 条规则）</string>
+    <string name="manage_tag_query_title">标签精细检索</string>
+    <string name="manage_tag_query_tag_hint">请选择</string>
+    <string name="manage_tag_query_add">＋</string>
+    <string name="manage_tag_query_remove">－</string>
+    <string name="manage_tag_query_clear">清除筛选</string>
+    <string name="manage_tag_query_preview">结果：%1$s</string>
     <string name="manage_menu_backup_db">备份数据库</string>
     <string name="manage_menu_restore_db">恢复备份</string>
     <string name="manage_backup_confirm_title">备份数据库</string>
