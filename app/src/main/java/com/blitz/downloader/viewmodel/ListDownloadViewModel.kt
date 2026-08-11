@@ -710,15 +710,32 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
             emit(ListDownloadEvent.AuthorIdMissing)
             return
         }
-        authorPostsMode = true
-        status = ListStatus.AuthorPostsMode(item.authorNickname)
-        publish()
+        markAuthorPostsMode(item.authorNickname)
         emit(
             ListDownloadEvent.EnterAuthorPostsMode(
-                authorUrl = "https://www.douyin.com/user/$secUid?from_tab_name=main",
+                authorUrl = authorPostsUrl(secUid),
                 nickname = item.authorNickname,
             ),
         )
+    }
+
+    /**
+     * 置「查看 TA 的 Post」模式的状态。
+     *
+     * 两个入口共用：
+     * - 列表页内部的 [onAuthorPostsClicked]，随后 emit [ListDownloadEvent.EnterAuthorPostsMode]
+     *   驱动视图；
+     * - 管理页跳转过来的外部入口，由 Fragment 消费 [com.blitz.downloader.viewmodel.ShellNavViewModel]
+     *   的请求后**直接调用本方法**。
+     *
+     * 外部入口**不能**复用那个一次性事件：[events] 是 `replay = 0` 的 SharedFlow，
+     * Fragment 刚创建时若 events 收集器还没建立订阅，emit 会被直接丢弃、跳转静默失效，
+     * 而收集器的建立顺序取决于 `launch` 调度，靠排序规避太脆。
+     */
+    fun markAuthorPostsMode(nickname: String) {
+        authorPostsMode = true
+        status = ListStatus.AuthorPostsMode(nickname)
+        publish()
     }
 
     fun exitAuthorPostsMode() {
@@ -806,6 +823,14 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
 
         /** 传给播放页的副标题最长字数。 */
         private const val PREVIEW_SUBTITLE_MAX = 60
+
+        /**
+         * 作者主页 URL。两个入口共用同一份拼接，改这里即可同时影响列表内跳转与管理页跳转。
+         *
+         * `from_tab_name=main` 与抖音 PC 站真实跳转参数保持一致。
+         */
+        fun authorPostsUrl(secUserId: String): String =
+            "https://www.douyin.com/user/$secUserId?from_tab_name=main"
     }
 }
 
