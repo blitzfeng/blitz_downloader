@@ -16,6 +16,7 @@ import com.blitz.downloader.model.filter.ManageRelationFilter
 import com.blitz.downloader.model.filter.ManageSortOrder
 import com.blitz.downloader.model.filter.ManageTagCountFilter
 import com.blitz.downloader.model.filter.ManageTagEditCountFilter
+import com.blitz.downloader.model.filter.TagQuery
 import com.blitz.downloader.net.LanFileServer
 import com.blitz.downloader.util.MediaOrientationProbe
 import java.io.File
@@ -77,6 +78,9 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
         updateFilters(tab) { it.withAuthor(secUserId, userName) }
 
     fun applyTags(tab: Int, tags: Set<String>) = updateFilters(tab) { it.withTags(tags) }
+
+    /** 标签精细检索与标签多选互斥，互斥清理在 [ManageFilterState.withTagQuery] 里。 */
+    fun applyTagQuery(tab: Int, query: TagQuery) = updateFilters(tab) { it.withTagQuery(query) }
 
     fun applySort(tab: Int, sort: ManageSortOrder) = updateFilters(tab) { it.copy(sort = sort) }
 
@@ -247,6 +251,25 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
     fun loadAuthors(tab: Int) {
         viewModelScope.launch {
             _authors.tryEmit(withContext(Dispatchers.IO) { repo.getAuthorCounts(mediaTypeOf(tab)) })
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 标签精细检索
+    // -----------------------------------------------------------------------
+
+    /**
+     * 精细检索可选标签加载完成，触发「打开规则对话框」。
+     *
+     * 与 [authors] 同样做成事件流而非 [StateFlow]：它触发的是一个动作，
+     * 用 StateFlow 会在转屏重新收集时凭最后一个值再弹一次对话框。
+     */
+    private val _tagQueryTags = MutableSharedFlow<List<String>>(replay = 0, extraBufferCapacity = 4)
+    val tagQueryTags: SharedFlow<List<String>> = _tagQueryTags.asSharedFlow()
+
+    fun loadTagsForQuery() {
+        viewModelScope.launch {
+            _tagQueryTags.tryEmit(withContext(Dispatchers.IO) { tagRepo.getAvailableTags() })
         }
     }
 
