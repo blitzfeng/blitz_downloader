@@ -197,13 +197,14 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 - **动作下行**：Activity 发 `ManageCommand`（带目标 tab）→ 对应 Fragment 消费后在自己的 ViewModel 上执行。
 - **数据上行**：Fragment 每次列表变化调 `ManageViewModel.setLoaded(tab, entities, hasMore)`，Activity 侧据此算「是否已全选」与「选中了哪些实体」。
 
-六层筛选是**叠加**关系，不是互斥的单选，全部收敛在 `ManageFilterState` 里：
+七层筛选是**叠加**关系，不是互斥的单选，全部收敛在 `ManageFilterState` 里：
 
 | 层 | `ManageFilterState` 字段 | 生效位置 |
 |----|----------|----------|
 | 搜索（作者昵称） | `searchQuery` | SQL |
 | 作者（`sec_user_id` 优先，回退昵称） | `authorSecId` / `authorName` | SQL |
 | 标签多选 | `tags` + `AppSettings.isTagFilterMatchAll` | SQL（`getVideosByTags(tags, matchAll)`） |
+| 标签精细检索（基准标签 + 逐行 `包含/不包含/或`） | `tagQuery` | 只在内存（`TagQuery.evaluate`，取数前按标签查 id 集合） |
 | 归属（点赞 / 收藏 / 收藏夹 / 无归属） | `relation` | 分页路径下沉 SQL，其余走 `apply()` |
 | 标签数量（0..5+，**可多选取并集**） | `tagCounts`（空集 = 不筛选） | 只在内存（`postProcess`） |
 | 标签修改次数（0..5 / >5） | `tagEditCount` | 只在内存（`postProcess`，读 `tagEditCount`） |
@@ -217,6 +218,8 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 - 「标签数量筛选」「标签修改次数筛选」都没有 SQL 实现，任一激活就必须切成全量加载（`ManageFilterState.hasMemoryOnlyFilter`）：否则"一页 20 条筛剩 2 条、撑不满屏幕不触发滚动加载"看起来就像数据丢了。
 - 这两层都**隶属于归属筛选之下**（共用 `scopeByRelation`）：归属为 OFF 时仍按 `EXCLUDE_UNASSIGNED` 收窄，只有用户显式选「仅看无归属」才听用户的。原因是他人主页 post 记录基本没打过标签、更没改过，不排掉「0 个标签」「改过 0 次」就全是它们。
 - 非分页路径（搜索 / 标签 / 作者 / 全选）统一走 `ManageTabViewModel.postProcess(...)` = 归属 → 标签数 → 标签修改次数 → 排序。新增取数入口别绕过它，否则筛选会"漏一层"。
+- 「标签精细检索」（`TagQuery`）与标签栏多选**互斥**：任一生效即清掉另一个，清理规则只写在 `ManageFilterState.withTagQuery` / `withTags` 里，调用处不手动清。求值是**从上到下左结合**（`((A ∩ B) ∪ C) − D`），行序影响结果——**不要**改成「先与非、后或」的优先级，界面上看不出优先级。
+- 精细检索的取数分支必须排在 `queryPage` / `loadFullScopeEntities` 的 `when` **最前面**：它激活时 `tags` 恒为空，排在后面会被 `f.tags.isEmpty() && …` 那些分支截走。它自己就是 `oneShot` 全量路径，**不要**再塞进 `hasMemoryOnlyFilter`。
 
 ### 持久化（Room）
 
