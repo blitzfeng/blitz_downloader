@@ -128,8 +128,18 @@ object TagQueryDialog {
                 if (row == rows.lastOrNull()) {
                     addRow(TagQueryOp.AND, tagHint)
                 } else {
+                    // 每行的 spTagQueryBase 只在 addRow() 时按当时的 current.base（或占位符）
+                    // seed 过一次，此后互不同步。删掉当前首行时，被提升为首行的那一行必须
+                    // 显式把自己隐藏的 spTagQueryBase 掰到删除前的实际取值——否则它会暴露出
+                    // 自己那份从未更新过的旧选中项，用户在首行改过的基准标签会被静默丢弃。
+                    val baseBeforeRemoval = baseTag()
                     rows.remove(row)
                     rowsContainer.removeView(row)
+                    rows.firstOrNull()?.let { newFirst ->
+                        val spBase: Spinner = newFirst.findViewById(R.id.spTagQueryBase)
+                        val index = allTags.indexOf(baseBeforeRemoval).takeIf { it >= 0 } ?: 0
+                        spBase.setSelection(index)
+                    }
                     refreshChrome()
                 }
             }
