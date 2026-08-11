@@ -132,7 +132,9 @@
     <!-- 菜单标题只回显规则条数：表达式可能很长，塞进菜单会被截断 -->
     <string name="manage_menu_filter_tag_query_active">标签精细检索（%1$d 条规则）</string>
     <string name="manage_tag_query_title">标签精细检索</string>
-    <string name="manage_tag_query_tag_hint">请选择</string>
+    <string name="manage_tag_query_base_hint">基准标签</string>
+    <string name="manage_tag_query_op_hint">运算符</string>
+    <string name="manage_tag_query_tag_label">标签</string>
     <string name="manage_tag_query_add">＋</string>
     <string name="manage_tag_query_remove">－</string>
     <string name="manage_tag_query_clear">清除筛选</string>

@@ -1,61 +1,77 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    「标签精细检索」的一行规则：[基准标签] [运算符] [标签]  [＋/－]
+    「标签精细检索」的一行规则：[运算符] [标签]  [＋/－]
 
-    首列有两个控件：第一行显示可选的 spTagQueryBase，第二行起显示置灰的 tvTagQueryBase
-    （左侧参与运算的其实是「上一行的累积结果」，但按草图仍展示为基准标签名）。
-    两者互斥显隐，由 TagQueryDialog 统一维护。
+    基准标签不在这里——它对所有行是同一个值，放在对话框顶部（见 dialog_tag_query.xml）。
+
+    两个下拉走 Material 的 exposed dropdown menu（TextInputLayout + MaterialAutoCompleteTextView），
+    不用平台 Spinner。除了对齐 Material Design 规范，它还天然绕开了平台 Spinner 的一个坑：
+    Spinner 会在带 layout_weight 的 LinearLayout 第一趟测量（宽度还是 0）时就把子 View 的
+    文本 Layout 建好并缓存，第二趟拿到真实宽度后不再重建，导致行宽恒为 0、文字一个都画不出来。
+    exposed dropdown 的收起态就是 AutoCompleteTextView 自己，不存在这层缓存。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:layout_marginTop="4dp"
     android:gravity="center_vertical"
     android:orientation="horizontal">
 
-    <Spinner
-        android:id="@+id/spTagQueryBase"
+    <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/tilTagQueryOp"
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu"
+        android:theme="@style/ThemeOverlay.BlitzDownloader.TextField"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_weight="1" />
+        android:layout_marginEnd="8dp"
+        android:layout_weight="1"
+        android:hint="@string/manage_tag_query_op_hint">
 
-    <TextView
-        android:id="@+id/tvTagQueryBase"
+        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+            android:id="@+id/actTagQueryOp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:inputType="none"
+            android:maxLines="1"
+            android:textSize="15sp" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/tilTagQueryTag"
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu"
+        android:theme="@style/ThemeOverlay.BlitzDownloader.TextField"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:paddingHorizontal="8dp"
-        android:textColor="?android:attr/textColorSecondary"
-        android:textSize="14sp"
-        android:visibility="gone" />
+        android:hint="@string/manage_tag_query_tag_label">
 
-    <Spinner
-        android:id="@+id/spTagQueryOp"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1" />
+        <com.google.android.material.textfield.MaterialAutoCompleteTextView
+            android:id="@+id/actTagQueryTag"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:inputType="none"
+            android:maxLines="1"
+            android:textSize="15sp" />
 
-    <Spinner
-        android:id="@+id/spTagQueryTag"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1" />
+    </com.google.android.material.textfield.TextInputLayout>
 
-    <!--
-        textColor 必须显式写：?android:attr/borderlessButtonStyle 在本 App 主题下把文字色
-        解析成 textColorPrimaryInverse（纯白），白底白字什么都看不见。
-    -->
-    <Button
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/btnTagQueryRowAction"
-        style="?android:attr/borderlessButtonStyle"
-        android:layout_width="40dp"
-        android:layout_height="44dp"
+        style="@style/Widget.MaterialComponents.Button.TextButton"
+        android:layout_width="44dp"
+        android:layout_height="48dp"
+        android:insetLeft="0dp"
+        android:insetRight="0dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
         android:minWidth="0dp"
         android:paddingHorizontal="0dp"
         android:text="@string/manage_tag_query_add"
-        android:textColor="?android:attr/textColorPrimary"
-        android:textSize="20sp" />
+        android:textSize="20sp"
+        app:cornerRadius="4dp" />
 
 </LinearLayout>

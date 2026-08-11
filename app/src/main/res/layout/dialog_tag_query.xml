@@ -1,10 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    「标签精细检索」对话框内容。规则行由 TagQueryDialog 动态加进 llTagQueryRows，
-    行数很少（用户手动一行行加），不值得上 RecyclerView。
-    外层 ScrollView 是为了行数多时仍能滚到「确定」按钮。
+    「标签精细检索」对话框内容。
+
+    基准标签放在**最上面单独一行**、不进规则行：它对所有规则行是同一个值，
+    原先每行重复显示一遍（第二行起置灰）既占掉一整列、也带来「删掉首行后基准回退」
+    这类只能靠手动同步兜住的问题。提到顶部后每条规则只剩「运算符 + 标签」两列，
+    Material 的 exposed dropdown（外框 + 下拉图标）才放得下——三列会挤到每格只剩一个字。
+
+    规则行由 TagQueryDialog 动态加进 llTagQueryRows，行数很少（用户手动一行行加），
+    不值得上 RecyclerView。外层 ScrollView 是为了行数多时仍能滚到「确定」按钮。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content">
 
@@ -12,22 +19,42 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingHorizontal="12dp"
+        android:paddingHorizontal="16dp"
         android:paddingTop="8dp"
         android:paddingBottom="4dp">
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/tilTagQueryBase"
+            style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense.ExposedDropdownMenu"
+            android:theme="@style/ThemeOverlay.BlitzDownloader.TextField"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/manage_tag_query_base_hint">
+
+            <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                android:id="@+id/actTagQueryBase"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:inputType="none"
+                android:maxLines="1"
+                android:textSize="15sp" />
+
+        </com.google.android.material.textfield.TextInputLayout>
 
         <LinearLayout
             android:id="@+id/llTagQueryRows"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
             android:orientation="vertical" />
 
-        <!-- 左结合的行序语义靠置灰的基准标签名看不出来，这行实时表达式用于消除误解 -->
+        <!-- 左结合的行序语义靠界面本身看不出来，这行实时表达式用于消除误解 -->
         <TextView
             android:id="@+id/tvTagQueryPreview"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="12dp"
             android:textColor="?android:attr/textColorPrimary"
             android:textSize="14sp" />
 

@@ -40,6 +40,19 @@
         <item name="android:background">@android:color/transparent</item>
     </style>
 
+    <!--
+        Material 输入框（TextInputLayout / exposed dropdown）的主题覆盖层。
+
+        app 主题里那句 `android:background = color_surface` 会被**每个** View 继承，
+        包括 TextInputLayout 内部承载末尾图标（下拉箭头）的那个容器——它于是拿到一块
+        不透明浅色底，正好盖住 outlined 外框的右半边：看起来就是「右边框没了、箭头跑到框外」。
+        这里把子树的默认背景改回透明；外框本身由 TextInputLayout 以 MaterialShapeDrawable
+        显式设在 EditText 上，不受影响。
+    -->
+    <style name="ThemeOverlay.BlitzDownloader.TextField" parent="">
+        <item name="android:background">@android:color/transparent</item>
+    </style>
+
     <style name="ThemeOverlay.BlitzDownloader.Toolbar" parent="">
         <item name="titleTextColor">@color/white</item>
         <item name="subtitleTextColor">@color/white</item>
