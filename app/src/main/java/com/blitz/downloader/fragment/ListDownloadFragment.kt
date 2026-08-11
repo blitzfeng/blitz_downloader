@@ -10,11 +10,13 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.widget.NestedScrollView
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -22,6 +24,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.DouyinWebBrowserActivity
+import com.blitz.downloader.activity.MainActivity
 import com.blitz.downloader.activity.VideoPlayerActivity
 import com.blitz.downloader.adapter.VideoGridAdapter
 import com.blitz.downloader.api.DouyinCollectsFolderRow
@@ -29,6 +32,7 @@ import com.blitz.downloader.config.AppConfig
 import com.blitz.downloader.databinding.FragmentListDownloadBinding
 import com.blitz.downloader.dialog.PhotoSelectionBottomSheet
 import com.blitz.downloader.download.BatchDownloadCoordinator
+import com.blitz.downloader.viewmodel.AuthorPostsRequest
 import com.blitz.downloader.viewmodel.CookiePasteResult
 import com.blitz.downloader.viewmodel.CookieStatusUi
 import com.blitz.downloader.viewmodel.CookieSyncResult
@@ -37,7 +41,9 @@ import com.blitz.downloader.viewmodel.ListDownloadUiState
 import com.blitz.downloader.viewmodel.ListDownloadViewModel
 import com.blitz.downloader.viewmodel.ListKindChoice
 import com.blitz.downloader.viewmodel.ListStatus
+import com.blitz.downloader.viewmodel.ShellNavViewModel
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
@@ -54,6 +60,24 @@ class ListDownloadFragment : Fragment() {
     private lateinit var videoAdapter: VideoGridAdapter
 
     private val viewModel: ListDownloadViewModel by viewModels()
+
+    private val shellNav: ShellNavViewModel by activityViewModels()
+
+    /**
+     * 作者模式下拦返回键，退出作者模式并切回跳转来源 tab。
+     *
+     * 初始 `false`，启停条件见 [updateBackCallback]。切 tab 不直接向下强转
+     * `requireActivity() as MainActivity`，而是经 [ShellNavViewModel.requestTab] 让外壳去做,
+     * 与「三条通路全部经 ViewModel」的既有约定一致。
+     */
+    private val backCallback = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() {
+            // 先取来源（读并清），再退出作者模式：exitAuthorPostsMode 里的 clear 就成了幂等空操作
+            val origin = shellNav.takeAuthorPostsOrigin()
+            exitAuthorPostsMode()
+            if (origin != null) shellNav.requestTab(origin)
+        }
+    }
 
     private var showFabRunnable: Runnable? = null
 
@@ -78,12 +102,17 @@ class ListDownloadFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         binding.etUrlInput.setText(DouyinWebBrowserActivity.DOUYIN_DEFAULT_HOME_URL)
-        BatchDownloadCoordinator.createNoMediaFile(File(BatchDownloadCoordinator.COVER_SUBDIR))
+        // 建 .nomedia 是纯磁盘 IO，且没有任何东西等它完成。本页现在是冷启动第一屏
+        // （见 DownloadFragment 的 POS_LIST），留在主线程会直接计入启动耗时。
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            BatchDownloadCoordinator.createNoMediaFile(File(BatchDownloadCoordinator.COVER_SUBDIR))
+        }
 
         setupRecyclerView()
         setupScrollListener()
         setupClickListeners()
         observeViewModel()
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
     }
 
     private fun setupRecyclerView() {
@@ -141,6 +170,12 @@ class ListDownloadFragment : Fragment() {
                 launch { viewModel.uiState.collect { render(it) } }
                 launch { viewModel.cookieStatus.collect { renderCookieStatus(it) } }
                 launch { viewModel.events.collect { handleEvent(it) } }
+                // 放在 events 收集器之后只是书写顺序，本路径不依赖它——见 consumeAuthorPostsRequest
+                launch {
+                    shellNav.authorPostsRequest.collect { request ->
+                        if (request != null) consumeAuthorPostsRequest(request)
+                    }
+                }
             }
         }
     }
@@ -148,6 +183,19 @@ class ListDownloadFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         viewModel.onScreenResumed()
+        updateBackCallback()
+    }
+
+    /**
+     * 让出返回键。
+     *
+     * 这里**直接置 false** 而不调 [updateBackCallback]：`onPause()` 回调时
+     * `viewLifecycleOwner.lifecycle.currentState` 还是 RESUMED（ON_PAUSE 是在
+     * `performPause()` 调完 `onPause()` 之后才分发的），走 updateBackCallback 会误判成在前台。
+     */
+    override fun onPause() {
+        super.onPause()
+        backCallback.isEnabled = false
     }
 
     override fun onDestroyView() {
@@ -177,6 +225,7 @@ class ListDownloadFragment : Fragment() {
             "已选择 ${state.selectedCount} / ${state.totalCount}"
         }
         binding.tvStatus.text = statusText(state)
+        updateBackCallback()
     }
 
     private fun statusText(state: ListDownloadUiState): CharSequence = when (val s = state.status) {
@@ -341,6 +390,37 @@ class ListDownloadFragment : Fragment() {
     // -----------------------------------------------------------------------
 
     /**
+     * 消费管理页发来的「加载 TA 的发布作品」请求。
+     *
+     * 复用与列表内部入口相同的 [enterAuthorPostsMode]，但**不经过**
+     * [com.blitz.downloader.viewmodel.ListDownloadEvent.EnterAuthorPostsMode] 事件：
+     * 那是 `replay = 0` 的 SharedFlow，本页刚被 ViewPager2 创建出来时 events 收集器
+     * 可能还没建立订阅，emit 会被丢弃。所以这里自己置状态 + 自己触发加载。
+     */
+    private fun consumeAuthorPostsRequest(request: AuthorPostsRequest) {
+        viewModel.markAuthorPostsMode(request.nickname)
+        enterAuthorPostsMode(ListDownloadViewModel.authorPostsUrl(request.secUserId))
+        shellNav.consumeAuthorPostsRequest()
+    }
+
+    /**
+     * 只有「处于作者模式」+「有跳转来源」+「本页在前台」三条同时成立才拦返回键。
+     *
+     * **用 RESUMED 判定前台，不能用 `!isHidden`**：本 Fragment 是孙辈
+     * （MainActivity → DownloadFragment → ViewPager2 → 本页），父页被 `hide` 时自己的
+     * `isHidden` 仍是 false，只看它会在管理页按返回时把事件抢走。而 `FragmentStateAdapter`
+     * 只把当前子页设为 RESUMED、MainActivity 只把可见 tab 设为 RESUMED，两层叠加后
+     * 「本页 RESUMED」恰好等价于「它是可见 tab 的可见子页」。
+     */
+    private fun updateBackCallback() {
+        if (_binding == null) return
+        backCallback.isEnabled =
+            viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                viewModel.uiState.value.isAuthorPostsMode &&
+                shellNav.hasAuthorPostsOrigin
+    }
+
+    /**
      * 按当前是否处于「查看 TA 的 Post」模式切换界面：锁定 / 解锁列表种类选项、显示 / 隐藏返回按钮。
      *
      * 从 `uiState` 驱动而非在进入/退出时一次性设置，这样配置变更后重建的视图也能还原。
@@ -371,6 +451,9 @@ class ListDownloadFragment : Fragment() {
         binding.etUrlInput.clearFocus()
         binding.rgListKind.check(R.id.rbKindPost)
         viewModel.exitAuthorPostsMode()
+        // 用户手动退出后，返回键不该再回管理页
+        shellNav.clearAuthorPostsOrigin()
+        updateBackCallback()
     }
 
     // -----------------------------------------------------------------------
