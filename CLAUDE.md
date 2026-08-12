@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Android 应用（Kotlin），用于批量下载抖音视频与图集。实现思路刻意对齐 Python 项目 [F2](https://github.com/Johnserf-Seed/f2)：**纯 HTTP API 模拟**（Retrofit/OkHttp + 签名查询参数 + Cookie），而非 WebView DOM 抓取。WebView 仅作为登录界面以及 Cookie / UA 的引导来源。
 
-单 module `:app`，包名 `com.blitz.downloader`，applicationId 同上。minSdk 24 / target 与 compile SDK 36，Kotlin + Java 11，启用 View Binding，Room 走 KSP 处理。版本号锁定在 `gradle/libs.versions.toml`；零散依赖（cardview、viewpager2、fragment-ktx、lifecycle、okhttp 4.12、retrofit 2.9、gson 2.11、coil 2.7、kotlinx-coroutines 1.9）直接写在 `app/build.gradle.kts` 里。
+单 module `:app`，包名 `com.blitz.downloader`，applicationId 同上。minSdk 24 / target 与 compile SDK 36，Kotlin + Java 11，同时启用 View Binding 与 **Compose**（`buildFeatures { viewBinding = true; compose = true }`），Room 走 KSP 处理。版本号锁定在 `gradle/libs.versions.toml`（含 compose-bom 与 `kotlin-compose` 编译器插件）；零散依赖（cardview、viewpager2、fragment-ktx、lifecycle、okhttp 4.12、retrofit 2.9、gson 2.11、coil 2.7、kotlinx-coroutines 1.9）直接写在 `app/build.gradle.kts` 里。
 
 ## 构建与运行
 
@@ -83,7 +83,8 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
 | `activity/` | Activity | 取数逻辑 |
 | `fragment/` | Fragment | Adapter、对话框构造器 |
 | `adapter/` | RecyclerView Adapter / ViewHolder | 数据模型 |
-| `dialog/` | 对话框与 BottomSheet 的构造器 | 页面级 Fragment |
+| `dialog/` | 对话框与 BottomSheet（新的一律 Compose，见「Compose 接入」） | 页面级 Fragment |
+| `ui/theme/` | Compose 主题（`BlitzTheme`、配色） | 具体页面 / 弹窗的 Composable |
 | `viewmodel/` | ViewModel 及其 UiState / Event / Command 类型 | Android View 引用、`R.string` 拼接 |
 | `model/` | 跨层数据模型 | 只有一个 Adapter 用的私有类型 |
 | `model/filter/` | 筛选与排序的枚举、筛选状态 | 筛选的执行逻辑（在 ViewModel 里） |
@@ -97,6 +98,42 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
 - **ViewModel 不持 Activity / Fragment / View 引用**，一律 `AndroidViewModel` + `getApplication()`。
 - 列表数据走 `StateFlow` + `repeatOnLifecycle(STARTED)`；导航 / Toast / 对话框请求这类一次性动作走 `SharedFlow(replay = 0)`，与既有的 `DownloadEvents` 保持同一套事件模型。**不要**给一次性事件加 replay。
 - Adapter **不持有状态权威**：列表数据与多选状态都由 ViewModel 决定，经 `submitItems` / `submitSelection` 写入，交互一律以回调上报。
+
+### Compose 接入
+
+新增 UI（页面 / 对话框 / BottomSheet）一律 **Compose + Material 3**；存量 XML 页面不动，除非顺手重写。
+基建：`kotlin-compose` 编译器插件 + `compose-bom`（版本在 `libs.versions.toml`）+ `buildFeatures.compose = true`。
+
+- **主题只有 `ui/theme/BlitzTheme`**，色值照抄 `res/values/colors.xml` 的品牌色（primary = #667EEA）。
+  它**固定浅色、且刻意不开动态取色**：XML 主题虽挂 `DayNight` 但没有 `values-night`，颜色全是写死的浅色，
+  Compose 侧若跟随系统深色或跟随壁纸，会出现「深色弹窗盖在浅色页面上」。等 XML 补齐深色资源再加分支。
+- **Compose 弹窗一律继承 `dialog/ComposeDialogFragment`**，只实现 `@Composable DialogContent()`，
+  **不要**再各写一份窗口设置。系统 Dialog 只出「窗口 + 遮罩」，容器（28dp 圆角 / `surfaceContainerHigh` /
+  最大 560dp 宽）由 Compose 侧 `Surface` 画。基类里那套「清背景」不是玄学，少一步就在圆角外露出一圈浅色直角：
+  `Theme.BlitzDownloader.ComposeDialog`（清 `windowBackground` / `background`、开 `windowIsTranslucent`）
+  → 窗口 `setBackgroundDrawable(透明)` + **显式 `setDimAmount`**（translucent 窗口不自带遮罩）
+  → 从内容视图**沿父链一路清到 DecorView**。根因是 app 主题那句 `android:background = @color/color_surface`
+  会被每个从 XML 膨胀出来的 View 继承（`themes.xml` 里为 TextInputLayout 踩过同一个坑），
+  而 PhoneWindow 装的 `screen_simple.xml` 有 `DecorView → LinearLayout → ContentFrameLayout` 三层，
+  `window.setBackgroundDrawable` 只管最外层、只清直接父级只盖住最内层，**中间那层就是那圈白框**。
+- **不要**在 DialogFragment 内部再调 Compose 的 `AlertDialog`/`Dialog` Composable——那会再开一个窗口，遮罩叠两层。
+  用 DialogFragment 而不是裸 Composable 是为了拿到参数 Bundle 与 `rememberSaveable`，**转屏不丢弹窗**。
+- **结果回传走 `FragmentResult`，不走构造回调**：回调会把弹窗钉死在某一个宿主的 ViewModel 上；
+  用结果契约则弹窗谁都能弹。待处理的 id 由弹窗原样回传，宿主不必自己缓存（缓存也扛不住进程重建）。
+- 公共 Composable：`DialogContainer` / `DialogHeadline` / `DialogActions`（`ComposeDialogFragment.kt`）、
+  标签多选栅格 `TagCheckGrid` + `rememberCheckedTags`（`TagCheckGrid.kt`）。栅格固定**两列**——标签有十几个，
+  单列会把弹窗拉得很长；超出 320dp 才滚，长标签单行截断。
+
+已改造（宿主都是 `ManageVideoFragment`，事件仍由 `ManageTabViewModel` 发）：
+
+| 弹窗 | 语义 | 「确定」空选 |
+|------|------|--------------|
+| `TagEditDialogFragment` | 单条记录，**整体覆盖**（预勾当前标签） | **可点**——清空是有效操作 |
+| `BatchTagDialogFragment` | 多选记录，**追加** | **禁用**——空集合等于什么都没做 |
+
+两者「确定」的可用性相反，是语义决定的，别顺手统一。与旧 `AlertDialog` 版的其余有意差异：
+批量弹窗没勾标签时不再 toast 提醒（`manage_set_tags_none_checked` 因此闲置未删）；
+「仅次数 +1」的二次确认改为同一窗口内换页、取消可退回勾选页；勾选状态转屏不丢。
 
 ### 本次架构改造**没有**做的事
 
@@ -317,7 +354,7 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 - 日志里不要打印原始 Cookie 或 `msToken`——这些等同于完整账号权限。登录成功的 toast 已经主动做了脱敏，新增日志保持同样标准。
 - `BatchDownloadCoordinator` 与 `DouyinList*` 层的并发数 / 重试 / 分页常量是为了对齐 F2 而调的，改之前先确认动机，不要随手调。
 - 分页：列表接口返回 `has_more` + `max_cursor`。已知问题"接口返回 20 条但 UI 只显示十几条"是 ViewModel + Adapter 层的过滤 / 去重 / mapper 问题，**不是**网络层——优先查那一层再怀疑网络。
-- Kotlin/JVM target 是 **11**；**没有**用 Compose，UI 全部是 XML + View Binding + Fragment。
+- Kotlin/JVM target 是 **11**；存量 UI 是 XML + View Binding + Fragment，**新增 UI 走 Compose**（见「Compose 接入」），两者共存。
 - 新增页面时先想清楚"网络 / 数据库操作放 ViewModel、其余留视图层"这条线在哪，别把控件操作也搬进 ViewModel（那会引回 Context 依赖）。包结构与 ViewModel 的边界见上方「包结构约定」。
 - 图片加载用 **Coil 2.7**，不是 Glide。
 - 下载页的两个子 tab 顺序是**「列表下载」在前、「单视频下载」在后**（`DownloadFragment.POS_LIST = 0`），因为批量列表是主场景（`BatchListDownloadScope.PRIMARY_TARGET_IS_LOGGED_IN_LISTS = true`）。副作用是列表页成了冷启动第一屏，所以它的 `.nomedia` 创建已挪到 IO 线程——新增开屏逻辑时别再往主线程放磁盘 IO。
@@ -330,6 +367,7 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 
 完成对应 todo 的任务后，更新 plan 文件 frontmatter 的 `status`，必要时同步刷新 `.cursor/CONTINUATION.md`。
 
-## 注意项
+## 开发规范
 - 每次新增需求开发完代码后，都要完善文档
 - ui设计风格要使用material design
+- 新的ui页面、dialog等采用compose实现

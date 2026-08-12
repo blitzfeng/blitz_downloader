@@ -5,7 +5,6 @@ import android.view.View
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.viewModels
@@ -20,6 +19,8 @@ import com.blitz.downloader.activity.MainActivity
 import com.blitz.downloader.activity.VideoPlayerActivity
 import com.blitz.downloader.adapter.ManageGridAdapter
 import com.blitz.downloader.adapter.TagFilterAdapter
+import com.blitz.downloader.dialog.BatchTagDialogFragment
+import com.blitz.downloader.dialog.TagEditDialogFragment
 import com.blitz.downloader.model.filter.ManageTagCountFilter
 import com.blitz.downloader.util.TagQueryFormatter
 import com.blitz.downloader.viewmodel.ManageCommand
@@ -63,6 +64,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
 
         setupTagFilterBar(view)
         setupGrid(view)
+        listenTagDialogResults()
         observeViewModel()
 
         viewModel.loadTagFilterBar()
@@ -258,64 +260,54 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
 
     /**
      * 单条记录的标签设置弹窗：显示全部可用标签、当前已打的预先勾选，
-     * 确认后整体覆盖写库。
+     * 确认后整体覆盖写库。已改为 Compose（Material 3），见 [TagEditDialogFragment]。
      */
     private fun showTagEditDialog(event: ManageTabEvent.ShowTagEditor) {
-        val allTags = event.allTags
-        val checkedItems = BooleanArray(allTags.size) { allTags[it] in event.currentTags }
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.manage_edit_tags_title)
-            .setMultiChoiceItems(allTags.toTypedArray(), checkedItems) { _, which, isChecked ->
-                checkedItems[which] = isChecked
-            }
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                viewModel.applyTagsToVideo(
-                    event.awemeId,
-                    allTags.filterIndexed { i, _ -> checkedItems[i] },
-                )
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    /** 多选后的批量标签弹窗：勾选的标签会**追加**到所有已选记录上。 */
-    private fun showBatchTagDialog(event: ManageTabEvent.ShowBatchTagPicker) {
-        val allTags = event.allTags
-        val ids = event.awemeIds
-        val checkedItems = BooleanArray(allTags.size) { false }
-        AlertDialog.Builder(requireContext())
-            .setTitle(getString(R.string.manage_set_tags_title, ids.size))
-            .setMultiChoiceItems(allTags.toTypedArray(), checkedItems) { _, which, isChecked ->
-                checkedItems[which] = isChecked
-            }
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                val chosen = allTags.filterIndexed { i, _ -> checkedItems[i] }
-                if (chosen.isEmpty()) {
-                    toast(getString(R.string.manage_set_tags_none_checked))
-                    return@setPositiveButton
-                }
-                viewModel.addTagsToVideos(ids, chosen)
-            }
-            // 只给已选记录的 tagEditCount +1，不动标签：
-            // 补 v12 之前手工改过标签、但库里没留下计数的历史数据。
-            .setNeutralButton(R.string.manage_bump_tag_edit_count) { _, _ ->
-                confirmAndBumpTagEditCount(ids)
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+        TagEditDialogFragment.show(this, event.awemeId, event.allTags, event.currentTags)
     }
 
     /**
-     * 二次确认后把已选记录的标签修改次数 +1（不改标签）。
-     * 无条件累加、没有幂等标记，重复执行会重复加，所以确认框里写清楚。
+     * 多选后的批量标签弹窗：勾选的标签会**追加**到所有已选记录上。
+     *
+     * 已改为 Compose（Material 3）实现，见 [BatchTagDialogFragment]——本项目 Compose 化的第一个
+     * 弹窗。「仅次数 +1」的二次确认也收进了同一个弹窗内部（换页而非再开一个窗口）。
      */
-    private fun confirmAndBumpTagEditCount(ids: List<String>) {
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.manage_bump_tag_edit_count)
-            .setMessage(getString(R.string.manage_bump_tag_edit_count_confirm, ids.size))
-            .setPositiveButton(android.R.string.ok) { _, _ -> viewModel.bumpTagEditCount(ids) }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
+    private fun showBatchTagDialog(event: ManageTabEvent.ShowBatchTagPicker) {
+        BatchTagDialogFragment.show(this, event.awemeIds, event.allTags)
+    }
+
+    /**
+     * 接住两个 Compose 标签弹窗的结果。
+     *
+     * 用 FragmentResult 而非回调：弹窗因此不认识任何一个 Tab 的 ViewModel，别处以后可以原样复用。
+     * 待处理的 id 由弹窗原样回传，这里不必自己缓存一份（缓存的那份也扛不住进程重建）。
+     */
+    private fun listenTagDialogResults() {
+        // 单条编辑：整体覆盖（空列表 = 清空该记录的标签）
+        childFragmentManager.setFragmentResultListener(
+            TagEditDialogFragment.REQUEST_KEY,
+            viewLifecycleOwner,
+        ) { _, bundle ->
+            val awemeId = bundle.getString(TagEditDialogFragment.RESULT_AWEME_ID).orEmpty()
+            val tags = bundle.getStringArrayList(TagEditDialogFragment.RESULT_TAGS).orEmpty()
+            if (awemeId.isNotEmpty()) viewModel.applyTagsToVideo(awemeId, tags)
+        }
+        // 多选批量：追加标签，或只给标签修改次数 +1
+        childFragmentManager.setFragmentResultListener(
+            BatchTagDialogFragment.REQUEST_KEY,
+            viewLifecycleOwner,
+        ) { _, bundle ->
+            val ids = bundle.getStringArrayList(BatchTagDialogFragment.RESULT_AWEME_IDS).orEmpty()
+            when (bundle.getString(BatchTagDialogFragment.RESULT_ACTION)) {
+                BatchTagDialogFragment.ACTION_ADD_TAGS -> {
+                    val tags = bundle.getStringArrayList(BatchTagDialogFragment.RESULT_TAGS).orEmpty()
+                    viewModel.addTagsToVideos(ids, tags)
+                }
+                // 只给已选记录的 tagEditCount +1，不动标签：
+                // 补 v12 之前手工改过标签、但库里没留下计数的历史数据。
+                BatchTagDialogFragment.ACTION_BUMP_COUNT -> viewModel.bumpTagEditCount(ids)
+            }
+        }
     }
 
     private fun toast(text: CharSequence) {

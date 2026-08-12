@@ -53,6 +53,24 @@
         <item name="android:background">@android:color/transparent</item>
     </style>
 
+    <!--
+        Compose 弹窗（DialogFragment 承载 ComposeView）专用主题。
+
+        圆角、配色、阴影全部由 Compose 侧的 Surface 画，系统 Dialog 只出「窗口 + 遮罩」。
+        这里必须同时清掉两层背景，少一层都会在圆角容器外露出一圈浅色直角：
+        · android:windowBackground —— DecorView 那层；
+        · android:background —— app 主题里 `color_surface` 会被**每个** View 继承（TextInputLayout
+          踩过同一个坑），Dialog 的 content 容器与 ComposeView 都在此列。
+    -->
+    <style name="Theme.BlitzDownloader.ComposeDialog" parent="Theme.MaterialComponents.DayNight.Dialog">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:background">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">true</item>
+    </style>
+
     <style name="ThemeOverlay.BlitzDownloader.Toolbar" parent="">
         <item name="titleTextColor">@color/white</item>
         <item name="subtitleTextColor">@color/white</item>
