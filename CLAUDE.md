@@ -135,6 +135,31 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
 批量弹窗没勾标签时不再 toast 提醒（`manage_set_tags_none_checked` 因此闲置未删）；
 「仅次数 +1」的二次确认改为同一窗口内换页、取消可退回勾选页；勾选状态转屏不丢。
 
+**页面级 Compose（首例：`ImageViewerActivity`）**
+
+图片浏览页已从「ViewPager2 + 两个 XML 布局」整体改写为 Compose（`activity_image_viewer.xml`、
+`item_image_viewer_page.xml` 已删除），行为与改造前**严格等价**：左右翻页、`ContentScale.Fit`、
+顶栏悬浮在图片上、多图时底部页码。`findImageSet` 一字未动——`MediaExportManager` 与
+`BatchDownloadCoordinator` 的 KDoc 都指向它，签名一改要连带改三处。
+
+- 入口是 `AppCompatActivity` + `setContent`，依赖 `androidx.activity:activity-compose`
+  （弹窗那条路走 `ComposeView`，不需要它）；图片加载走 `io.coil-kt:coil-compose`，
+  **版本必须与已有的 `io.coil-kt:coil` 一致**，两个 artifact 分开声明。
+- **本页刻意不进 `BlitzTheme` 的配色**：黑底页面上套浅色 primary，白字会看不清。
+  外层仍包 `BlitzTheme` 保证字体与形状统一，顶栏 / 页码角标的颜色在文件内写死
+  （`ViewerBarColor` 对齐 `colors.xml` 的 `color_primary_dark`）。这是深色页面的个例，
+  **不要**据此推广成「Compose 页面都自己写色值」。
+- **不用 material-icons 依赖**：返回箭头复用存量矢量图 `R.drawable.ic_back_arrow`，
+  `Icon` 会自行着色。项目至今没有引入 `material-icons-*`，新增图标优先走 drawable。
+- **`painterResource` 只吃 VectorDrawable 与位图**，喂 `<layer-list>` / `<shape>` 会在首帧
+  抛 `IllegalArgumentException: Only VectorDrawables and rasterized asset types are supported`
+  （编译期无感，运行才崩）。`ic_video_placeholder` 正是 layer-list，所以占位 / 失败图走
+  `ImageRequest.Builder.placeholder(resId) / .error(resId)`——Coil 用平台 inflater，什么 drawable 都能吃。
+  复用存量 drawable 到 Compose 之前，先确认它的根标签。
+- **没有 ViewModel**：本页既不发请求也不读写数据库，图集列表在 `onCreate` 里算好当参数传入，
+  页内唯一状态是 `pagerState.currentPage`。按包结构约定，这类纯视图状态留在视图层。
+- 已知行为（改造前就有，本次未修）：未声明 `configChanges`，转屏重建后回到第 1 页。
+
 ### 本次架构改造**没有**做的事
 
 避免误读成"已经是完整 MVVM"：
@@ -170,6 +195,34 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
 
 签名（`X-Bogus` / `a_bogus`）与计算它所用的 UA **绑定**。**改一处 UA 必须同时改签名侧的 UA**——UA 不一致最常见的现象是 HTTP 200 但响应体为空，是这套代码里最隐蔽的失败模式。
 
+### ArgusSecurityPlugin — `uifid` 请求头（2026-08 抖音新增网关校验）
+
+抖音在边缘网关（响应头 `Server: TLB`）挂了 `ArgusSecurityPlugin`，对**登录态列表接口**
+（`aweme/favorite/`「喜欢」、`aweme/listcollection/`「收藏」、`collects/list/`「收藏夹」）在业务逻辑
+**之前**做前置校验；`aweme/post/`（发布作品）**不在保护名单**，所以它一直正常。缺失时直接 403，
+正文是明文而非 JSON（拿不到 `status_code`）：
+
+- 缺 `uifid` → `Blocked by ArgusSecurityPlugin Uifid Not Found`
+- 缺签名 → `Blocked by ArgusSecurityPlugin Signature Not Found`
+
+**这道插件有两道校验，都在 `HeaderInterceptor` 里应对：**
+
+1. **`uifid` 请求头**（缺 → `Uifid Not Found`）。**注意是 HTTP 请求头，不是 Cookie、也不是 query `webid`。**
+   值复用从 Cookie 解析出的 `DouyinApiClient.webId`（即 UIFID），对所有抖音 API 请求统一附加。
+2. **`x-tt-argus` 请求头**（缺 → `Signature Not Found`）。真机证实：query 里的真实 `a_bogus`**过不了**这道
+   ——网关验的是独立的签名头，不是 `a_bogus`。**实测该版本只校验此头是否存在、不校验值**（任意/空值即放行），
+   是「疑似 App 流量放宽 web 校验」的旁路，故填占位 `"1"` 即可。仅对受保护接口（favorite / listcollection /
+   collects）附加，避免波及未受保护的 `post`。
+
+排查方法（可复用）：裸 `curl` 逐层剥错误链——`Uifid Not Found` →（补 uifid 头）→ `Signature Not Found`
+→（补 x-tt-argus 头）→ 200。**明文 403 正文里的 `ArgusSecurityPlugin ... Not Found` 直接就是根因**，
+别往签名 / Cookie / msToken 深挖。`LoggingInterceptor` 会打印 403 明文正文（`Log.w`），网关再变时第一时间可见。
+
+**`x-tt-argus` 是权宜之计**：网关一旦升级到真正校验签名值即失效（表现为补了头仍 `Signature Not Found`）。
+届时不要去逆向抖音 web 风控 SDK（mssdk/Argus，猫鼠游戏、成本高），走 **WebView 内注入 JS 发真实 `fetch`**
+——请求由 douyin.com 页面上下文发出，页面自带最新签名 SDK 自动补齐 Argus 头，我们只回传 JSON。这与「WebView
+仅作登录 / Cookie 引导」的现有定位有偏差（等于让 WebView 也承担取数），是那种情况下的兜底方案。
+
 ### Cookie 管道
 
 登录与 Cookie 获取都发生在 WebView 里（`DouyinWebBrowserActivity` 与 `ListDownloadFragment`）。流向：
@@ -196,6 +249,68 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 - `Download/bDouyin/videos/` — 视频 mp4
 - `Download/bDouyin/images/` — 图集图片
 - `Download/bDouyin/covers/` — 视频封面缩略图（图集复用第一张图作为封面，不重复写）
+
+### 相册可见性（`.nomedia` + 所有文件访问权限）
+
+实现在 `util/MediaVisibilityManager`，设置页有「相册可见性」分组。**改这块之前先读完本节**，
+这里每一条都是真机实验得出的，凭直觉改会静默弄坏所有媒体。
+
+**两件事必须同时成立**：
+
+1. **`.nomedia` 让相册看不到。** 注意：把文件写进 `MediaStore.Downloads` 集合**不足以**避开相册
+   ——MediaStore 只是把 `is_download` 置 1，`media_type` 仍按 MIME 判成 IMAGE/VIDEO，相册 App
+   照样列得出来（代码 KDoc 里曾写反，已改）。真正让它隐身的是 `.nomedia`：扫描器发现目录已隐藏，
+   会把这些行的 `media_type` 置成 NONE(0)。
+2. **`MANAGE_EXTERNAL_STORAGE` 让本 App 仍读得到。** 本 App 读媒体一律走**直接文件路径**
+   （`ManageGridAdapter` / `ImageViewerActivity` / `VideoPlayerActivity` / `LanFileServer`）。
+   这条路在 Android 11+ 由 MediaProvider 的 FUSE 把关：没有该权限时靠 `READ_MEDIA_IMAGES` /
+   `READ_MEDIA_VIDEO`，而**这两个权限只覆盖"仍算媒体"的文件**。`media_type` 一变 NONE 就不再覆盖，
+   只剩 owner 应用能访问。
+
+**owner 靠不住，这是本方案的根据。** `owner_package_name` 由 MediaProvider 在 insert 时按调用方
+盖章、**只读**（塞进 ContentValues 会被忽略），并在包被移除时由 `onPackageOrphaned` 清空。
+**固定签名只能防止将来再丢，追不回已经丢掉的 owner。** 实测机上老封面的 owner 早已是 NULL。
+真机对照实验（同一目录、同一个 `.nomedia`、同一次启动）：owner 非空的封面照常显示，
+owner 为 NULL 的全变 `ic_video_placeholder`——所以**不能**把可用性押在 owner 上。
+
+**据此定下的规则**：
+
+- **开启隐藏前必须确认 `hasAllFilesAccess()`**，`MediaVisibilityManager.setHidden` 的"开启"方向由
+  调用方保证（`SettingsViewModel.setFolderHidden` 还兜了一次底）。**"关闭"方向永远放行**，那是
+  用户的自救出口。
+- **改完 `.nomedia` 必须重扫该目录**（`MediaScannerConnection.scanFile` 逐文件，已验证有效）。
+  不扫的话 MediaStore 里已有的行不会跟着变，只有以后新下载的文件受影响。
+- **OEM 自带相册（小米 / OPPO）不会立刻消失，这不是 bug，别去"修"**。它们各自维护独立索引，
+  按自己的节奏与 MediaStore 同步，实测**隔天才更新**（文件越多越慢）。Google 相册按标准查询，
+  重扫后立即隐藏。所以判断本功能是否生效**只看 MediaStore**：
+
+  ```bash
+  adb shell "content query --uri content://media/external/file \
+    --projection media_type --where \"relative_path='Download/bDouyin/videos/'\""
+  # media_type=0(NONE) 即已生效；1=IMAGE / 3=VIDEO 表示仍可见
+  ```
+
+  曾经因为"切了开关相册还看得到"一路排查到怀疑 OEM 相册不认 `media_type`，差点动手改成
+  「目录加点号」或「改扩展名」——真相只是索引还没刷新。**先等一天再下结论。**
+- **`covers/` 没有开关，由 `MainActivity.onResume` → `ensureCoversHidden` 按权限自动维护**：
+  有权限就隐藏（封面是内部产物，出现在相册纯属噪音），**没权限就主动取消隐藏**。这与
+  videos / images **刻意不同**——那两个有设置项，用户撤权后能自己关；封面没有任何 UI，
+  不自愈就是死局。放 `onResume` 而非 `onCreate`，是因为用户在系统页授权后 Activity 通常不重建。
+- **videos / images 缺权限时只告警不擅自改**（`MainActivity.warnIfHiddenWithoutAccess`，
+  `onCreate` 里一次）：那是用户显式开的，替他关太越权；但不提示，撤权后就只剩"媒体全变占位图"
+  而毫无线索。
+- **状态权威是磁盘**（`.nomedia` 在不在），不存 SharedPreferences。设置页每次 `onResume`
+  重新探测——用户可能刚授权回来，也可能在 App 外用文件管理器动过。
+- 授权跳转带包名直达 `ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION`，失败退回全局列表页。
+  待办目录存 `savedInstanceState`（跳系统页期间 Fragment 可能被回收），回来在 `onResume` 补做。
+- **API < 30 该功能直接不可用**（`hasAllFilesAccess()` 恒 false）：那里没有这个权限，
+  本 App 也没有 `requestLegacyExternalStorage`。宁可不隐藏，也不能把媒体锁死。
+- API 24–28 的 `downloadCoverViaFileApi` 仍会建 `.nomedia`，那里**安全**：没有分区存储，
+  读文件靠 `READ_EXTERNAL_STORAGE`、不看 `media_type`，隐藏目录不会反噬自己。
+- `ListDownloadFragment` 里原本冷启动建 `.nomedia` 那句已删除。它一直传相对路径
+  `File(COVER_SUBDIR)`（解析成 `/bDouyin/covers`）**从未成功过**，"一直没生效"反而遮住了这个坑。
+  **别再加回来**，封面隐藏现在归 `ensureCoversHidden` 管。
+- `backup/` 有自己的 `.nomedia`（`DatabaseBackupManager` 管），`export/` **不隐藏**——ZIP 要靠 MTP 拷。
 
 文件命名约定为 `<userName>+<desc>`（截断/转义后）。下载成功后必须调用 `DownloadedVideoRepository.recordSuccessfulDownload(...)` 写入数据库，否则管理页角标无法识别为"已下载"。
 

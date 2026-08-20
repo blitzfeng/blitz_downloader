@@ -42,7 +42,6 @@ import com.blitz.downloader.viewmodel.ListDownloadViewModel
 import com.blitz.downloader.viewmodel.ListKindChoice
 import com.blitz.downloader.viewmodel.ListStatus
 import com.blitz.downloader.viewmodel.ShellNavViewModel
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -112,11 +111,9 @@ class ListDownloadFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         binding.etUrlInput.setText(DouyinWebBrowserActivity.DOUYIN_DEFAULT_HOME_URL)
-        // 建 .nomedia 是纯磁盘 IO，且没有任何东西等它完成。本页现在是冷启动第一屏
-        // （见 DownloadFragment 的 POS_LIST），留在主线程会直接计入启动耗时。
-        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            BatchDownloadCoordinator.createNoMediaFile(File(BatchDownloadCoordinator.COVER_SUBDIR))
-        }
+        // 这里原本在冷启动时给 covers 目录建 .nomedia，现已移除，别再加回来：
+        // 该调用一直传的是相对路径 File(COVER_SUBDIR)，实际解析成 /bDouyin/covers，从未成功过。
+        // 改成绝对路径后实测确认它会把封面弄坏 —— 见 BatchDownloadCoordinator.coversDir 的说明。
 
         setupRecyclerView()
         setupScrollListener()

@@ -3,6 +3,7 @@ package com.blitz.downloader.activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -20,8 +21,11 @@ import com.blitz.downloader.fragment.ManageFragment
 import com.blitz.downloader.fragment.SettingsFragment
 import com.blitz.downloader.util.DouyinCookieStore
 import com.blitz.downloader.util.MediaPermissions
+import com.blitz.downloader.util.MediaVisibilityManager
 import com.blitz.downloader.viewmodel.ShellNavViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 应用主外壳：底部导航栏 + 三个常驻页面（下载 / 管理 / 设置）。
@@ -72,6 +76,8 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
+        warnIfHiddenWithoutAccess()
+
         // 外壳兜底的返回处理：注册最早 → 优先级最低，页面自己的 callback 先拿到返回事件。
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -112,6 +118,47 @@ class MainActivity : AppCompatActivity() {
                     }
                     shellNav.consumePendingTab()
                 }
+            }
+        }
+    }
+
+    /**
+     * 封面目录跟着权限走：有权限就隐藏，没权限就恢复可见（否则 App 自己读不到封面，
+     * 原理见 [MediaVisibilityManager]）。封面**没有**设置项，只能在这里自动维护。
+     *
+     * 放在 `onResume` 而不是 `onCreate`：用户是在系统设置页里授予「所有文件访问权限」的，
+     * 回到 App 时本 Activity 通常没有重建，只跑 `onCreate` 会让封面要等到下次冷启动才隐藏。
+     * 代价只是每次回前台多一次 `File.exists()`，且只有状态真需要变时才会触发重扫。
+     */
+    override fun onResume() {
+        super.onResume()
+        lifecycleScope.launch(Dispatchers.IO) {
+            MediaVisibilityManager.ensureCoversHidden(applicationContext)
+        }
+    }
+
+    /**
+     * videos / images 处于隐藏状态、却没有「所有文件访问权限」时告警一次。
+     *
+     * **只提示、不擅自改**：那两个目录是用户在设置页显式开的，替他关掉太越权（封面不同，
+     * 封面没有 UI，用户无从自救，所以那边是自动恢复）。但也不能不提示——不提示的话，
+     * 用户事后撤权只会看到「媒体全变占位图」而毫无线索。放在 `onCreate` 保证一次启动只弹一次。
+     */
+    private fun warnIfHiddenWithoutAccess() {
+        lifecycleScope.launch {
+            val orphaned = withContext(Dispatchers.IO) {
+                if (MediaVisibilityManager.hasAllFilesAccess()) {
+                    emptyList()
+                } else {
+                    MediaVisibilityManager.hiddenSwitchableFolders()
+                }
+            }
+            if (orphaned.isNotEmpty()) {
+                Toast.makeText(
+                    this@MainActivity,
+                    R.string.settings_all_files_access_lost,
+                    Toast.LENGTH_LONG,
+                ).show()
             }
         }
     }

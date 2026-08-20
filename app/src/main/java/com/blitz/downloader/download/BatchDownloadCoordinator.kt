@@ -33,6 +33,8 @@ object BatchDownloadCoordinator {
 
     private const val TAG = "BatchDownload"
 
+    private const val NO_MEDIA_FILE_NAME = ".nomedia"
+
     /** 根子目录：`Download/bDouyin` */
     const val RELATIVE_DOWNLOAD_SUBDIR: String = "bDouyin"
 
@@ -47,6 +49,37 @@ object BatchDownloadCoordinator {
      * 视频封面在主体下载时一并保存；图集封面直接复用第一张图片路径，不重复写入。
      */
     const val COVER_SUBDIR: String = "$RELATIVE_DOWNLOAD_SUBDIR/covers"
+
+    /**
+     * 封面目录的**绝对路径**：`<外部存储>/Download/bDouyin/covers`。
+     *
+     * [COVER_SUBDIR] 只是相对片段，`File(COVER_SUBDIR)` 会相对进程工作目录（Android 上是 `/`）
+     * 解析成 `/bDouyin/covers`，写不进去还会被静默吞掉——调用方一律用这个方法拿目录。
+     *
+     * **不要给这个目录加 `.nomedia`**（API 29+ 上）。已实测过，会把封面弄坏：
+     * 封面是用 [MediaStore.Downloads] 写进去的，管理页却是用**直接文件路径**读回来
+     * （`ManageGridAdapter` 喂给 Coil），而 Manifest 里既无 `MANAGE_EXTERNAL_STORAGE`
+     * 也无 `requestLegacyExternalStorage`，这条读路径靠的是 `READ_MEDIA_IMAGES`。
+     * 一旦目录里有 `.nomedia`，MediaProvider 重扫后会把这些行的 `media_type` 置为 NONE，
+     * 它们就不再算「图片」，`READ_MEDIA_IMAGES` 不再覆盖 —— 只剩 owner 应用能访问，
+     * 而实测设备上 `owner_package_name` 早已是 NULL（历史换签名导致，固定签名也追不回来），
+     * 于是管理页封面整片变占位图。
+     *
+     * 代价是封面会出现在相册类 App 里（插进 Downloads 集合并不能避开，见
+     * [downloadCoverViaMediaStoreDownloads] 的说明）。要根治得把封面挪到 App 专属目录
+     * （`getExternalFilesDir`），那样根本不进 MediaStore，读也不需要任何权限。
+     */
+    fun coversDir(): File = downloadsSubDir(COVER_SUBDIR)
+
+    /**
+     * 把 [VIDEO_SUBDIR] / [IMAGE_SUBDIR] / [COVER_SUBDIR] 这类相对片段解析成绝对目录。
+     * 全 App 只此一份实现，`util.MediaVisibilityManager` 也走它，避免两处拼路径拼出分歧。
+     */
+    fun downloadsSubDir(subDir: String): File {
+        @Suppress("DEPRECATION")
+        val base = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        return File(base, subDir)
+    }
 
     /** 与 F2 `base_downloader.py` 中 `retry_attempts = 3` 一致。 */
     const val DEFAULT_MAX_RETRIES: Int = 3
@@ -301,9 +334,12 @@ object BatchDownloadCoordinator {
     /**
      * 尽力下载封面缩略图到 `Download/bDouyin/covers/` 目录；失败不抛异常、不影响主体下载。
      *
-     * 封面**不会出现在相册类 App** 中：
-     * - API 29+：写入 [MediaStore.Downloads]（相册 App 不扫描 Downloads 内容）。
-     * - API 24–28：通过 [File] API 直接写文件，并在目录中放置 `.nomedia` 文件阻止媒体扫描器索引。
+     * 封面**不应出现在相册类 App** 中，靠的是目录里的 `.nomedia`（见 [createNoMediaFile]）：
+     * - API 29+：写入 [MediaStore.Downloads]。注意**插进 Downloads 集合并不足以避开相册**——
+     *   MediaStore 只是把 `is_download` 置 1，`media_type` 仍按 MIME 判成 IMAGE，
+     *   查 `MediaStore.Images` 的相册 App 照样看得到（实测 `relative_path=Download/bDouyin/covers/`
+     *   的行确实出现在 Images 集合里）。真正让它隐身的是 `.nomedia`。
+     * - API 24–28：通过 [File] API 直接写文件，首次建目录时一并放 `.nomedia`。
      *
      * @return 成功时的可读路径；失败返回空字符串。
      */
@@ -354,37 +390,44 @@ object BatchDownloadCoordinator {
             ""
         }
     }
-    // 避免被相册扫描当前文件夹
-    fun createNoMediaFile(directory: File) {
-        if (!directory.exists()) {
-            directory.mkdirs()
+    /**
+     * 在 [directory] 放 `.nomedia`，阻止相册类 App 索引该目录。
+     *
+     * **当前唯一调用方是 API 24–28 的 [downloadCoverViaFileApi]**，那里没有分区存储、
+     * 读文件靠 `READ_EXTERNAL_STORAGE` 而不看 MediaStore 的 `media_type`，所以隐藏目录不会
+     * 反噬自己。API 29+ 千万别调它读封面的目录，原因见 [coversDir]。
+     *
+     * 失败只记日志、不抛。
+     *
+     * @return 仅当本次调用**真正创建**了文件时返回 true；已存在或失败都返回 false。
+     */
+    fun createNoMediaFile(directory: File): Boolean {
+        if (!directory.exists() && !directory.mkdirs()) {
+            Log.w(TAG, "create .nomedia: mkdirs failed for ${directory.absolutePath}")
+            return false
         }
-        val noMediaFile = File(directory, ".nomedia")
-        if (!noMediaFile.exists()) {
-            try {
-                noMediaFile.createNewFile()
-            } catch (e: IOException) {
-                e.printStackTrace()
-            }
+        val noMediaFile = File(directory, NO_MEDIA_FILE_NAME)
+        if (noMediaFile.exists()) return false
+        return try {
+            noMediaFile.createNewFile()
+        } catch (e: IOException) {
+            Log.w(TAG, "create .nomedia failed: ${noMediaFile.absolutePath}", e)
+            false
         }
     }
+
     /**
      * API 24–28：通过 [File] API 写文件，并在 covers 目录中创建 `.nomedia`，
      * 阻止媒体扫描器索引该目录（文件不会出现在相册中）。
      * `WRITE_EXTERNAL_STORAGE`（maxSdkVersion=28）权限已在 Manifest 中声明。
      */
-    @Suppress("DEPRECATION")
     private fun downloadCoverViaFileApi(
         coverUrl: String,
         displayName: String,
     ): String {
-        val base = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val coversDir = File(base, COVER_SUBDIR)
-        if (!coversDir.exists()) {
-            coversDir.mkdirs()
-            // .nomedia 阻止媒体扫描器索引本目录
-            File(coversDir, ".nomedia").createNewFile()
-        }
+        val coversDir = coversDir()
+        // mkdirs 与 .nomedia 都收敛在这里，路径口径与冷启动那次调用完全一致
+        createNoMediaFile(coversDir)
         val outFile = File(coversDir, displayName)
         return try {
             outFile.outputStream().use { outStream ->

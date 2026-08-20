@@ -35,6 +35,9 @@
     <color name="text_color_secondary">#666666</color> <!-- 浅灰文字 -->
     <color name="text_color_white">#FFFFFF</color> <!-- 白色文字 -->
 
+    <!-- 分隔线：设置页同一张卡片内多行时使用 -->
+    <color name="color_divider">#EEEEEE</color>
+
     <!-- 透明度 -->
     <color name="color_transparent">#00000000</color>
 </resources>

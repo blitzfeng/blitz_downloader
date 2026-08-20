@@ -83,6 +83,19 @@
     <string name="settings_tag_filter_mode_any">并集：显示含任一所选标签的视频</string>
     <string name="settings_tag_filter_mode_all_short">交集（同时满足全部标签）</string>
     <string name="settings_tag_filter_mode_any_short">并集（满足任一标签）</string>
+    <!-- 相册可见性：往目录里加/删 .nomedia，封面目录无开关、由权限自动维护 -->
+    <string name="settings_group_gallery">相册可见性</string>
+    <string name="settings_hide_videos">视频文件夹</string>
+    <string name="settings_hide_images">图片文件夹</string>
+    <string name="settings_hide_state_hidden">已对相册隐藏 · 点击恢复显示</string>
+    <string name="settings_hide_state_visible">相册中可见 · 点击隐藏</string>
+    <string name="settings_hide_done_hidden">已隐藏，相册中不再显示</string>
+    <string name="settings_hide_done_visible">已恢复，相册中可以看到</string>
+    <string name="settings_all_files_access_title">需要「所有文件访问权限」</string>
+    <string name="settings_all_files_access_msg">隐藏的原理是往目录里放一个 .nomedia 文件。这样做之后，系统会认为里面的文件不再是媒体，本应用也就读不到自己下载的内容，封面和图集会全部变成占位图。\n\n授予「所有文件访问权限」后，本应用可以绕开这条限制，做到相册看不见、应用内正常显示。\n\n该权限只能在系统设置里手动开启。</string>
+    <string name="settings_all_files_access_goto">去设置</string>
+    <string name="settings_all_files_access_denied">未获得所有文件访问权限，已取消隐藏</string>
+    <string name="settings_all_files_access_lost">下载目录已对相册隐藏，但当前缺少「所有文件访问权限」，应用内将无法显示这些文件。请在设置页重新授权，或关掉隐藏。</string>
     <string name="manage_tag_filter_empty_all">没有同时含「%1$s」的视频</string>
     <string name="manage_tag_filter_empty_any">没有含「%1$s」中任一标签的视频</string>
     <!-- 按标签数量筛选（仅视频 Tab） -->
@@ -265,6 +278,7 @@
     <string name="video_player_title">视频播放</string>
     <string name="image_viewer_title">图片浏览</string>
     <string name="image_viewer_page_indicator">%1$d / %2$d</string>
+    <string name="image_viewer_back">返回</string>
     <string name="player_file_not_found">文件未找到，可能已被移动或删除</string>
     <string name="player_play_error">视频播放失败，请检查文件是否完整</string>
     <string name="player_first_video">已经是第一个视频了</string>

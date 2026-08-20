@@ -3,8 +3,10 @@ package com.blitz.downloader.fragment
 import android.app.ProgressDialog
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Process
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -23,6 +25,9 @@ import com.blitz.downloader.R
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.db.DatabaseBackupManager
 import com.blitz.downloader.databinding.FragmentSettingsBinding
+import com.blitz.downloader.dialog.AllFilesAccessDialogFragment
+import com.blitz.downloader.util.MediaVisibilityManager
+import com.blitz.downloader.util.MediaVisibilityManager.MediaFolder
 import com.blitz.downloader.viewmodel.SettingsEvent
 import com.blitz.downloader.viewmodel.SettingsViewModel
 import kotlinx.coroutines.launch
@@ -78,12 +83,28 @@ class SettingsFragment : Fragment() {
         binding.itemTagFilterMode.setOnClickListener { showTagFilterModeDialog() }
         refreshTagFilterModeSummary()
 
+        pendingHideFolder = savedInstanceState?.getString(STATE_PENDING_HIDE_FOLDER)
+        binding.itemHideVideos.setOnClickListener { onFolderRowClicked(MediaFolder.VIDEOS) }
+        binding.itemHideImages.setOnClickListener { onFolderRowClicked(MediaFolder.IMAGES) }
+        registerAllFilesAccessResult()
+
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { viewModel.busy.collect { renderBusy(it) } }
                 launch { viewModel.events.collect { handleEvent(it) } }
+                launch { viewModel.folderVisibility.collect { renderFolderVisibility(it) } }
             }
         }
+    }
+
+    /**
+     * 每次回到前台都重新探磁盘：用户可能刚从系统权限页返回，也可能在 App 外用文件管理器
+     * 动过 `.nomedia`。这里也是「授权后继续未完成的隐藏动作」的落点，见 [pendingHideFolder]。
+     */
+    override fun onResume() {
+        super.onResume()
+        viewModel.refreshFolderVisibility()
+        consumePendingHideFolder()
     }
 
     @Suppress("DEPRECATION")
@@ -125,11 +146,26 @@ class SettingsFragment : Fragment() {
             is SettingsEvent.RestoreFailed ->
                 toast(getString(R.string.manage_restore_failed, event.message))
             SettingsEvent.RestoreNeedsFilePicker -> showRestoreDeniedHint()
+            is SettingsEvent.NeedsAllFilesAccess -> showAllFilesAccessDialog(event.folder)
+            is SettingsEvent.FolderVisibilityChanged -> toast(
+                getString(
+                    if (event.hidden) {
+                        R.string.settings_hide_done_hidden
+                    } else {
+                        R.string.settings_hide_done_visible
+                    },
+                ),
+            )
         }
     }
 
     private fun toast(text: CharSequence) {
         Toast.makeText(requireContext(), text, Toast.LENGTH_LONG).show()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_PENDING_HIDE_FOLDER, pendingHideFolder)
     }
 
     override fun onDestroyView() {
@@ -171,6 +207,72 @@ class SettingsFragment : Fragment() {
                 R.string.settings_tag_filter_mode_any_short
             }
         )
+    }
+
+    // ── 相册可见性 ─────────────────────────────────────────────────────────────
+
+    /**
+     * 用户点了「隐藏」但缺权限时，先记下是哪个目录，跳系统设置页；回到本页时（[onResume]）
+     * 若权限已到手就继续把它做完。
+     *
+     * 存成 String 而非枚举是为了能塞进 `savedInstanceState`——跳系统页期间本 Fragment 可能被回收，
+     * 放在纯内存字段里回来就丢了，用户会觉得「授权了却什么也没发生」。
+     */
+    private var pendingHideFolder: String? = null
+
+    private fun onFolderRowClicked(folder: MediaFolder) {
+        val hidden = viewModel.folderVisibility.value[folder] ?: return
+        // 取反即目标状态；开启方向缺权限时 ViewModel 会回 NeedsAllFilesAccess 事件
+        viewModel.setFolderHidden(folder, !hidden)
+    }
+
+    private fun renderFolderVisibility(state: Map<MediaFolder, Boolean>) {
+        binding.tvHideVideosSummary.setText(summaryFor(state[MediaFolder.VIDEOS]))
+        binding.tvHideImagesSummary.setText(summaryFor(state[MediaFolder.IMAGES]))
+    }
+
+    private fun summaryFor(hidden: Boolean?): Int = when (hidden) {
+        true -> R.string.settings_hide_state_hidden
+        else -> R.string.settings_hide_state_visible
+    }
+
+    private fun showAllFilesAccessDialog(folder: MediaFolder) {
+        AllFilesAccessDialogFragment.newInstance(folder.name)
+            .show(parentFragmentManager, AllFilesAccessDialogFragment.REQUEST_KEY)
+    }
+
+    /** 弹窗点「去设置」→ 记下待办目录并跳系统页。结果不看返回值，统一在 [onResume] 里判权限。 */
+    private fun registerAllFilesAccessResult() {
+        parentFragmentManager.setFragmentResultListener(
+            AllFilesAccessDialogFragment.REQUEST_KEY,
+            viewLifecycleOwner,
+        ) { _, bundle ->
+            pendingHideFolder = bundle.getString(AllFilesAccessDialogFragment.RESULT_FOLDER)
+            openAllFilesAccessSettings()
+        }
+    }
+
+    private fun openAllFilesAccessSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val uri = Uri.parse("package:${requireContext().packageName}")
+        // 带包名的直达页在个别 ROM 上缺失，退回全局列表页让用户自己找本应用
+        val direct = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, uri)
+        runCatching { startActivity(direct) }.onFailure {
+            runCatching { startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)) }
+                .onFailure { toast(getString(R.string.settings_all_files_access_denied)) }
+        }
+    }
+
+    /** 从系统权限页回来：授到了就把当初那次「隐藏」补做完，没授到就明确告诉用户已取消。 */
+    private fun consumePendingHideFolder() {
+        val folderName = pendingHideFolder ?: return
+        pendingHideFolder = null
+        val folder = MediaFolder.entries.firstOrNull { it.name == folderName } ?: return
+        if (MediaVisibilityManager.hasAllFilesAccess()) {
+            viewModel.setFolderHidden(folder, true)
+        } else {
+            toast(getString(R.string.settings_all_files_access_denied))
+        }
     }
 
     // ── 备份 / 恢复 ────────────────────────────────────────────────────────────
@@ -258,5 +360,9 @@ class SettingsFragment : Fragment() {
         activity.finishAffinity()
         Process.killProcess(Process.myPid())
         exitProcess(0)
+    }
+
+    private companion object {
+        const val STATE_PENDING_HIDE_FOLDER = "pending_hide_folder"
     }
 }

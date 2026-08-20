@@ -158,10 +158,11 @@ object DouyinListApi {
             val resp = DouyinApiClient.api.dynamicPost(url, body)
             if (!resp.isSuccessful) {
                 val code = resp.code()
+                val errBody = resp.body()?.use { it.string() }.orEmpty().take(200)
                 if (code in AUTH_HTTP_CODES) {
-                    throw DouyinAuthException("HTTP $code：登录态可能已失效", httpCode = code)
+                    throw DouyinAuthException("HTTP $code：${errBody.ifBlank { "登录态可能已失效" }}", httpCode = code)
                 }
-                throw IllegalStateException("HTTP $code")
+                throw IllegalStateException("HTTP $code: $errBody")
             }
             val raw = resp.body()?.use { it.string() }.orEmpty()
             if (raw.isBlank()) {
@@ -182,7 +183,9 @@ object DouyinListApi {
         val raw = resp.body()?.use { it.string() } ?: ""
         if (!resp.isSuccessful) {
             if (code in AUTH_HTTP_CODES) {
-                throw DouyinAuthException("HTTP $code：登录态可能已失效", httpCode = code)
+                // 403 正文常是 Argus 网关明文（Uifid/Signature Not Found），带出以便区分是登录失效还是网关拦截。
+                val reason = raw.take(200).ifBlank { "登录态可能已失效" }
+                throw DouyinAuthException("HTTP $code：$reason", httpCode = code)
             }
             val hint = raw.take(300).ifBlank { "(无正文)" }
             throw IllegalStateException("HTTP $code: $hint")

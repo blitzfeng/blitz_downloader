@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.blitz.downloader.data.db.DatabaseBackupManager
+import com.blitz.downloader.util.MediaVisibilityManager
+import com.blitz.downloader.util.MediaVisibilityManager.MediaFolder
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
@@ -115,6 +117,45 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ── 相册可见性 ─────────────────────────────────────────────────────────────
+
+    private val _folderVisibility = MutableStateFlow<Map<MediaFolder, Boolean>>(emptyMap())
+
+    /** 各可切换目录当前是否对相册隐藏；权威在磁盘（`.nomedia` 在不在），这里只是缓存给 UI 渲染。 */
+    val folderVisibility: StateFlow<Map<MediaFolder, Boolean>> = _folderVisibility.asStateFlow()
+
+    /**
+     * 重新探测磁盘状态。视图层在每次 `onResume` 调一次——用户可能刚从系统权限页回来，
+     * 也可能用文件管理器在 App 外改动过 `.nomedia`。
+     */
+    fun refreshFolderVisibility() {
+        viewModelScope.launch {
+            _folderVisibility.value = withContext(Dispatchers.IO) {
+                MediaFolder.entries.associateWith { MediaVisibilityManager.isHidden(it) }
+            }
+        }
+    }
+
+    /**
+     * 切换某个目录的相册可见性。
+     *
+     * **开启方向的权限校验在视图层**（要弹说明并跳系统设置页，属于纯 UI 流程）；
+     * 这里再兜一次底，避免任何调用路径漏检查把媒体锁死——代价只是一次 `Environment` 查询。
+     */
+    fun setFolderHidden(folder: MediaFolder, hidden: Boolean) {
+        if (hidden && !MediaVisibilityManager.hasAllFilesAccess()) {
+            emit(SettingsEvent.NeedsAllFilesAccess(folder))
+            return
+        }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                MediaVisibilityManager.setHidden(getApplication(), folder, hidden)
+            }
+            refreshFolderVisibility()
+            emit(SettingsEvent.FolderVisibilityChanged(folder, hidden))
+        }
+    }
+
     private fun emit(event: SettingsEvent) {
         _events.tryEmit(event)
     }
@@ -137,4 +178,9 @@ sealed interface SettingsEvent {
 
     /** File 读取被系统拒绝（备份被孤儿化），需要改走 SAF 文件选择器。 */
     data object RestoreNeedsFilePicker : SettingsEvent
+
+    /** 想开启隐藏但缺少「所有文件访问权限」，视图层据此弹说明并引导去系统设置。 */
+    data class NeedsAllFilesAccess(val folder: MediaFolder) : SettingsEvent
+
+    data class FolderVisibilityChanged(val folder: MediaFolder, val hidden: Boolean) : SettingsEvent
 }

@@ -1,0 +1,3 @@
+- [x] 修改 `themes.xml` 增加透明属性
+- [x] 优化 `BatchTagDialogFragment.kt` 的 Context 使用与背景清除逻辑
+- [x] 验证构建与界面显示
