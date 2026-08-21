@@ -38,7 +38,7 @@ data class VideoItemUiModel(
      */
     val imageVideoUrls: List<String?> = emptyList(),
     /**
-     * 用户在图集选图弹窗（[com.blitz.downloader.dialog.PhotoSelectionBottomSheet]）里勾选的图片下标（相对 [imageUrls]）。
+     * 用户在图集选图弹窗（[com.blitz.downloader.dialog.PhotoSelectionDialogFragment]）里勾选的图片下标（相对 [imageUrls]）。
      *
      * `null` = 没做过子选择，按**全选**处理——批量「全选」按钮勾中的图集就是这个状态，
      * 不会因此弹窗。全选完成时也归一化回 `null`，保证"全选"只有一种表示。

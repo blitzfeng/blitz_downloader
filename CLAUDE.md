@@ -85,6 +85,7 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
 | `adapter/` | RecyclerView Adapter / ViewHolder | 数据模型 |
 | `dialog/` | 对话框与 BottomSheet（新的一律 Compose，见「Compose 接入」） | 页面级 Fragment |
 | `ui/theme/` | Compose 主题（`BlitzTheme`、配色） | 具体页面 / 弹窗的 Composable |
+| `ui/` | 跨页面复用的 Composable 组件（如 `LivePhotoPlayer`，浏览页与下载页预览共用） | 单处使用的私有 Composable（留在其宿主文件） |
 | `viewmodel/` | ViewModel 及其 UiState / Event / Command 类型 | Android View 引用、`R.string` 拼接 |
 | `model/` | 跨层数据模型 | 只有一个 Adapter 用的私有类型 |
 | `model/filter/` | 筛选与排序的枚举、筛选状态 | 筛选的执行逻辑（在 ViewModel 里） |
@@ -134,6 +135,15 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
 两者「确定」的可用性相反，是语义决定的，别顺手统一。与旧 `AlertDialog` 版的其余有意差异：
 批量弹窗没勾标签时不再 toast 提醒（`manage_set_tags_none_checked` 因此闲置未删）；
 「仅次数 +1」的二次确认改为同一窗口内换页、取消可退回勾选页；勾选状态转屏不丢。
+
+**下载页选图/预览弹窗**已从 View 版 `PhotoSelectionBottomSheet`（连同 `dialog_photo_selection.xml`、
+`item_photo_selection_page.xml` 一并删除）重写为 `PhotoSelectionDialogFragment`（Compose，继承
+`ComposeDialogFragment`）。宿主是 `ListDownloadFragment`，结果走 `FragmentResult`（`REQUEST_KEY`）而非
+旧的构造回调——`RESULT_ALL=true` 由宿主解释为「全选(null)」，否则读 `RESULT_INDICES`（空数组=没选）；
+`editable=false` 纯预览不回结果。归一化语义与旧版一致（全选=null、空集=没选）。**动图在此弹窗内播放**：
+每张图若 `imageVideoUrls` 该项非空即为实况图，用公共 `LivePhotoPlayer` 播——注意这里的 mp4 是**网络 URL**
+（内容还没下载，走网络流，首帧有缓冲、耗流量），与浏览页放本地文件是同一个 Composed 播放器、不同数据源。
+从 BottomSheet 改成 `ComposeDialogFragment` 的居中大卡片是刻意的（走统一 Compose 弹窗范式）。
 
 **页面级 Compose（首例：`ImageViewerActivity`）**
 

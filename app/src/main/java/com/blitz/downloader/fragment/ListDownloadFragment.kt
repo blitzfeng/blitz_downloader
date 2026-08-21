@@ -30,7 +30,7 @@ import com.blitz.downloader.adapter.VideoGridAdapter
 import com.blitz.downloader.api.DouyinCollectsFolderRow
 import com.blitz.downloader.config.AppConfig
 import com.blitz.downloader.databinding.FragmentListDownloadBinding
-import com.blitz.downloader.dialog.PhotoSelectionBottomSheet
+import com.blitz.downloader.dialog.PhotoSelectionDialogFragment
 import com.blitz.downloader.download.BatchDownloadCoordinator
 import com.blitz.downloader.viewmodel.AuthorPostsRequest
 import com.blitz.downloader.viewmodel.CookiePasteResult
@@ -119,7 +119,24 @@ class ListDownloadFragment : Fragment() {
         setupScrollListener()
         setupClickListeners()
         observeViewModel()
+        registerPhotoSelectionResult()
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
+    }
+
+    /** 接收选图弹窗（[PhotoSelectionDialogFragment]）的 FragmentResult：全选=null、否则具体下标集合。 */
+    private fun registerPhotoSelectionResult() {
+        childFragmentManager.setFragmentResultListener(
+            PhotoSelectionDialogFragment.REQUEST_KEY,
+            viewLifecycleOwner,
+        ) { _, bundle ->
+            val id = bundle.getString(PhotoSelectionDialogFragment.RESULT_ID).orEmpty()
+            val result: Set<Int>? = if (bundle.getBoolean(PhotoSelectionDialogFragment.RESULT_ALL)) {
+                null
+            } else {
+                (bundle.getIntArray(PhotoSelectionDialogFragment.RESULT_INDICES) ?: IntArray(0)).toSet()
+            }
+            viewModel.applyPhotoSelection(id, result)
+        }
     }
 
     private fun setupRecyclerView() {
@@ -302,12 +319,14 @@ class ListDownloadFragment : Fragment() {
                 CookiePasteResult.INVALID -> toast(R.string.toast_cookie_paste_invalid)
             }
 
-            is ListDownloadEvent.ShowPhotoSelection -> PhotoSelectionBottomSheet.show(
-                context = requireContext(),
+            is ListDownloadEvent.ShowPhotoSelection -> PhotoSelectionDialogFragment.show(
+                host = this,
+                id = event.id,
                 imageUrls = event.imageUrls,
+                imageVideoUrls = event.imageVideoUrls,
                 initialSelection = event.initialSelection,
                 editable = event.editable,
-            ) { result -> viewModel.applyPhotoSelection(event.id, result) }
+            )
 
             ListDownloadEvent.PhotoSelectionCleared -> toast(R.string.photo_pick_none_selected)
 

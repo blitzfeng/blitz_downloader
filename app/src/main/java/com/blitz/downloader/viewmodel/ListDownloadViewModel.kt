@@ -226,6 +226,7 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
                 ListDownloadEvent.ShowPhotoSelection(
                     id = id,
                     imageUrls = item.imageUrls,
+                    imageVideoUrls = item.imageVideoUrls,
                     initialSelection = imageSelections[id],
                     editable = true,
                 ),
@@ -261,6 +262,7 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
             ListDownloadEvent.ShowPhotoSelection(
                 id = id,
                 imageUrls = item.imageUrls,
+                imageVideoUrls = item.imageVideoUrls,
                 initialSelection = imageSelections[id],
                 editable = editable,
             ),
@@ -881,6 +883,8 @@ sealed interface ListDownloadEvent {
     data class ShowPhotoSelection(
         val id: String,
         val imageUrls: List<String>,
+        /** 与 [imageUrls] 等长对应的实况图 mp4 直链（动图项非空、静态图 null），供预览弹窗播放动图。 */
+        val imageVideoUrls: List<String?>,
         val initialSelection: Set<Int>?,
         val editable: Boolean,
     ) : ListDownloadEvent
