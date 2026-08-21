@@ -33,6 +33,11 @@ data class VideoItemUiModel(
     /** 图集所有图片的最优下载 URL 列表（[isPhoto]=true 时非空）。 */
     val imageUrls: List<String> = emptyList(),
     /**
+     * 与 [imageUrls] **等长、一一对应**的实况图 mp4 直链：动图项为 mp4 URL，普通静态图为 null。
+     * 下载时据此在静态封面之外多下一个同基名 `.mp4`（见 [com.blitz.downloader.download.BatchDownloadCoordinator]）。
+     */
+    val imageVideoUrls: List<String?> = emptyList(),
+    /**
      * 用户在图集选图弹窗（[com.blitz.downloader.dialog.PhotoSelectionBottomSheet]）里勾选的图片下标（相对 [imageUrls]）。
      *
      * `null` = 没做过子选择，按**全选**处理——批量「全选」按钮勾中的图集就是这个状态，
@@ -80,6 +85,16 @@ data class VideoItemUiModel(
         get() = selectedImageIndices
             ?.let { sel -> imageUrls.filterIndexed { index, _ -> index in sel } }
             ?: imageUrls
+
+    /**
+     * 与 [downloadImageUrls] **同步过滤、一一对应**的实况图 mp4 直链（动图项非空，静态图为 null）。
+     * 下载循环按同一下标取用，保证封面 `base_NN.webp` 与动图 `base_NN.mp4` 序号对齐。
+     * [imageVideoUrls] 短于 [imageUrls] 时（理论不该发生）越界项按 null 处理。
+     */
+    val downloadImageVideoUrls: List<String?>
+        get() = selectedImageIndices
+            ?.let { sel -> imageVideoUrls.filterIndexed { index, _ -> index in sel } }
+            ?: imageVideoUrls
 
     /** 是否只选了图集里的一部分图片（用于网格徽标显示 `3/9张`）。 */
     val hasPartialImageSelection: Boolean

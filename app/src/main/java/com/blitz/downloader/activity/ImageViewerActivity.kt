@@ -1,18 +1,22 @@
 package com.blitz.downloader.activity
 
+import android.graphics.Matrix
+import android.graphics.SurfaceTexture
+import android.media.MediaPlayer
 import android.os.Bundle
+import android.util.Log
 import android.os.Environment
+import android.view.Surface
+import android.view.TextureView
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -20,6 +24,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -30,6 +40,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.blitz.downloader.R
@@ -37,19 +48,22 @@ import com.blitz.downloader.ui.theme.BlitzTheme
 import java.io.File
 
 /**
- * 图片浏览页：支持左右滑动查看同一图集的全部图片。
+ * 图片浏览页：支持左右滑动查看同一图集的全部图片，**实况图（Live Photo / 动图）自动循环播放**。
  *
  * 入参（Intent extras）：
- * - [EXTRA_FILE_PATH]：图集第一张图的相对路径（如 `Download/bDouyin/images/xxx_01.jpg`）
+ * - [EXTRA_FILE_PATH]：图集第一张图的相对路径（如 `Download/bDouyin/images/xxx_01.webp`）
  * - [EXTRA_TITLE]：显示在标题栏上的标题
  *
- * 通过扫描同目录下具有相同基础名称（去掉末尾 `_\d+` 后缀）的文件，自动枚举图集中的所有图片。
+ * 通过扫描同目录下具有相同基础名称（去掉末尾 `_\d+` 后缀）的封面文件，自动枚举图集所有图片；
+ * 每张封面再探测同名 `.mp4` 兄弟文件——存在即为实况图，用 [MediaPlayer] 播放；否则是静态图。
  *
- * UI 为 Compose 实现（页面级 Compose 的首例）：图集列表在 [onCreate] 里一次算好后当参数传入，
- * 页内唯一的状态就是当前页码。**没有 ViewModel**——本页既不发网络请求也不读写数据库，
- * 按 `CLAUDE.md` 的边界约定，这类纯视图状态留在视图层。
+ * UI 为 Compose 实现：图集列表在 [onCreate] 里一次算好后当参数传入。**没有 ViewModel**——本页既不发
+ * 网络请求也不读写数据库，按 `CLAUDE.md` 的边界约定，这类纯视图状态留在视图层。
  */
 class ImageViewerActivity : AppCompatActivity() {
+
+    /** 图集中的一页：静态封面 + 可选的实况图 mp4（非空即动图）。 */
+    internal data class LivePhotoPage(val cover: File, val video: File?)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,8 +85,8 @@ class ImageViewerActivity : AppCompatActivity() {
             return
         }
 
-        val images = findImageSet(firstFile)
-        if (images.isEmpty()) {
+        val pages = findImageSet(firstFile)
+        if (pages.isEmpty()) {
             Toast.makeText(this, getString(R.string.player_file_not_found), Toast.LENGTH_SHORT).show()
             finish()
             return
@@ -82,7 +96,7 @@ class ImageViewerActivity : AppCompatActivity() {
             BlitzTheme {
                 ImageViewerScreen(
                     title = title.ifBlank { stringResource(R.string.image_viewer_title) },
-                    images = images,
+                    pages = pages,
                     onBack = { finish() },
                 )
             }
@@ -90,25 +104,30 @@ class ImageViewerActivity : AppCompatActivity() {
     }
 
     /**
-     * 根据图集第一张图，扫描同目录下具有相同基础名（去掉末尾 `_\d+` 后缀）的所有图片文件，
-     * 按文件名升序返回。单张图片直接返回该文件。
+     * 根据图集第一张图，扫描同目录下具有相同基础名（去掉末尾 `_\d+` 后缀）的所有**封面图片**文件，
+     * 按文件名升序返回；每张封面再探测同名 `.mp4` 决定是否为实况图。单张图片直接返回该文件。
      *
-     * 与 [com.blitz.downloader.download.MediaExportManager] 的兄弟文件枚举是同一套规则，改一处需同步。
+     * 扫描规则（`base_\d+` + 探 mp4）与 [com.blitz.downloader.download.MediaExportManager.findImageSet] 一致，
+     * 改一处需同步：那边把 mp4 也纳入导出文件列表，这边只判断每张封面**是否**有 mp4 兄弟。
      */
-    private fun findImageSet(firstFile: File): List<File> {
-        val dir = firstFile.parentFile ?: return listOf(firstFile)
-        val nameNoExt = firstFile.nameWithoutExtension        // e.g., "author_desc_01"
-        val baseName = nameNoExt.replace(Regex("_\\d+$"), "")  // e.g., "author_desc"
-        val ext = firstFile.extension
-
+    private fun findImageSet(firstFile: File): List<LivePhotoPage> {
+        val dir = firstFile.parentFile ?: return listOf(LivePhotoPage(firstFile, siblingVideoOf(firstFile)))
+        val baseName = firstFile.nameWithoutExtension.replace(Regex("_\\d+$"), "")
         val pattern = Regex("^${Regex.escape(baseName)}_\\d+$")
-        val files = dir.listFiles { f ->
+        val imageExts = setOf("webp", "jpg", "jpeg", "png")
+        val covers = dir.listFiles { f ->
             f.isFile &&
-                f.extension.equals(ext, ignoreCase = true) &&
+                f.extension.lowercase() in imageExts &&
                 f.nameWithoutExtension.matches(pattern)
         }
-        return if (files.isNullOrEmpty()) listOf(firstFile)
-        else files.sortedBy { it.name }
+        val ordered = if (covers.isNullOrEmpty()) listOf(firstFile) else covers.sortedBy { it.name }
+        return ordered.map { LivePhotoPage(it, siblingVideoOf(it)) }
+    }
+
+    /** 封面同名的 `.mp4` 兄弟文件（实况图本体）；不存在返回 null。 */
+    private fun siblingVideoOf(cover: File): File? {
+        val mp4 = File(cover.parentFile, "${cover.nameWithoutExtension}.mp4")
+        return mp4.takeIf { it.isFile }
     }
 
     companion object {
@@ -121,14 +140,18 @@ class ImageViewerActivity : AppCompatActivity() {
 private val ViewerBarColor = Color(0xFF5469D4)   // 对齐 colors.xml 的 color_primary_dark
 private val IndicatorScrim = Color(0x80000000)
 
+/** 实况图播放故障日志 TAG（仅在 MediaPlayer 报错 / setup 异常时打，用于排查解码或状态问题）。 */
+private const val TAG_LIVE = "LivePhoto"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ImageViewerScreen(
     title: String,
-    images: List<File>,
+    pages: List<ImageViewerActivity.LivePhotoPage>,
     onBack: () -> Unit,
 ) {
-    val pagerState = rememberPagerState(pageCount = { images.size })
+    val pagerState = rememberPagerState(pageCount = { pages.size })
+    val context = LocalContext.current
 
     Box(
         modifier = Modifier
@@ -139,19 +162,31 @@ private fun ImageViewerScreen(
             state = pagerState,
             modifier = Modifier.fillMaxSize(),
         ) { page ->
-            AsyncImage(
-                // 占位 / 失败图走 ImageRequest 而非 painterResource：ic_video_placeholder 是
-                // layer-list，painterResource 只吃 VectorDrawable 与位图，会直接抛异常
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(images[page])
-                    .crossfade(true)
-                    .placeholder(R.drawable.ic_video_placeholder)
-                    .error(R.drawable.ic_video_placeholder)
-                    .build(),
-                contentDescription = stringResource(R.string.image_viewer_title),
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
-            )
+            val item = pages[page]
+            if (item.video != null) {
+                // 实况图：仅当前页播放，滑走暂停并回到首帧，销毁时释放
+                LivePhotoPlayer(
+                    videoFile = item.video,
+                    coverFile = item.cover,
+                    isActive = pagerState.currentPage == page,
+                    pageIndex = page,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                AsyncImage(
+                    // 占位 / 失败图走 ImageRequest 而非 painterResource：ic_video_placeholder 是
+                    // layer-list，painterResource 只吃 VectorDrawable 与位图，会直接抛异常
+                    model = ImageRequest.Builder(context)
+                        .data(item.cover)
+                        .crossfade(true)
+                        .placeholder(R.drawable.ic_video_placeholder)
+                        .error(R.drawable.ic_video_placeholder)
+                        .build(),
+                    contentDescription = stringResource(R.string.image_viewer_title),
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
 
         // 顶栏悬浮在图片之上，与改造前的 FrameLayout 叠放一致
@@ -176,12 +211,12 @@ private fun ImageViewerScreen(
             modifier = Modifier.align(Alignment.TopCenter),
         )
 
-        if (images.size > 1) {
+        if (pages.size > 1) {
             Text(
                 text = stringResource(
                     R.string.image_viewer_page_indicator,
                     pagerState.currentPage + 1,
-                    images.size,
+                    pages.size,
                 ),
                 color = Color.White,
                 fontSize = 14.sp,
@@ -193,4 +228,137 @@ private fun ImageViewerScreen(
             )
         }
     }
+}
+
+/**
+ * 实况图播放器：本地 mp4 用原生 [MediaPlayer] + [TextureView] 循环、静音播放，画面按 `ContentScale.Fit`
+ * 居中缩放（黑底留边）。与 [VideoPlayerActivity] 同一套 MediaPlayer 模式，**不引 ExoPlayer**。
+ *
+ * - 未就绪时先显示静态封面兜底，`onPrepared` 后再由视频接管，避免黑屏闪烁；
+ * - [isActive]（是否当前页）为 false 时暂停并 `seekTo(0)`，只让可见页在播；
+ * - `onDispose` 释放播放器，避免翻页残留多个实例。
+ */
+@Composable
+private fun LivePhotoPlayer(
+    videoFile: File,
+    coverFile: File,
+    isActive: Boolean,
+    pageIndex: Int,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val mediaPlayer = remember { MediaPlayer() }
+    var textureView by remember { mutableStateOf<TextureView?>(null) }
+    var videoW by remember { mutableStateOf(0) }
+    var videoH by remember { mutableStateOf(0) }
+    var prepared by remember { mutableStateOf(false) }
+    // surface 就绪必须纳入播放条件：翻到后面的页时 TextureView 是滑到才 attach、surface 晚于 prepare 就绪，
+    // 若在 surface 就绪前就 start()，MediaPlayer 无输出面，画面停住——这正是「只有第一页能播」的根因。
+    var surfaceReady by remember { mutableStateOf(false) }
+
+    Box(modifier) {
+        // 封面兜底：视频未就绪 / 播放失败时显示静态封面
+        if (!prepared) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(coverFile)
+                    .placeholder(R.drawable.ic_video_placeholder)
+                    .error(R.drawable.ic_video_placeholder)
+                    .build(),
+                contentDescription = stringResource(R.string.image_viewer_title),
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        AndroidView(
+            factory = { ctx ->
+                TextureView(ctx).apply {
+                    surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                        override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+                            runCatching { mediaPlayer.setSurface(Surface(st)) }
+                            surfaceReady = true
+                            applyFitTransform(this@apply, videoW, videoH)
+                        }
+
+                        override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
+                            applyFitTransform(this@apply, videoW, videoH)
+                        }
+
+                        override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
+                            surfaceReady = false
+                            return true
+                        }
+                        override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+                    }
+                    textureView = this
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+
+    // 绑定数据源并准备（videoFile 变化时重建，翻页复用同一 composable 也能切源）
+    DisposableEffect(videoFile) {
+        try {
+            mediaPlayer.reset()
+            mediaPlayer.setDataSource(videoFile.absolutePath)
+            mediaPlayer.isLooping = true
+            mediaPlayer.setVolume(0f, 0f)   // 实况图静音
+            mediaPlayer.setOnVideoSizeChangedListener { _, w, h ->
+                videoW = w
+                videoH = h
+            }
+            // 只设标志，实际起播交给下面的 LaunchedEffect 统一决策（避免 start 早于 surface 就绪）。
+            mediaPlayer.setOnPreparedListener { prepared = true }
+            mediaPlayer.setOnErrorListener { _, what, extra ->
+                Log.w(TAG_LIVE, "page=$pageIndex MediaPlayer ERROR what=$what extra=$extra")
+                false
+            }
+            mediaPlayer.prepareAsync()
+        } catch (e: Exception) {
+            Log.w(TAG_LIVE, "page=$pageIndex setup failed", e)
+        }
+        onDispose { runCatching { mediaPlayer.release() } }
+    }
+
+    // 播放决策单点：当前页 + 已准备 + surface 就绪 三者齐了才播；任一状态变化都重新评估。
+    // 关键：pause()/seekTo() 只能在 Started/Paused 态调用——在 Prepared 态调 pause() 会让 MediaPlayer 报
+    // error(-38) 直接进 Error 态、之后 start 全废（这正是「预加载的非当前页 PREPARED 后被 pause 打死、
+    // 翻到该页再也起不来、连第一页滑回也黑」的根因）。所以两个方向都用 isPlaying 守卫：非当前页的
+    // Prepared 态**保持不动**，等它成为当前页再 start，绝不主动 pause 一个还没 Started 的播放器。
+    LaunchedEffect(isActive, prepared, surfaceReady) {
+        if (!prepared) return@LaunchedEffect
+        runCatching {
+            if (isActive && surfaceReady) {
+                if (!mediaPlayer.isPlaying) mediaPlayer.start()
+            } else if (mediaPlayer.isPlaying) {
+                mediaPlayer.pause()
+                mediaPlayer.seekTo(0)
+            }
+        }
+    }
+
+    // 视频尺寸就绪后按 Fit 重算变换
+    LaunchedEffect(videoW, videoH) {
+        val tv = textureView ?: return@LaunchedEffect
+        applyFitTransform(tv, videoW, videoH)
+    }
+}
+
+/**
+ * 把 [TextureView] 的内容按 `ContentScale.Fit` 居中缩放到视频原始宽高比。
+ * TextureView 默认把内容拉伸填满自身，这里以视图中心为轴反算缩放系数还原比例。
+ */
+private fun applyFitTransform(tv: TextureView, videoW: Int, videoH: Int) {
+    if (videoW <= 0 || videoH <= 0) return
+    val viewW = tv.width.toFloat()
+    val viewH = tv.height.toFloat()
+    if (viewW <= 0f || viewH <= 0f) return
+    val scale = minOf(viewW / videoW, viewH / videoH)
+    val drawnW = videoW * scale
+    val drawnH = videoH * scale
+    val matrix = Matrix().apply {
+        setScale(drawnW / viewW, drawnH / viewH, viewW / 2f, viewH / 2f)
+    }
+    tv.setTransform(matrix)
 }

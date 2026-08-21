@@ -258,4 +258,78 @@ class AwemeMapperTest {
         assertEquals(1, urls.size)
         assertEquals(free, urls[0])
     }
+
+    @Test
+    fun preferredImagePairs_livePhoto_extractsMp4AlignedWithStatic() {
+        val staticA = "https://p3.douyinpic.com/img/a_01~q75.webp"
+        val staticB = "https://p3.douyinpic.com/img/a_02~q75.webp"
+        val mp4A = "https://v26-web.douyinvod.com/a_01/?mime_type=video_mp4"
+        val item = AwemeItem(
+            awemeId = "7700000000000000010",
+            desc = "实况图集",
+            createTime = 0L,
+            author = null,
+            video = null,
+            images = listOf(
+                // 第 1 张：实况图（带 video.play_addr 的 mp4）
+                AwemeImage(
+                    urlList = listOf(staticA),
+                    livePhotoType = 1,
+                    video = Video(
+                        playAddr = PlayAddr(null, listOf(mp4A), null, null),
+                        cover = null, dynamicCover = null, ratio = null,
+                    ),
+                ),
+                // 第 2 张：普通静态图（无 video）
+                AwemeImage(urlList = listOf(staticB)),
+            ),
+            statistics = null,
+            shareUrl = null,
+        )
+        val ui = AwemeMapper.toGridItemOrNull(item)
+        assertNotNull(ui)
+        assertEquals(true, ui!!.isPhoto)
+        // 静态封面列表不变
+        assertEquals(listOf(staticA, staticB), ui.imageUrls)
+        // mp4 列表与静态封面等长、一一对应：动图项非空、静态图为 null
+        assertEquals(2, ui.imageVideoUrls.size)
+        assertEquals(mp4A, ui.imageVideoUrls[0])
+        assertNull(ui.imageVideoUrls[1])
+    }
+
+    @Test
+    fun preferredImagePairs_livePhoto_prefers1080Mp4FromBitRate() {
+        val item = AwemeItem(
+            awemeId = "7700000000000000011",
+            desc = "t",
+            createTime = 0L,
+            author = null,
+            video = null,
+            images = listOf(
+                AwemeImage(
+                    urlList = listOf("https://p3.douyinpic.com/img/b_01~q75.webp"),
+                    livePhotoType = 1,
+                    video = Video(
+                        playAddr = PlayAddr(null, listOf("https://cdn.example.com/live/default"), null, null),
+                        bitRate = listOf(
+                            DouyinBitRateEntry(
+                                PlayAddr(null, listOf("https://cdn.example.com/live/720"), null, null),
+                                gearName = "normal_720_0", bitRateBps = 1_000_000,
+                            ),
+                            DouyinBitRateEntry(
+                                PlayAddr(null, listOf("https://cdn.example.com/live/1080"), null, null),
+                                gearName = "normal_1080_0", bitRateBps = 2_000_000,
+                            ),
+                        ),
+                        cover = null, dynamicCover = null, ratio = null,
+                    ),
+                ),
+            ),
+            statistics = null,
+            shareUrl = null,
+        )
+        val ui = AwemeMapper.toGridItemOrNull(item)
+        assertNotNull(ui)
+        assertEquals("https://cdn.example.com/live/1080", ui!!.imageVideoUrls[0])
+    }
 }

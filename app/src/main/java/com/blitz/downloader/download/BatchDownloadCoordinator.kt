@@ -220,13 +220,15 @@ object BatchDownloadCoordinator {
     ): String? {
         val base = buildFileNameBase(item)
         val urls = item.downloadImageUrls
+        val videoUrls = item.downloadImageVideoUrls   // 与 urls 一一对应；动图项非空、静态图 null
         val total = urls.size
         var firstPath: String? = null
         var allOk = true
         for (idx in urls.indices) {
             val url = urls[idx]
             val ext = extractImageExtension(url)
-            val displayName = "${base}_${(idx + 1).toString().padStart(2, '0')}.$ext"
+            val seq = (idx + 1).toString().padStart(2, '0')
+            val displayName = "${base}_$seq.$ext"
             val path = downloadImageToMediaStoreWithRetries(
                 app = app,
                 imageUrl = url,
@@ -237,6 +239,25 @@ object BatchDownloadCoordinator {
             )
             if (path == null) allOk = false
             if (idx == 0) firstPath = path
+
+            // 实况图：静态封面之外再下同基名同序号的 mp4（`base_NN.mp4`）。
+            // best-effort：mp4 失败只告警、不判整体失败——封面成功即该张可看（退化为静图），
+            // 浏览页 findImageSet 靠磁盘上有没有这个 mp4 兄弟文件决定播不播。
+            val videoUrl = videoUrls.getOrNull(idx)
+            if (!videoUrl.isNullOrBlank()) {
+                val mp4Name = "${base}_$seq.mp4"
+                val mp4Path = downloadImageToMediaStoreWithRetries(
+                    app = app,
+                    imageUrl = videoUrl,
+                    displayName = mp4Name,
+                    maxRetries = maxRetries,
+                    index = idx,
+                    total = total,
+                )
+                if (mp4Path == null) {
+                    Log.w(TAG, "live-photo mp4 download failed (cover kept as static): $mp4Name")
+                }
+            }
         }
         return if (allOk) firstPath else null
     }
@@ -279,7 +300,13 @@ object BatchDownloadCoordinator {
     ): String? {
         val resolver = app.contentResolver
         val relativeDir = "${Environment.DIRECTORY_DOWNLOADS}/$IMAGE_SUBDIR"
-        val mimeType = if (displayName.endsWith(".webp", ignoreCase = true)) "image/webp" else "image/jpeg"
+        // 同一目录既写图片也写实况图 mp4，MIME 按扩展名区分。
+        val mimeType = when {
+            displayName.endsWith(".mp4", ignoreCase = true) -> "video/mp4"
+            displayName.endsWith(".webp", ignoreCase = true) -> "image/webp"
+            displayName.endsWith(".png", ignoreCase = true) -> "image/png"
+            else -> "image/jpeg"
+        }
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, displayName)
             put(MediaStore.Downloads.MIME_TYPE, mimeType)

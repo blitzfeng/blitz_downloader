@@ -147,18 +147,22 @@ object MediaExportManager {
     // ── 私有辅助 ───────────────────────────────────────────────────────────────
 
     /**
-     * 图集兄弟枚举，逻辑与 [com.blitz.downloader.activity.ImageViewerActivity.findImageSet] 一致：
-     * 去掉第一张图文件名末尾 `_\d+` 得到基础名，扫描同目录同扩展名、匹配 `base_\d+` 的全部文件，按名升序。
+     * 图集兄弟枚举，扫描规则与 [com.blitz.downloader.activity.ImageViewerActivity.findImageSet] 一致：
+     * 去掉第一张图文件名末尾 `_\d+` 得到基础名，扫描同目录、匹配 `base_\d+` 的全部文件，按名升序。
      * 找不到兄弟（如单张图片）时退回该文件本身。
+     *
+     * **实况图**：导出要把静态封面（`base_NN.webp`）与动图本体（`base_NN.mp4`）**都打包**，
+     * 所以这里不再限定「同封面扩展名」，而是收全封面图片扩展（webp/jpg/jpeg/png）+ mp4。
+     * 浏览页的同名方法只需知道每张封面**是否**有 mp4 兄弟，聚合形态不同、扫描口径相同。
      */
     private fun findImageSet(firstFile: File): List<File> {
         val dir = firstFile.parentFile ?: return listOf(firstFile)
         val baseName = firstFile.nameWithoutExtension.replace(Regex("_\\d+$"), "")
-        val ext = firstFile.extension
         val pattern = Regex("^${Regex.escape(baseName)}_\\d+$")
+        val exts = setOf("webp", "jpg", "jpeg", "png", "mp4")
         val files = dir.listFiles { f ->
             f.isFile &&
-                f.extension.equals(ext, ignoreCase = true) &&
+                f.extension.lowercase() in exts &&
                 f.nameWithoutExtension.matches(pattern)
         }
         return if (files.isNullOrEmpty()) listOf(firstFile) else files.sortedBy { it.name }

@@ -23,8 +23,14 @@ object AwemeMapper {
      * 分辨率从 [DouyinBitRateEntry.gearName]（形如 `normal_1080_0`）解析。
      * 最后统一把 `playwm` 换为 `play` 以尽量走无水印直链。
      */
-    fun preferredPlayDownloadUrl(item: AwemeItem): String? {
-        val v = item.video ?: return null
+    fun preferredPlayDownloadUrl(item: AwemeItem): String? =
+        item.video?.let { bestVideoUrl(it) }
+
+    /**
+     * 从一个 [Video]（普通视频或实况图 `image.video`）选出最佳 mp4 直链：bit_rate 1080p 优先，
+     * 回退 play_addr / download_addr，最后 `playwm`→`play`。无可用地址返回 null。
+     */
+    fun bestVideoUrl(v: Video): String? {
         val raw = pickBestBitRateUrl(v.bitRate)
             ?: urlsFromPlayAddr(v.playAddr).firstOrNull { it.isNotBlank() }
             ?: urlsFromPlayAddr(v.downloadAddr).firstOrNull { it.isNotBlank() }
@@ -61,7 +67,15 @@ object AwemeMapper {
      * 优先级：[AwemeImage.watermarkFreeDownloadUrlList] > [AwemeImage.urlList]（原图压缩，无水印）
      * > [AwemeImage.downloadUrlList]（含水印）。
      */
-    fun preferredImageUrls(item: AwemeItem): List<String> {
+    fun preferredImageUrls(item: AwemeItem): List<String> =
+        preferredImagePairs(item).map { it.first }
+
+    /**
+     * 图集每张图的 (静态封面 URL, 实况图 mp4 URL?) 配对。静态封面缺失的图整张丢弃，
+     * 保证结果与 [preferredImageUrls] 一致、且第二元素与之**一一对应**（动图非空、静态图 null）。
+     * 静态封面优先级同 [preferredImageUrls]；mp4 走 [bestVideoUrl]。
+     */
+    fun preferredImagePairs(item: AwemeItem): List<Pair<String, String?>> {
         val images = item.images ?: return emptyList()
         return images.mapNotNull { img ->
             val candidates = buildList {
@@ -69,7 +83,8 @@ object AwemeMapper {
                 addAll(img.urlList.orEmpty())
                 addAll(img.downloadUrlList.orEmpty())
             }
-            candidates.firstOrNull { it.isNotBlank() }
+            val staticUrl = candidates.firstOrNull { it.isNotBlank() } ?: return@mapNotNull null
+            staticUrl to img.video?.let { bestVideoUrl(it) }
         }
     }
 
@@ -90,7 +105,7 @@ object AwemeMapper {
         val rawDesc = item.desc?.trim().orEmpty()
         val title = rawDesc.ifBlank { "（无标题）" }.take(120)
         val nickname = item.author?.nickname?.trim().orEmpty()
-        val imageUrls = if (isPhoto) preferredImageUrls(item) else emptyList()
+        val imagePairs = if (isPhoto) preferredImagePairs(item) else emptyList()
         return VideoItemUiModel(
             id = id,
             title = title,
@@ -100,7 +115,8 @@ object AwemeMapper {
             downloadUrl = if (isPhoto) null else preferredPlayDownloadUrl(item),
             isSelected = false,
             isPhoto = isPhoto,
-            imageUrls = imageUrls,
+            imageUrls = imagePairs.map { it.first },
+            imageVideoUrls = imagePairs.map { it.second },
             authorSecUserId = item.author?.secUid?.trim().orEmpty(),
             collectStat = item.collectStat,
             userDigged = item.userDigged,

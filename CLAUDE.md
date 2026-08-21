@@ -145,6 +145,24 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
 - 入口是 `AppCompatActivity` + `setContent`，依赖 `androidx.activity:activity-compose`
   （弹窗那条路走 `ComposeView`，不需要它）；图片加载走 `io.coil-kt:coil-compose`，
   **版本必须与已有的 `io.coil-kt:coil` 一致**，两个 artifact 分开声明。
+- **实况图（Live Photo / 动图）在本浏览页播放**：抖音「动图」不是 animated webp，而是 **Live Photo**——
+  一张静态 webp 封面 + 一段短 mp4（判据是**逐张看 `image.video` 是否非空**，`live_photo_type=1`；不是
+  `aweme_type`，普通图集也是 68）。下载侧已把封面存 `base_NN.webp`、动图另存同基名 `base_NN.mp4`
+  （见「下载管道」）。本页 `findImageSet` 扫封面 + 探同名 `.mp4` 兄弟，产出 `LivePhotoPage(cover, video?)`：
+  有 mp4 的页走 `LivePhotoPlayer`（原生 `MediaPlayer` + `TextureView`，循环、静音、`ContentScale.Fit`
+  居中缩放，**仅当前页播放**、滑走 `seekTo(0)` 暂停、`onDispose` 释放），否则走 `AsyncImage`。
+  起播条件收敛在单个 `LaunchedEffect`（当前页 + 已 `onPrepared` + `surfaceReady`；`onPrepared` 只置标志
+  不直接 start），且 **`start()`/`pause()`/`seekTo()` 必须用 `isPlaying` 守卫**——这条是「多页只第一页能播、
+  连滑回第一页也黑」的**真正根因**（真机 logcat 定位）：`HorizontalPager` 会预加载相邻页，被预加载的**非当前页**
+  `onPrepared` 后处于 **Prepared 态**，此时若因 `isActive=false` 对它调 `pause()`，MediaPlayer 报
+  `error(-38)`（pause 只在 Started/Paused 合法）直接进 **Error 态**、之后 `start()` 全废（`start called in
+  state 0`），翻到该页再也起不来。所以：非当前页的 Prepared 态**保持不动**，`if (isActive && surfaceReady)
+  { if (!isPlaying) start() } else if (isPlaying) { pause(); seekTo(0) }`——绝不 pause 一个还没 Started 的播放器。
+  `surfaceReady` 纳入条件是次要的稳妥项（后面的页 surface 晚于 prepare 就绪），不是主因。
+  **不引 ExoPlayer**（复用 `VideoPlayerActivity` 的 MediaPlayer 模式）；`TextureView` 而非 `SurfaceView`
+  是因为 pager 横滑时 SurfaceView 有独立窗口层会闪黑。Fit 靠 `applyFitTransform` 反算 matrix
+  （TextureView 默认拉伸填满，以视图中心为轴还原视频比例）。**曾误判为 animated webp 加过 `coil-gif`，
+  已回收**——文件本身是静态 webp，加解码器无用。
 - **本页刻意不进 `BlitzTheme` 的配色**：黑底页面上套浅色 primary，白字会看不清。
   外层仍包 `BlitzTheme` 保证字体与形状统一，顶栏 / 页码角标的颜色在文件内写死
   （`ViewerBarColor` 对齐 `colors.xml` 的 `color_primary_dark`）。这是深色页面的个例，
@@ -247,8 +265,15 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 `BatchDownloadCoordinator` 处理被勾选的 `VideoItemUiModel` 列表，受限并发（`DEFAULT_MAX_CONCURRENT = 3`），单项重试（`DEFAULT_MAX_RETRIES = 3`，与 F2 一致）。文件落到公共 `Download/` 下：
 
 - `Download/bDouyin/videos/` — 视频 mp4
-- `Download/bDouyin/images/` — 图集图片
+- `Download/bDouyin/images/` — 图集图片（含**实况图**：静态封面 `base_NN.webp` + 同基名同序号的动图本体 `base_NN.mp4`）
 - `Download/bDouyin/covers/` — 视频封面缩略图（图集复用第一张图作为封面，不重复写）
+
+**实况图（Live Photo / 动图）**：抖音「动图」= 静态 webp 封面 + 一段 mp4，逐张由 `image.video` 非空判定
+（`AwemeMapper.preferredImagePairs` 产出与静态封面**等长一一对应**的 `imageVideoUrls`，`VideoItemUiModel`
+携带）。下载时每张图先下静态封面（现状不变），若该张有 mp4 就**额外**下同基名 `base_NN.mp4`
+（`BatchDownloadCoordinator`，best-effort：mp4 失败只告警不判整体失败，退化为静图）。入库 `filePath` 仍指
+第一张封面 webp，九宫格缩略图/封面逻辑**零改动**——mp4 是附属文件，靠浏览页/导出的同目录兄弟扫描发现，不入库。
+历史记录只有 webp、无 mp4，需重新下载才有动图。播放见「页面级 Compose」的 `LivePhotoPlayer`。
 
 ### 相册可见性（`.nomedia` + 所有文件访问权限）
 
@@ -337,7 +362,7 @@ owner 为 NULL 的全变 `ic_video_placeholder`——所以**不能**把可用�
 - 图片 Tab 传 `splitByOrientation = false`，两条方向路由 404、页面不分组，行为与本功能上线前完全一致。**不要**顺手给图集也分包——图集是一条记录多个文件，拆开会把一个图集散进两个包。
 - 首页分组渲染时，`/f?i=N` 的 `N` 仍是**完整 files 列表**里的下标，不按分组重排，否则单文件下载链接会指错文件。
 
-关键约束：**图集的 `filePath` 只存了第一张图（`base_01.jpg`）**，导出时必须扫描同目录 `base_\d+.<ext>` 的全部兄弟文件——逻辑与 `ImageViewerActivity.findImageSet` 一致，改一处需同步。
+关键约束：**图集的 `filePath` 只存了第一张图（`base_01.jpg`）**，导出时必须扫描同目录 `base_\d+.<ext>` 的全部兄弟文件——扫描规则与 `ImageViewerActivity.findImageSet` 一致，改一处需同步。**实况图**：兄弟扫描现在把封面图片扩展（webp/jpg/jpeg/png）**和 mp4 都纳入**，导出会把静态封面与动图 mp4 一起打包；浏览页那边同规则扫描，只是聚合成 `LivePhotoPage(cover, video?)`（判断每张封面是否有 mp4 兄弟），两者扫描口径相同、聚合形态不同。
 
 导出计数（`exportCount`，v11）：**只有局域网导出会累加**——`LanFileServer` 把某条记录字节完整写出 socket 后回调 `TransferEvent`，由 `DownloadedVideoRepository.incrementExportCount(...)` 做 `SET exportCount = exportCount + 1` 的原子累加（**不要**改成"读实体→改→整行 update"，并发写会互相覆盖）。ZIP 导出、`HEAD` 探测、中途断连都不累加。它只表示"手机已完整发出"，不代表电脑落盘，只作提示与二次确认依据。语义细节见 `.cursor/rules/db-schema.md` 的 exportCount 小节。
 

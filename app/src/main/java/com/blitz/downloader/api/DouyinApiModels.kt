@@ -129,6 +129,10 @@ data class ImageUrl(
 /**
  * 图集中单张图片（`aweme_type=68` 时 [AwemeItem.images] 中的元素）。
  * 下载优先级：[watermarkFreeDownloadUrlList] > [urlList]（原图压缩，无水印）> [downloadUrlList]（含水印）。
+ *
+ * **实况图（Live Photo / 动图）**：当 [video] 非空（`live_photo_type=1`）时，这张「图」其实是
+ * 一张静态 webp 封面 + 一段短 mp4。[urlList] 仍是静态封面，动图本体在 [video]`.play_addr`（复用与
+ * 普通视频相同的 [Video] 结构）。判据是**逐张看 [video] 是否非空**，不是 `aweme_type`（普通图集也是 68）。
  */
 data class AwemeImage(
     @SerializedName("uri") val uri: String? = null,
@@ -137,6 +141,10 @@ data class AwemeImage(
     @SerializedName("watermark_free_download_url_list") val watermarkFreeDownloadUrlList: List<String>? = null,
     @SerializedName("width") val width: Int = 0,
     @SerializedName("height") val height: Int = 0,
+    /** 实况图的 mp4 本体；普通静态图为 null。 */
+    @SerializedName("video") val video: Video? = null,
+    /** 抖音实况图标记（1=实况图）；主要判据仍是 [video] 非空，此字段仅作参考。 */
+    @SerializedName("live_photo_type") val livePhotoType: Int? = null,
 )
 
 data class Statistics(
