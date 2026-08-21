@@ -130,6 +130,7 @@ class DownloadedVideoRepository(context: Context) {
         collectCount: Long = 0L,
         mediaWidth: Int = 0,
         mediaHeight: Int = 0,
+        hasLivePhoto: Boolean = false,
     ) {
         dao.insert(
             DownloadedVideoEntity(
@@ -150,6 +151,7 @@ class DownloadedVideoRepository(context: Context) {
                 collectCount = collectCount,
                 mediaWidth = mediaWidth,
                 mediaHeight = mediaHeight,
+                hasLivePhoto = hasLivePhoto,
             ),
         )
     }

@@ -146,6 +146,7 @@ class DownloadService : Service() {
                     collectCount = meta.collectCount,
                     mediaWidth = size?.width ?: 0,
                     mediaHeight = size?.height ?: 0,
+                    hasLivePhoto = meta.hasLivePhoto,
                 )
                 if (meta.linkCollectFolderTag && meta.collectionType.isNotBlank()) {
                     tagRepo.ensureCollectFolderTagLinked(awemeId = item.id, folderName = meta.collectionType)

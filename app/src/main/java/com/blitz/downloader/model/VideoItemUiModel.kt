@@ -99,4 +99,8 @@ data class VideoItemUiModel(
     /** 是否只选了图集里的一部分图片（用于网格徽标显示 `3/9张`）。 */
     val hasPartialImageSelection: Boolean
         get() = selectedImageIndices != null && selectedImageIndices.size < imageUrls.size
+
+    /** 图集里是否至少有一张实况图（动图 mp4），用于列表显示动图角标。下载页据此现算，不落库。 */
+    val hasLivePhoto: Boolean
+        get() = imageVideoUrls.any { !it.isNullOrBlank() }
 }

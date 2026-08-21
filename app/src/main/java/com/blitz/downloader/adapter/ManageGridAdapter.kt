@@ -126,7 +126,7 @@ class ManageGridAdapter(
         }
         val item = items[position]
         val isSelected = item.entity.awemeId in selectedIds
-        if (PAYLOAD_FILE_EXISTS in payloads) holder.bindInvalidState(item.fileExists)
+        if (PAYLOAD_FILE_EXISTS in payloads) holder.bindInvalidState(item.fileExists, item.entity.hasLivePhoto)
         if (PAYLOAD_SELECTION_STATE in payloads) {
             holder.bindSelectionState(inSelectionMode, isSelected)
             // 「已导出」标记只在多选态显示，故随多选状态一起重绑
@@ -143,6 +143,7 @@ class ManageGridAdapter(
 
     inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val cover: ImageView = itemView.findViewById(R.id.ivCover)
+        private val liveBadge: ImageView = itemView.findViewById(R.id.ivLiveBadge)
         private val invalidOverlay: View = itemView.findViewById(R.id.viewInvalidOverlay)
         private val invalidBadge: TextView = itemView.findViewById(R.id.tvInvalidBadge)
         private val diggBadge: TextView = itemView.findViewById(R.id.tvDiggCount)
@@ -214,7 +215,7 @@ class ManageGridAdapter(
                 )
             }
 
-            bindInvalidState(item.fileExists)
+            bindInvalidState(item.fileExists, entity.hasLivePhoto)
             bindSelectionState(selectionMode, isSelected)
             bindExportedState(selectionMode, entity.exportCount)
             bindWatchedState(entity.watched)
@@ -325,9 +326,11 @@ class ManageGridAdapter(
             rows.forEach { userTagContainer.addView(it) }
         }
 
-        fun bindInvalidState(fileExists: Boolean) {
+        fun bindInvalidState(fileExists: Boolean, hasLivePhoto: Boolean) {
             invalidOverlay.visibility = if (fileExists) View.GONE else View.VISIBLE
             invalidBadge.visibility = if (fileExists) View.GONE else View.VISIBLE
+            // 动图角标：含实况图且文件存在时显示；文件失效时隐藏，避免与失效标叠在封面中央
+            liveBadge.visibility = if (hasLivePhoto && fileExists) View.VISIBLE else View.GONE
         }
 
         /**

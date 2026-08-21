@@ -69,6 +69,7 @@ class VideoGridAdapter(
         private val overlay: View = itemView.findViewById(R.id.selectionOverlay)
         private val downloadedBadge: TextView = itemView.findViewById(R.id.tvDownloadedBadge)
         private val photoBadge: TextView = itemView.findViewById(R.id.tvPhotoBadge)
+        private val liveBadge: ImageView = itemView.findViewById(R.id.ivLiveBadge)
         private val diggBadge: TextView = itemView.findViewById(R.id.tvDiggCount)
         private val btnAuthorPosts: View = itemView.findViewById(R.id.btnAuthorPosts)
         private val btnPreview: View = itemView.findViewById(R.id.btnPreview)
@@ -102,6 +103,9 @@ class VideoGridAdapter(
             } else {
                 photoBadge.visibility = View.GONE
             }
+
+            // 动图角标：图集里含实况图（mp4）时，封面中央显示播放钮
+            liveBadge.visibility = if (item.hasLivePhoto) View.VISIBLE else View.GONE
 
             // 点赞数徽标：接口未下发或为 0 时直接隐藏；心形默认白色，接口 user_digged=1（我点赞过）着抖音红
             val diggText = NumberFormatUtils.formatChineseCount(item.diggCount)

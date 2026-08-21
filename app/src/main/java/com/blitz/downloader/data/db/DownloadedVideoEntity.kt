@@ -153,4 +153,11 @@ data class DownloadedVideoEntity(
     val mediaWidth: Int = 0,
     /** 媒体文件的**呈现高度**（像素，v14 新增）。`0` = 未知，语义与 [mediaWidth] 完全一致。 */
     val mediaHeight: Int = 0,
+    /**
+     * 是否为**实况图（Live Photo / 动图）图集**（v15 新增）：图集里至少有一张带 mp4。
+     * 下载时算出（`imageVideoUrls` 有非空项）并写入，供下载页 / 管理页列表显示动图角标。
+     * 旧记录默认 false，**不做历史批量回填**（列表渲染时逐项探测 mp4 兄弟文件的 IO 太重）；
+     * 下载页不依赖本字段（内存里的 `imageVideoUrls` 现算），只有管理页读它。
+     */
+    val hasLivePhoto: Boolean = false,
 )

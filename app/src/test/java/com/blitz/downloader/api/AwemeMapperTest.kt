@@ -150,6 +150,8 @@ class AwemeMapperTest {
         assertEquals(1, ui.imageUrls.size)
         assertEquals(imageUrl, ui.imageUrls[0])
         assertEquals(imageUrl, ui.coverUrl)
+        // 纯静态图集 → hasLivePhoto=false
+        assertEquals(false, ui.hasLivePhoto)
     }
 
     @Test
@@ -295,6 +297,8 @@ class AwemeMapperTest {
         assertEquals(2, ui.imageVideoUrls.size)
         assertEquals(mp4A, ui.imageVideoUrls[0])
         assertNull(ui.imageVideoUrls[1])
+        // 含至少一张动图 → hasLivePhoto=true
+        assertEquals(true, ui.hasLivePhoto)
     }
 
     @Test

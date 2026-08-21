@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v14**
+> **当前版本：v15**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -35,6 +35,7 @@
 | v12 | `downloaded_videos` 新增 `tagEditCount`（用户修改标签的次数） |
 | v13 | `downloaded_videos` 新增 `watched`（是否已看过） |
 | v14 | `downloaded_videos` 新增 `mediaWidth` / `mediaHeight`（媒体呈现宽高，用于局域网导出分横屏/竖屏包） |
+| v15 | `downloaded_videos` 新增 `hasLivePhoto`（是否实况图/动图图集，用于下载页/管理页列表的动图角标） |
 
 > **注意**：v4 的 `likeType` 与 `downloadType` 语义重叠，v5 通过重建表删除，**后续不要再加同类冗余字段**。
 
@@ -68,6 +69,7 @@
 | `watched` | INTEGER(Bool) | `0`(false) | 是否已看过（v13 新增，见下方规则） |
 | `mediaWidth` | INTEGER | `0` | 媒体呈现宽度（像素，v14 新增，见下方规则） |
 | `mediaHeight` | INTEGER | `0` | 媒体呈现高度（像素，v14 新增，见下方规则） |
+| `hasLivePhoto` | INTEGER(Bool) | `0`(false) | 是否实况图（动图）图集：图集里至少一张带 mp4（v15 新增）。下载时算出写入，供列表动图角标；下载页不读它（内存现算），只管理页读。旧记录默认 false，不做历史回填。 |
 
 ### `downloadType` 枚举值
 
@@ -322,4 +324,4 @@ tags(tagName)          video_tags(awemeId, tagName)
 - **管理页展示**：`userRelation` 按 `|` 拆分渲染 chip；`videoAuthorSecUserId` 用于按作者分组/过滤。
 - **下载写入时**：调用 `DownloadedVideoRepository.recordSuccessfulDownload()`，`like` 场景传 `buildUserRelationFromLike(aweme.collectStat)`，`collects` 场景传 `buildUserRelationFromCollection(aweme.userDigged, folderName)`。
 - **标签功能**：通过 `VideoTagRepository` 操作，视频删除时标签自动级联删除，无需手动清理。
-- **新增数据库字段**：当前版本为 **v14**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_14_15` 并将 version 改为 15。
+- **新增数据库字段**：当前版本为 **v15**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_15_16` 并将 version 改为 16。

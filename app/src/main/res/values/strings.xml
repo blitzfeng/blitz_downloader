@@ -52,6 +52,7 @@
     <string name="batch_download_done">批量下载结束：成功 %1$d，失败 %2$d（视频→下载/bDouyin/videos，图集→下载/bDouyin/images）</string>
     <string name="grid_badge_downloaded">已下载</string>
     <string name="grid_badge_photo">图集 %1$d张</string>
+    <string name="grid_badge_live">实况图（动图）</string>
     <string name="grid_badge_photo_partial">图集 %1$d/%2$d张</string>
     <string name="item_action_author_posts">查看TA的Post</string>
     <string name="item_action_preview">预览</string>

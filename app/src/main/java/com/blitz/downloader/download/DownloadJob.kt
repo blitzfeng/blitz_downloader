@@ -37,4 +37,6 @@ data class DownloadRecordMeta(
     val collectCount: Long,
     /** 是否为收藏夹来源，需要额外 `ensureCollectFolderTagLinked(awemeId, collectionType)`。 */
     val linkCollectFolderTag: Boolean,
+    /** 是否为实况图（动图）图集，写入 `downloaded_videos.hasLivePhoto`（v15）供管理页角标。 */
+    val hasLivePhoto: Boolean = false,
 )

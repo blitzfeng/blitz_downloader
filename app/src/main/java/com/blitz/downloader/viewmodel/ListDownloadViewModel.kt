@@ -680,6 +680,7 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
                 diggCount = item.diggCount,
                 collectCount = item.collectCount,
                 linkCollectFolderTag = isCollects,
+                hasLivePhoto = item.hasLivePhoto,
             )
         }
 
