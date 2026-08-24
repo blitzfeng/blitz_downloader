@@ -234,18 +234,18 @@ class DownloadedVideoRepository(context: Context) {
         dao.getAuthorCountsAll()
 
     /**
-     * 管理页按作者昵称搜索：自动转义 LIKE 元字符（`%` / `_` / `\`）并加首尾 `%`。
+     * 管理页搜索：按作者昵称或作品描述模糊匹配，自动转义 LIKE 元字符（`%` / `_` / `\`）并加首尾 `%`。
      * 传入空白时返回空列表（上层不应触发搜索路径）。
      */
-    suspend fun searchByUserName(mediaType: String, query: String): List<DownloadedVideoEntity> {
+    suspend fun search(mediaType: String, query: String): List<DownloadedVideoEntity> {
         val q = query.trim()
         if (q.isEmpty()) return emptyList()
         val escaped = q
             .replace("\\", "\\\\")
             .replace("%", "\\%")
             .replace("_", "\\_")
-        // 注：Room 默认不附带 ESCAPE 子句；当前 awemeId/userName 几乎不会出现这些字符，
+        // 注：Room 默认不附带 ESCAPE 子句；当前 awemeId/userName/desc 几乎不会出现这些字符，
         // 双反斜杠转义已足够；如未来出现误匹配再切到自定义 @Query 加 `ESCAPE '\\'`。
-        return dao.searchByMediaTypeAndUserName(mediaType, "%$escaped%")
+        return dao.searchByMediaTypeAndUserNameOrDesc(mediaType, "%$escaped%")
     }
 }

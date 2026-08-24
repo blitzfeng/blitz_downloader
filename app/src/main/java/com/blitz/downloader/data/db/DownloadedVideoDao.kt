@@ -89,12 +89,15 @@ interface DownloadedVideoDao {
     suspend fun getPageRawSorted(query: SupportSQLiteQuery): List<DownloadedVideoEntity>
 
     /**
-     * 按作者昵称模糊搜索（管理页搜索栏使用）。
-     * [userNameLike] 由 Repository 拼为 `%query%`；空查询不应走此方法（让上层走分页路径）。
+     * 按作者昵称或作品描述模糊搜索（管理页搜索栏使用）。
+     * [like] 由 Repository 拼为 `%query%`；空查询不应走此方法（让上层走分页路径）。
      * 结果集预计不大，一次性返回；如未来体量增大再加 LIMIT 分页。
      */
-    @Query("SELECT * FROM downloaded_videos WHERE mediaType = :mediaType AND userName LIKE :userNameLike ORDER BY createdAtMillis DESC")
-    suspend fun searchByMediaTypeAndUserName(mediaType: String, userNameLike: String): List<DownloadedVideoEntity>
+    @Query(
+        "SELECT * FROM downloaded_videos WHERE mediaType = :mediaType " +
+            "AND (userName LIKE :like OR desc LIKE :like) ORDER BY createdAtMillis DESC",
+    )
+    suspend fun searchByMediaTypeAndUserNameOrDesc(mediaType: String, like: String): List<DownloadedVideoEntity>
 
     /** 精确匹配某作者昵称的全部作品（无稳定 ID 的老记录按昵称筛选时使用）。 */
     @Query("SELECT * FROM downloaded_videos WHERE mediaType = :mediaType AND userName = :userName ORDER BY createdAtMillis DESC")

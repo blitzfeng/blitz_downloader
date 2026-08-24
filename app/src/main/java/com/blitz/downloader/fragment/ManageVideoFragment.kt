@@ -14,6 +14,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.MainActivity
 import com.blitz.downloader.activity.VideoPlayerActivity
@@ -48,6 +49,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
     private lateinit var tagFilterAdapter: TagFilterAdapter
     private var progressRef: ProgressBar? = null
     private var tvEmptyRef: TextView? = null
+    private var swipeRefreshRef: SwipeRefreshLayout? = null
 
     private val viewModel: ManageVideoViewModel by viewModels()
     // 作用域是外层 ManageFragment（两个 Tab 共享它），不是 Activity——管理页的状态跟着管理页走
@@ -74,6 +76,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
     override fun onDestroyView() {
         progressRef = null
         tvEmptyRef = null
+        swipeRefreshRef = null
         super.onDestroyView()
     }
 
@@ -100,6 +103,10 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
         val recyclerView: RecyclerView = view.findViewById(R.id.rvManageVideos)
         progressRef = view.findViewById(R.id.progressManageVideo)
         tvEmptyRef = view.findViewById(R.id.tvEmptyManageVideo)
+        swipeRefreshRef = view.findViewById<SwipeRefreshLayout>(R.id.swipeRefreshManageVideo).apply {
+            setColorSchemeResources(R.color.color_primary)
+            setOnRefreshListener { viewModel.pullToRefresh() }
+        }
 
         adapter = ManageGridAdapter(
             onItemClick = { entity -> viewModel.openVideoPlayer(entity) },
@@ -183,6 +190,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
 
     private fun render(state: ManageTabUiState) {
         progressRef?.visibility = if (state.showProgress) View.VISIBLE else View.GONE
+        swipeRefreshRef?.isRefreshing = state.isRefreshing
         adapter.submitItems(state.items)
         val reason = state.emptyReason
         if (reason != null) {

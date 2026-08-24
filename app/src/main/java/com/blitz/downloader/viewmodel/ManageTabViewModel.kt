@@ -67,6 +67,7 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
     private var currentOffset = 0
     private var isLoading = false
     private var hasMore = true
+    private var isRefreshing = false
 
     /**
      * 标签多选的匹配方式，每次取数时现读设置。
@@ -122,6 +123,34 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
         loadNextPage()
     }
 
+    /**
+     * 下拉刷新：按当前筛选条件重新拉第一页，但**不提前清空 `items`**——等新数据回来后
+     * 一次性替换，避免出现「列表瞬间清空 + 居中转圈」与下拉圈同时出现。与 [refresh] 共用
+     * [isLoading] 互斥锁，防止刷新期间滚动分页并发触发 [loadNextPage]。
+     */
+    fun pullToRefresh() {
+        if (isLoading) return
+        isLoading = true
+        isRefreshing = true
+        currentOffset = 0
+        hasMore = true
+        publish()
+
+        viewModelScope.launch {
+            val entities = withContext(Dispatchers.IO) { queryPage(firstPage = true) }
+            items.clear()
+            currentOffset = entities.size
+            if (entities.isNotEmpty()) items.addAll(entities.map { ManageGridItem(it) })
+            isLoading = false
+            isRefreshing = false
+            publish()
+            if (entities.isNotEmpty()) {
+                if (loadsUserTags) loadAndApplyTags(entities)
+                if (checksFileExistence) checkFileExistence(entities)
+            }
+        }
+    }
+
     /** 滚动到底部时的前置判定，避免每次滚动都进协程。 */
     fun canLoadMore(): Boolean = !isLoading && hasMore
 
@@ -160,7 +189,7 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
             // 搜索框输入任何文字列表都纹丝不动，看起来像搜索坏了。
             f.hasAuthorFilter -> oneShot(firstPage) { postProcess(loadAuthorEntities()) }
             f.searchQuery.isNotBlank() ->
-                oneShot(firstPage) { postProcess(repo.searchByUserName(mediaType, f.searchQuery)) }
+                oneShot(firstPage) { postProcess(repo.search(mediaType, f.searchQuery)) }
             // 只需排在 tags 相关分支之前：精细检索激活时 tags 恒为空（两者互斥），
             // 排在 `f.tags.isEmpty() && ...` 之后会被那些分支截走。
             f.tagQuery.isActive -> oneShot(firstPage) { postProcess(loadTagQueryEntities()) }
@@ -309,7 +338,7 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
         // 顺序与 queryPage(...) 保持一致：author / search 优先于 tagQuery，理由见那边的注释。
         val list = when {
             f.hasAuthorFilter -> loadAuthorEntities()
-            f.searchQuery.isNotBlank() -> repo.searchByUserName(mediaType, f.searchQuery)
+            f.searchQuery.isNotBlank() -> repo.search(mediaType, f.searchQuery)
             f.tagQuery.isActive -> loadTagQueryEntities()
             f.tags.isEmpty() -> repo.getAllByMediaType(mediaType)
             else -> tagRepo.getVideosByTags(f.tags, tagMatchAll()).filter { it.mediaType == mediaType }
@@ -423,6 +452,7 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
             showProgress = showProgress && items.isEmpty(),
             emptyReason = if (items.isEmpty() && !isLoading && !hasMore) emptyReason() else null,
             hasMore = hasMore,
+            isRefreshing = isRefreshing,
         )
     }
 
@@ -463,6 +493,8 @@ data class ManageTabUiState(
     /** 非 null 时显示空状态及对应文案。 */
     val emptyReason: ManageEmptyReason? = null,
     val hasMore: Boolean = true,
+    /** 下拉刷新中，驱动 `SwipeRefreshLayout.isRefreshing`。 */
+    val isRefreshing: Boolean = false,
 )
 
 /** 列表为空的原因；`R.string` 的选取留在视图层。 */

@@ -14,6 +14,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.ImageViewerActivity
 import com.blitz.downloader.activity.MainActivity
@@ -40,6 +41,7 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image) {
     private lateinit var adapter: ManageGridAdapter
     private var progressRef: ProgressBar? = null
     private var tvEmptyRef: TextView? = null
+    private var swipeRefreshRef: SwipeRefreshLayout? = null
 
     private val viewModel: ManageImageViewModel by viewModels()
     // 作用域是外层 ManageFragment（两个 Tab 共享它），不是 Activity——管理页的状态跟着管理页走
@@ -57,6 +59,10 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image) {
         val recyclerView: RecyclerView = view.findViewById(R.id.rvManageImages)
         progressRef = view.findViewById(R.id.progressManageImage)
         tvEmptyRef = view.findViewById(R.id.tvEmptyManageImage)
+        swipeRefreshRef = view.findViewById<SwipeRefreshLayout>(R.id.swipeRefreshManageImage).apply {
+            setColorSchemeResources(R.color.color_primary)
+            setOnRefreshListener { viewModel.pullToRefresh() }
+        }
 
         adapter = ManageGridAdapter(
             onItemClick = { entity -> viewModel.openImageViewer(entity) },
@@ -95,6 +101,7 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image) {
     override fun onDestroyView() {
         progressRef = null
         tvEmptyRef = null
+        swipeRefreshRef = null
         super.onDestroyView()
     }
 
@@ -137,6 +144,7 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image) {
 
     private fun render(state: ManageTabUiState) {
         progressRef?.visibility = if (state.showProgress) View.VISIBLE else View.GONE
+        swipeRefreshRef?.isRefreshing = state.isRefreshing
         adapter.submitItems(state.items)
         val reason = state.emptyReason
         if (reason != null) {

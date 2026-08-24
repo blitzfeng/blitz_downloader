@@ -69,7 +69,7 @@
     <string name="manage_empty_videos">暂无已下载视频</string>
     <string name="manage_empty_images">暂无已下载图片</string>
     <string name="manage_menu_search">搜索</string>
-    <string name="manage_search_hint">按作者昵称搜索</string>
+    <string name="manage_search_hint">搜索昵称或描述</string>
     <string name="manage_search_empty">没有匹配「%1$s」的结果</string>
     <string name="manage_menu_clear_invalid">清除已失效</string>
     <string name="manage_menu_tags">标签管理</string>
