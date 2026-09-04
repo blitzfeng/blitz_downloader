@@ -43,4 +43,23 @@ interface TagDao {
     /** 判断标签名是否已存在。 */
     @Query("SELECT COUNT(*) FROM tags WHERE tagName = :tagName")
     suspend fun exists(tagName: String): Int
+
+    /** 单个标签当前的上级标签名；标签不存在时返回 null，存在但无上级时返回空字符串。 */
+    @Query("SELECT parentTagName FROM tags WHERE tagName = :tagName")
+    suspend fun getParentTagName(tagName: String): String?
+
+    /** 以 [tagName] 为上级的直接子标签列表。 */
+    @Query("SELECT tagName FROM tags WHERE parentTagName = :tagName")
+    suspend fun getChildren(tagName: String): List<String>
+
+    /** 设置或清除单个标签的上级（传空字符串即清除）。 */
+    @Query("UPDATE tags SET parentTagName = :parentTagName WHERE tagName = :tagName")
+    suspend fun updateParentTagName(tagName: String, parentTagName: String)
+
+    /**
+     * 把所有以 [oldParent] 为上级的标签，批量改成以 [newParent] 为上级。
+     * 重命名标签时同步引用（[newParent] 传新名字）、删除标签时清空引用（[newParent] 传空字符串）。
+     */
+    @Query("UPDATE tags SET parentTagName = :newParent WHERE parentTagName = :oldParent")
+    suspend fun reassignChildren(oldParent: String, newParent: String)
 }

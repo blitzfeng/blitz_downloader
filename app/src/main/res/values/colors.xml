@@ -38,6 +38,17 @@
     <!-- 分隔线：设置页同一张卡片内多行时使用 -->
     <color name="color_divider">#EEEEEE</color>
 
+    <!--
+      管理页「作者高频标签」快捷筛选块专用多巴胺色板（AuthorHighFreqTagAdapter，6 色循环）。
+      不复用 color_dopamine_pink/blue/red——那三个已经是底部导航/Tab 指示器/错误色的既定主题色，
+      挪来给标签块用会和别处的选中态/错误态视觉混淆。dopamine_yellow / dopamine_fourth_green
+      目前只在标签管理页 FAB 用过一次，语义中性，安全复用。
+    -->
+    <color name="dopamine_chip_magenta">#FF4D8D</color>
+    <color name="dopamine_chip_orange">#FF8A3D</color>
+    <color name="dopamine_chip_teal">#00C2D1</color>
+    <color name="dopamine_chip_purple">#A66DFF</color>
+
     <!-- 透明度 -->
     <color name="color_transparent">#00000000</color>
 </resources>

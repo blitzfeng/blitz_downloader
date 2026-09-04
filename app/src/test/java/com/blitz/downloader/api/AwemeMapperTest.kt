@@ -237,6 +237,71 @@ class AwemeMapperTest {
     }
 
     @Test
+    fun preferredPlayUrl_withResolutionCap_picksExactMatchNotHighest() {
+        val item = AwemeItem(
+            awemeId = "7123456789012345678",
+            desc = "t",
+            createTime = 0L,
+            author = null,
+            video = Video(
+                playAddr = null,
+                bitRate = listOf(
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/540?x=1"), null, null),
+                        gearName = "normal_540_0", bitRateBps = 800_000,
+                    ),
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/720?x=1"), null, null),
+                        gearName = "normal_720_0", bitRateBps = 1_200_000,
+                    ),
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/1080?x=1"), null, null),
+                        gearName = "normal_1080_0", bitRateBps = 2_000_000,
+                    ),
+                ),
+                cover = null, dynamicCover = null, duration = 0, ratio = null, width = 1080, height = 1920,
+            ),
+            statistics = null,
+            shareUrl = null,
+        )
+        assertEquals(
+            "https://cdn.example.com/play/720?x=1",
+            AwemeMapper.toGridItemOrNull(item, preferredResolution = 720)!!.downloadUrl,
+        )
+    }
+
+    @Test
+    fun preferredPlayUrl_withResolutionCap_fallsBackToLowestWhenAllGearsExceedCap() {
+        val item = AwemeItem(
+            awemeId = "7123456789012345678",
+            desc = "t",
+            createTime = 0L,
+            author = null,
+            video = Video(
+                playAddr = null,
+                bitRate = listOf(
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/720?x=1"), null, null),
+                        gearName = "normal_720_0", bitRateBps = 1_200_000,
+                    ),
+                    DouyinBitRateEntry(
+                        PlayAddr(null, listOf("https://cdn.example.com/play/1080?x=1"), null, null),
+                        gearName = "normal_1080_0", bitRateBps = 2_000_000,
+                    ),
+                ),
+                cover = null, dynamicCover = null, duration = 0, ratio = null, width = 1080, height = 1920,
+            ),
+            statistics = null,
+            shareUrl = null,
+        )
+        // 目标 540，但该视频最低只有 720——没有更低的档可选，退而取现有最低档
+        assertEquals(
+            "https://cdn.example.com/play/720?x=1",
+            AwemeMapper.toGridItemOrNull(item, preferredResolution = 540)!!.downloadUrl,
+        )
+    }
+
+    @Test
     fun preferredImageUrls_preferWatermarkFree() {
         val wm = "https://p3.douyinpic.com/img/wm.webp"
         val free = "https://p3.douyinpic.com/img/free.webp"

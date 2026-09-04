@@ -27,7 +27,10 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadTags() {
         viewModelScope.launch {
-            emit(TagManageEvent.TagsLoaded(withContext(Dispatchers.IO) { repo.getAvailableTags() }))
+            val (tags, parentMap) = withContext(Dispatchers.IO) {
+                repo.getAvailableTags() to repo.getParentMap()
+            }
+            emit(TagManageEvent.TagsLoaded(tags, parentMap))
         }
     }
 
@@ -53,7 +56,7 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             withContext(Dispatchers.IO) { repo.renameTag(oldName, newName) }
-            emit(TagManageEvent.TagRenamed(position, newName))
+            emit(TagManageEvent.TagRenamed(position, oldName, newName))
         }
     }
 
@@ -62,6 +65,34 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { repo.deleteTag(name) }
             emit(TagManageEvent.TagDeleted(position, name))
+        }
+    }
+
+    // ── 层级关系（上级标签） ──────────────────────────────────────────────────
+
+    /**
+     * 取该标签当前可选的上级候选列表（全部标签 − 自身 − 自身的全部后代，防环）与当前上级，
+     * 供 Activity 弹出单选对话框。
+     */
+    fun requestParentPicker(position: Int, tagName: String) {
+        viewModelScope.launch {
+            val (allTags, descendants, currentParent) = withContext(Dispatchers.IO) {
+                Triple(
+                    repo.getAvailableTags(),
+                    repo.getDescendants(tagName),
+                    repo.getParentMap()[tagName].orEmpty(),
+                )
+            }
+            val candidates = allTags.filter { it != tagName && it !in descendants }
+            emit(TagManageEvent.ShowParentPicker(position, tagName, candidates, currentParent))
+        }
+    }
+
+    /** 设置或清除（[parentTagName] 传空字符串）标签的上级。 */
+    fun setParentTag(position: Int, tagName: String, parentTagName: String) {
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { repo.setParentTag(tagName, parentTagName) }
+            if (ok) emit(TagManageEvent.TagParentSet(position, tagName, parentTagName))
         }
     }
 
@@ -84,9 +115,20 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 sealed interface TagManageEvent {
-    data class TagsLoaded(val tags: List<String>) : TagManageEvent
+    data class TagsLoaded(val tags: List<String>, val parentMap: Map<String, String>) : TagManageEvent
     data class TagCreated(val name: String) : TagManageEvent
-    data class TagRenamed(val position: Int, val newName: String) : TagManageEvent
+    data class TagRenamed(val position: Int, val oldName: String, val newName: String) : TagManageEvent
     data class TagDeleted(val position: Int, val name: String) : TagManageEvent
     data class TagAlreadyExists(val name: String) : TagManageEvent
+
+    /** 上级标签选择器数据就绪：[candidates] 已排除自身与后代，[currentParent] 空表示当前无上级。 */
+    data class ShowParentPicker(
+        val position: Int,
+        val tagName: String,
+        val candidates: List<String>,
+        val currentParent: String,
+    ) : TagManageEvent
+
+    /** 上级设置成功；[parentTagName] 空表示清除为顶层标签。 */
+    data class TagParentSet(val position: Int, val tagName: String, val parentTagName: String) : TagManageEvent
 }

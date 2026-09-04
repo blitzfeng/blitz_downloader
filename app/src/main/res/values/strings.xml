@@ -73,8 +73,18 @@
     <string name="manage_search_empty">没有匹配「%1$s」的结果</string>
     <string name="manage_menu_clear_invalid">清除已失效</string>
     <string name="manage_menu_tags">标签管理</string>
+    <!-- 作者筛选后展示的高频标签快捷筛选块 -->
+    <string name="manage_author_high_freq_tags_label">TA 的常用标签</string>
     <!-- 设置页（MainActivity Toolbar 入口），承载数据库备份 / 恢复 -->
     <string name="settings_title">设置</string>
+    <!-- 视频下载画质：影响批量列表下载挑选的直链清晰度，仅登录态列表接口（喜欢/收藏夹）通常有多档可选 -->
+    <string name="settings_group_download">视频下载</string>
+    <string name="settings_video_quality">下载画质</string>
+    <string name="settings_video_quality_highest">最高画质（默认，优先 1080P）</string>
+    <string name="settings_video_quality_1080p">1080P</string>
+    <string name="settings_video_quality_720p">720P（省流量）</string>
+    <string name="settings_video_quality_540p">540P（最省流量）</string>
+    <string name="settings_video_quality_summary">仅部分接口（如喜欢/收藏夹）返回多档清晰度，部分来源可能只有单一档位</string>
     <string name="settings_group_data">数据管理</string>
     <string name="settings_backup_db_summary">复制到 Download/bDouyin/backup，卸载后仍保留</string>
     <string name="settings_restore_db_summary">用备份覆盖当前数据库，完成后自动重启</string>
@@ -84,6 +94,16 @@
     <string name="settings_tag_filter_mode_any">并集：显示含任一所选标签的视频</string>
     <string name="settings_tag_filter_mode_all_short">交集（同时满足全部标签）</string>
     <string name="settings_tag_filter_mode_any_short">并集（满足任一标签）</string>
+    <!-- 标签智能预选：批量打标签弹窗按作者历史高频标签自动预勾选，缓存表由本页按钮手动重算 -->
+    <string name="settings_group_tag_analysis">标签智能预选</string>
+    <string name="settings_high_freq_threshold">高频标签阈值</string>
+    <string name="settings_high_freq_threshold_n">≥%1$d 次</string>
+    <string name="settings_analyze_tag_frequency">重新分析标签数据</string>
+    <string name="settings_analyze_tag_frequency_never">从未分析</string>
+    <string name="settings_analyze_tag_frequency_last">上次分析：%1$s</string>
+    <string name="settings_analyze_tag_frequency_done">分析完成：覆盖 %1$d 位作者、共 %2$d 条高频记录</string>
+    <string name="settings_analyze_tag_frequency_failed">分析失败：%1$s</string>
+    <string name="manage_tag_analysis_doing">正在分析标签数据…</string>
     <!-- 相册可见性：往目录里加/删 .nomedia，封面目录无开关、由权限自动维护 -->
     <string name="settings_group_gallery">相册可见性</string>
     <string name="settings_hide_videos">视频文件夹</string>
@@ -178,6 +198,7 @@
     <string name="manage_set_tags_no_tags">暂无可用标签，请先在「标签管理」中创建标签</string>
     <string name="manage_set_tags_done">已为 %1$d 项添加标签</string>
     <string name="manage_set_tags_none_checked">请至少勾选一个标签</string>
+    <string name="manage_set_tags_prechecked_hint">已根据作者历史标签预选 %1$d 个，可调整后确认</string>
     <string name="manage_menu_delete_selected">删除选中</string>
     <string name="manage_menu_delete_selected_count">删除选中（%1$d）</string>
     <string name="manage_selected_count">已选 %1$d 项</string>

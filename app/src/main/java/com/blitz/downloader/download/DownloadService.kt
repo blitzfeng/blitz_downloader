@@ -17,6 +17,7 @@ import androidx.core.app.ServiceCompat
 import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.MainActivity
+import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.model.VideoItemUiModel
 import com.blitz.downloader.util.MediaOrientationProbe
@@ -152,6 +153,15 @@ class DownloadService : Service() {
                     tagRepo.ensureCollectFolderTagLinked(awemeId = item.id, folderName = meta.collectionType)
                 }
                 recordedIds += item.id
+            }
+
+            // 每次下载完成都重算一次作者高频标签缓存（`author_tag_frequency`），让接下来给这批
+            // 新视频打标签时，管理页的自动预勾选/高频标签快捷筛选块立刻反映最新数据，不需要用户
+            // 再去设置页手动点「重新分析」。全表重算是一条 DELETE + INSERT...SELECT 的单次事务，
+            // 已经在 IO 线程里，成本可接受；没有成功项时跳过（没有新数据，重算没有意义）。
+            if (recordedIds.isNotEmpty()) {
+                tagRepo.recomputeAuthorTagFrequency()
+                AppSettings.setTagFrequencyLastAnalyzedAtMillis(applicationContext, System.currentTimeMillis())
             }
         }
 

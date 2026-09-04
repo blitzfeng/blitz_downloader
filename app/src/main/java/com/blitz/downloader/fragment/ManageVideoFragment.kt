@@ -18,6 +18,7 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.MainActivity
 import com.blitz.downloader.activity.VideoPlayerActivity
+import com.blitz.downloader.adapter.AuthorHighFreqTagAdapter
 import com.blitz.downloader.adapter.ManageGridAdapter
 import com.blitz.downloader.adapter.TagFilterAdapter
 import com.blitz.downloader.dialog.BatchTagDialogFragment
@@ -47,9 +48,11 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
 
     private lateinit var adapter: ManageGridAdapter
     private lateinit var tagFilterAdapter: TagFilterAdapter
+    private lateinit var authorHighFreqTagAdapter: AuthorHighFreqTagAdapter
     private var progressRef: ProgressBar? = null
     private var tvEmptyRef: TextView? = null
     private var swipeRefreshRef: SwipeRefreshLayout? = null
+    private var authorHighFreqTagBarRef: View? = null
 
     private val viewModel: ManageVideoViewModel by viewModels()
     // 作用域是外层 ManageFragment（两个 Tab 共享它），不是 Activity——管理页的状态跟着管理页走
@@ -65,6 +68,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
         super.onViewCreated(view, savedInstanceState)
 
         setupTagFilterBar(view)
+        setupAuthorHighFreqTagBar(view)
         setupGrid(view)
         listenTagDialogResults()
         observeViewModel()
@@ -77,6 +81,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
         progressRef = null
         tvEmptyRef = null
         swipeRefreshRef = null
+        authorHighFreqTagBarRef = null
         super.onDestroyView()
     }
 
@@ -97,6 +102,22 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
         rvTagFilter.layoutManager =
             LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         rvTagFilter.adapter = tagFilterAdapter
+    }
+
+    /**
+     * 作者筛选后展示的「该作者高频标签」快捷筛选块。点击走
+     * [ManageViewModel.toggleAuthorHighFreqTag]（保留作者筛选，只切这一个标签），
+     * 与标准标签栏的 [TagFilterAdapter]（点击会清掉作者筛选）刻意区分开。
+     */
+    private fun setupAuthorHighFreqTagBar(view: View) {
+        authorHighFreqTagBarRef = view.findViewById(R.id.authorHighFreqTagBar)
+        authorHighFreqTagAdapter = AuthorHighFreqTagAdapter { tag ->
+            manageViewModel.toggleAuthorHighFreqTag(tab, tag)
+        }
+        view.findViewById<RecyclerView>(R.id.rvAuthorHighFreqTags).apply {
+            layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+            adapter = authorHighFreqTagAdapter
+        }
     }
 
     private fun setupGrid(view: View) {
@@ -146,6 +167,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { viewModel.uiState.collect { render(it) } }
                 launch { viewModel.availableTags.collect { tagFilterAdapter.submitTags(it) } }
+                launch { viewModel.authorHighFreqTags.collect { renderAuthorHighFreqTagBar(it) } }
                 launch { viewModel.events.collect { handleEvent(it) } }
                 launch {
                     manageViewModel.filters
@@ -154,8 +176,11 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
                         .collect { filters ->
                             if (filters == null) return@collect
                             viewModel.applyFilters(filters)
-                            // 作者筛选与标签互斥，条件里标签被清空时标签栏也要回到「全部」
+                            // 标签集合被清空时标签栏回到「全部」——不仅作者筛选会清标签，
+                            // toggleTagKeepingAuthor 取消最后一个高频标签同样会让 tags 变空
                             if (filters.tags.isEmpty()) tagFilterAdapter.resetToAll()
+                            viewModel.loadAuthorHighFreqTags(filters.authorSecId)
+                            renderAuthorHighFreqTagBar()
                         }
                 }
                 launch {
@@ -201,6 +226,19 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
         }
         // 上报已加载快照：Activity 侧据此算「是否已全选」与「选中了哪些实体」
         manageViewModel.setLoaded(tab, state.items.map { it.entity }, state.hasMore)
+    }
+
+    /**
+     * 高频标签快捷筛选块的可见性与内容。两个触发源（[ManageVideoViewModel.authorHighFreqTags]
+     * 变化、`manageViewModel.filters` 变化）任一发生都调一次，标签列表默认取当前
+     * [ManageVideoViewModel.authorHighFreqTags] 的快照，选中集合现读 `manageViewModel.filtersOf(tab).tags`
+     * ——它才是筛选条件的唯一权威。
+     */
+    private fun renderAuthorHighFreqTagBar(tags: List<String> = viewModel.authorHighFreqTags.value) {
+        authorHighFreqTagBarRef?.visibility = if (tags.isNotEmpty()) View.VISIBLE else View.GONE
+        if (tags.isNotEmpty()) {
+            authorHighFreqTagAdapter.submit(tags, manageViewModel.filtersOf(tab).tags)
+        }
     }
 
     private fun emptyText(reason: ManageEmptyReason): CharSequence = when (reason) {
@@ -271,7 +309,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
      * 确认后整体覆盖写库。已改为 Compose（Material 3），见 [TagEditDialogFragment]。
      */
     private fun showTagEditDialog(event: ManageTabEvent.ShowTagEditor) {
-        TagEditDialogFragment.show(this, event.awemeId, event.allTags, event.currentTags)
+        TagEditDialogFragment.show(this, event.awemeId, event.allTags, event.currentTags, event.parentMap)
     }
 
     /**
@@ -281,7 +319,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
      * 弹窗。「仅次数 +1」的二次确认也收进了同一个弹窗内部（换页而非再开一个窗口）。
      */
     private fun showBatchTagDialog(event: ManageTabEvent.ShowBatchTagPicker) {
-        BatchTagDialogFragment.show(this, event.awemeIds, event.allTags)
+        BatchTagDialogFragment.show(this, event.awemeIds, event.allTags, event.preCheckedTags, event.parentMap)
     }
 
     /**

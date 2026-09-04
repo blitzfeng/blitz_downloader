@@ -13,6 +13,7 @@ import com.blitz.downloader.api.DouyinListApi
 import com.blitz.downloader.api.DouyinPageKind
 import com.blitz.downloader.api.DouyinUrlParser
 import com.blitz.downloader.config.AppConfig
+import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.DownloadMediaType
 import com.blitz.downloader.data.DownloadSourceType
 import com.blitz.downloader.data.DownloadedVideoRepository
@@ -498,12 +499,13 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 ListApiMode.None -> return false
             }
+            val preferredResolution = AppSettings.getVideoQualityPreference(getApplication()).targetResolution
             result.fold(
                 onSuccess = { page ->
                     val merged = if (isFirstPage) {
-                        AwemeMapper.toGridItems(page.items)
+                        AwemeMapper.toGridItems(page.items, preferredResolution)
                     } else {
-                        mergeGridWithNewAweme(items, page.items)
+                        mergeGridWithNewAweme(items, page.items, preferredResolution)
                     }
                     items.clear()
                     items.addAll(merged)
@@ -529,9 +531,10 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
     private fun mergeGridWithNewAweme(
         existing: List<VideoItemUiModel>,
         newItems: List<AwemeItem>,
+        preferredResolution: Int?,
     ): List<VideoItemUiModel> {
         val existingIds = existing.map { it.id }.toSet()
-        val newUi = AwemeMapper.toGridItems(newItems).filter { it.id !in existingIds }
+        val newUi = AwemeMapper.toGridItems(newItems, preferredResolution).filter { it.id !in existingIds }
         return existing + newUi
     }
 

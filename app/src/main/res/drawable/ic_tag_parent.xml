@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 设置上级标签图标：简化的树形层级示意（一个上级节点 + 两个子节点）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20dp"
+    android:height="20dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1.5"
+        android:pathData="M12,7 L12,12 M12,12 L5,12 L5,16 M12,12 L19,12 L19,16" />
+    <path
+        android:fillColor="#888888"
+        android:pathData="M9,3h6v4h-6z" />
+    <path
+        android:fillColor="#888888"
+        android:pathData="M2,16h6v4h-6z" />
+    <path
+        android:fillColor="#888888"
+        android:pathData="M16,16h6v4h-6z" />
+</vector>

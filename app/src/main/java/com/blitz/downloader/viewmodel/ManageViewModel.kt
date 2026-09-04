@@ -79,6 +79,9 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
 
     fun applyTags(tab: Int, tags: Set<String>) = updateFilters(tab) { it.withTags(tags) }
 
+    /** 高频标签块点击：保留作者筛选、只切这一个标签，见 [ManageFilterState.toggleTagKeepingAuthor]。 */
+    fun toggleAuthorHighFreqTag(tab: Int, tag: String) = updateFilters(tab) { it.toggleTagKeepingAuthor(tag) }
+
     /** 标签精细检索与标签多选互斥，互斥清理在 [ManageFilterState.withTagQuery] 里。 */
     fun applyTagQuery(tab: Int, query: TagQuery) = updateFilters(tab) { it.withTagQuery(query) }
 

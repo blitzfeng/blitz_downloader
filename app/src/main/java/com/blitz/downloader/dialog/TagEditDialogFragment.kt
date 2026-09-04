@@ -34,11 +34,20 @@ class TagEditDialogFragment : ComposeDialogFragment() {
     private val currentTags: List<String>
         get() = requireArguments().getStringArrayList(ARG_CURRENT_TAGS).orEmpty()
 
+    /** 标签名 → 上级标签名，只含有上级的条目；见 [com.blitz.downloader.data.VideoTagRepository.getParentMap]。 */
+    private val parentMap: Map<String, String>
+        get() {
+            val keys = requireArguments().getStringArrayList(ARG_PARENT_MAP_KEYS).orEmpty()
+            val values = requireArguments().getStringArrayList(ARG_PARENT_MAP_VALUES).orEmpty()
+            return keys.zip(values).toMap()
+        }
+
     @Composable
     override fun DialogContent() {
         TagEditDialogContent(
             allTags = allTags,
             currentTags = currentTags,
+            parentMap = parentMap,
             onConfirm = { tags -> finishWith(tags) },
             onCancel = { dismiss() },
         )
@@ -66,23 +75,29 @@ class TagEditDialogFragment : ComposeDialogFragment() {
         private const val ARG_AWEME_ID = "arg_aweme_id"
         private const val ARG_ALL_TAGS = "arg_all_tags"
         private const val ARG_CURRENT_TAGS = "arg_current_tags"
+        private const val ARG_PARENT_MAP_KEYS = "arg_parent_map_keys"
+        private const val ARG_PARENT_MAP_VALUES = "arg_parent_map_values"
         private const val TAG = "TagEditDialogFragment"
 
         /**
          * 在 [host] 的 childFragmentManager 上弹出。
          * 宿主监听结果用 `childFragmentManager.setFragmentResultListener(REQUEST_KEY, ...)`。
+         * [parentMap]（标签名 → 上级标签名）默认空，缺省时勾选界面不会有"选中带默认值"的联动。
          */
         fun show(
             host: Fragment,
             awemeId: String,
             allTags: List<String>,
             currentTags: Collection<String>,
+            parentMap: Map<String, String> = emptyMap(),
         ) {
             TagEditDialogFragment().apply {
                 arguments = Bundle().apply {
                     putString(ARG_AWEME_ID, awemeId)
                     putStringArrayList(ARG_ALL_TAGS, ArrayList(allTags))
                     putStringArrayList(ARG_CURRENT_TAGS, ArrayList(currentTags))
+                    putStringArrayList(ARG_PARENT_MAP_KEYS, ArrayList(parentMap.keys))
+                    putStringArrayList(ARG_PARENT_MAP_VALUES, ArrayList(parentMap.values))
                 }
             }.show(host.childFragmentManager, TAG)
         }
@@ -93,6 +108,7 @@ class TagEditDialogFragment : ComposeDialogFragment() {
 private fun TagEditDialogContent(
     allTags: List<String>,
     currentTags: List<String>,
+    parentMap: Map<String, String>,
     onConfirm: (List<String>) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -103,7 +119,15 @@ private fun TagEditDialogContent(
     TagCheckGrid(
         allTags = allTags,
         checked = checked,
-        onToggle = { tag -> if (tag in checked) checked.remove(tag) else checked.add(tag) },
+        onToggle = { tag ->
+            if (tag in checked) {
+                checked.remove(tag) // 取消：只影响这一个标签，不联动
+            } else {
+                checked.add(tag)
+                val parent = parentMap[tag]
+                if (!parent.isNullOrBlank()) checked.add(parent) // 选中：顺手带上父标签默认值
+            }
+        },
     )
     Spacer(Modifier.height(16.dp))
     DialogActions(
@@ -125,6 +149,7 @@ private fun TagEditDialogPreview() {
             TagEditDialogContent(
                 allTags = listOf("美腿", "可爱", "纯欲", "波霸", "小沟", "穿搭"),
                 currentTags = listOf("可爱", "穿搭"),
+                parentMap = emptyMap(),
                 onConfirm = {},
                 onCancel = {},
             )

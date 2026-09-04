@@ -6,7 +6,8 @@ package com.blitz.downloader.model.filter
  * 七层是**叠加**关系而非互斥的单选（详见 CLAUDE.md「管理页的筛选栈」）：
  * 搜索 / 作者 / 标签多选 / 标签精细检索 / 归属 / 标签数量 / 标签修改次数。
  * 其中作者与搜索、标签之间互斥，标签多选与标签精细检索之间也互斥
- * （同一时刻只有一种标签口径），其余各层可同时生效。
+ * （同一时刻只有一种标签口径），其余各层可同时生效。**唯一例外**是 [toggleTagKeepingAuthor]
+ * ——作者筛选后展示的"高频标签"快捷筛选块专用，刻意允许作者与标签共存，见其 KDoc。
  *
  * 这个类是 Activity（Toolbar / 抽屉 / 筛选对话框）与各 Tab 取数之间的唯一契约：
  * 条件从一处产生、整体传下去，避免每加一层筛选就多一对 getter/setter。
@@ -71,12 +72,19 @@ data class ManageFilterState(
         return if (q.isBlank()) copy(searchQuery = "") else copy(searchQuery = q, authorSecId = "", authorName = "")
     }
 
-    /** 设置作者筛选时清掉搜索与标签（三者互斥）；传空表示清除作者筛选。 */
+    /**
+     * 设置作者筛选时清掉搜索与标签（三者互斥）；传空表示清除作者筛选。
+     *
+     * 清除分支也把 `tags` 一并清空：旧不变量下"作者非空则标签必空"，清除作者时不动标签一直是
+     * 安全的空操作；但 [toggleTagKeepingAuthor] 打破了这条不变量（允许作者+标签共存），
+     * 不在这里补一下的话，清除作者筛选后标签栏会显示"全部"、但列表其实还残留着通过高频标签块
+     * 叠加的那个标签——界面与实际筛选条件不一致。
+     */
     fun withAuthor(secUserId: String?, userName: String?): ManageFilterState {
         val sec = secUserId?.trim().orEmpty()
         val name = userName?.trim().orEmpty()
         return if (sec.isBlank() && name.isBlank()) {
-            copy(authorSecId = "", authorName = "")
+            copy(authorSecId = "", authorName = "", tags = emptySet())
         } else {
             copy(
                 authorSecId = sec,
@@ -87,6 +95,14 @@ data class ManageFilterState(
             )
         }
     }
+
+    /**
+     * 在保留当前作者筛选的前提下切换某个标签——管理页作者筛选后展示的"高频标签"快捷筛选块
+     * 点击专用，与 [withTags]（标签栏点击，与作者互斥）刻意分开。只增删这一个标签，
+     * 不碰 `authorSecId`/`authorName`/`searchQuery`/`tagQuery`。
+     */
+    fun toggleTagKeepingAuthor(tag: String): ManageFilterState =
+        copy(tags = if (tag in tags) tags - tag else tags + tag)
 
     /**
      * 应用标签精细检索：与标签多选、搜索、作者三者互斥，一并清掉。

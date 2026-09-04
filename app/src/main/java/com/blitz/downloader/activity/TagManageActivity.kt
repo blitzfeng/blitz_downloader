@@ -91,19 +91,26 @@ class TagManageActivity : AppCompatActivity() {
     }
 
     private fun handleEvent(event: TagManageEvent) = when (event) {
-        is TagManageEvent.TagsLoaded -> adapter.submitList(event.tags)
+        is TagManageEvent.TagsLoaded -> adapter.submitList(event.tags, event.parentMap)
         is TagManageEvent.TagCreated -> {
             adapter.addItem(event.name)
             binding.rvTagManage.scrollToPosition(adapter.itemCount - 1)
             orderDirty = true
         }
-        is TagManageEvent.TagRenamed -> adapter.renameAt(event.position, event.newName)
+        is TagManageEvent.TagRenamed -> {
+            adapter.renameAt(event.position, event.newName)
+            adapter.renameParentReferences(event.oldName, event.newName)
+        }
         is TagManageEvent.TagDeleted -> {
             adapter.removeAt(event.position)
+            adapter.clearParentReferences(event.name)
             orderDirty = true
             toast("已删除「${event.name}」")
         }
         is TagManageEvent.TagAlreadyExists -> toast("标签「${event.name}」已存在")
+        is TagManageEvent.ShowParentPicker -> showParentPickerDialog(event)
+        is TagManageEvent.TagParentSet ->
+            adapter.updateParent(event.position, event.tagName, event.parentTagName)
     }
 
     private fun toast(text: CharSequence) {
@@ -124,6 +131,7 @@ class TagManageActivity : AppCompatActivity() {
         adapter = TagManageAdapter(
             onEdit = { pos, name -> showEditTagDialog(pos, name) },
             onDelete = { pos, name -> showDeleteTagDialog(pos, name) },
+            onSetParent = { pos, name -> viewModel.requestParentPicker(pos, name) },
         )
 
         val touchCallback = object : ItemTouchHelper.SimpleCallback(
@@ -212,6 +220,27 @@ class TagManageActivity : AppCompatActivity() {
             .setTitle("删除标签")
             .setMessage("删除「$tagName」后，所有关联该标签的视频将同步解除关联，无法撤销。\n\n确定删除？")
             .setPositiveButton("删除") { _, _ -> viewModel.deleteTag(position, tagName) }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // ── 对话框：设置上级标签 ──────────────────────────────────────────────────
+
+    /**
+     * 单选选择上级标签；候选列表已由 ViewModel 排除自身与后代（防环）。
+     * 第一项固定"无（顶层标签）"，选中即清除上级。这只影响标签名册的层级元数据，
+     * 不会给任何视频补写标签——见 [com.blitz.downloader.data.VideoTagRepository.setParentTag] KDoc。
+     */
+    private fun showParentPickerDialog(event: TagManageEvent.ShowParentPicker) {
+        val options = (listOf("无（顶层标签）") + event.candidates).toTypedArray()
+        val checked = event.candidates.indexOf(event.currentParent) + 1 // 找不到（无上级）时是 0
+        AlertDialog.Builder(this)
+            .setTitle("设置「${event.tagName}」的上级标签")
+            .setSingleChoiceItems(options, checked) { dialog, which ->
+                val parent = if (which == 0) "" else event.candidates[which - 1]
+                viewModel.setParentTag(event.position, event.tagName, parent)
+                dialog.dismiss()
+            }
             .setNegativeButton("取消", null)
             .show()
     }

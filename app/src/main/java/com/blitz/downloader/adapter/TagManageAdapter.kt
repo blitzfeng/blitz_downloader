@@ -16,20 +16,59 @@ import java.util.Collections
  * - 长按/拖拽把手触发拖拽排序（配合外部 [ItemTouchHelper]）
  * - 点击编辑按钮触发重命名回调
  * - 点击删除按钮触发删除回调
+ * - 点击"设置上级"按钮触发层级设置回调，副标题展示当前上级（若有）
  *
  * 拖拽结束后调用方应调用 [getTagList] 取当前顺序并持久化。
+ *
+ * 上级关系（[parentMap]）与标签顺序一样是本 Adapter 在内存中维护的局部状态、不经 StateFlow：
+ * 重命名/删除会连带影响别的标签对它的上级引用，这里用 [renameParentReferences]/
+ * [clearParentReferences] 同步更新，避免为了一次小改动重新拉取整个列表。
  */
 class TagManageAdapter(
     private val onEdit: (position: Int, tagName: String) -> Unit,
     private val onDelete: (position: Int, tagName: String) -> Unit,
+    private val onSetParent: (position: Int, tagName: String) -> Unit,
 ) : RecyclerView.Adapter<TagManageAdapter.ViewHolder>() {
 
     private val tags = mutableListOf<String>()
 
+    /** 标签名 → 上级标签名，只含有上级的条目，语义与 `VideoTagRepository.getParentMap()` 一致。 */
+    private var parentMap: Map<String, String> = emptyMap()
+
     /** 由 Activity 在初始化和刷新时调用。 */
-    fun submitList(list: List<String>) {
+    fun submitList(list: List<String>, parents: Map<String, String> = emptyMap()) {
         tags.clear()
         tags.addAll(list)
+        parentMap = parents
+        notifyDataSetChanged()
+    }
+
+    /** 单个标签的上级设置成功后调用，只刷新这一行。 */
+    fun updateParent(position: Int, tagName: String, parentTagName: String) {
+        parentMap = if (parentTagName.isBlank()) {
+            parentMap - tagName
+        } else {
+            parentMap + (tagName to parentTagName)
+        }
+        if (position in tags.indices) notifyItemChanged(position)
+    }
+
+    /**
+     * 标签重命名后同步更新引用：重命名的标签若本身有上级，键要跟着改名；
+     * 若它是别的标签的上级，那些标签的引用值也要跟着改。
+     */
+    fun renameParentReferences(oldName: String, newName: String) {
+        parentMap = parentMap.entries.associate { (child, parent) ->
+            val newChild = if (child == oldName) newName else child
+            val newParent = if (parent == oldName) newName else parent
+            newChild to newParent
+        }
+        notifyDataSetChanged()
+    }
+
+    /** 标签删除后同步更新引用：它自己的条目移除，以它为上级的条目也清空（与 Repository 的级联一致）。 */
+    fun clearParentReferences(deletedName: String) {
+        parentMap = parentMap.filterKeys { it != deletedName }.filterValues { it != deletedName }
         notifyDataSetChanged()
     }
 
@@ -84,7 +123,8 @@ class TagManageAdapter(
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        holder.bind(tags[position])
+        val tagName = tags[position]
+        holder.bind(tagName, parentMap[tagName])
     }
 
     override fun getItemCount(): Int = tags.size
@@ -94,11 +134,19 @@ class TagManageAdapter(
     inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val dragHandle: ImageView = itemView.findViewById(R.id.ivDragHandle)
         private val tvTagName: TextView = itemView.findViewById(R.id.tvTagName)
+        private val tvTagParent: TextView = itemView.findViewById(R.id.tvTagParent)
         private val btnEdit: ImageView = itemView.findViewById(R.id.btnEditTag)
         private val btnDelete: ImageView = itemView.findViewById(R.id.btnDeleteTag)
+        private val btnSetParent: ImageView = itemView.findViewById(R.id.btnSetParentTag)
 
-        fun bind(tagName: String) {
+        fun bind(tagName: String, parentTagName: String?) {
             tvTagName.text = tagName
+            if (parentTagName.isNullOrBlank()) {
+                tvTagParent.visibility = View.GONE
+            } else {
+                tvTagParent.text = "上级：$parentTagName"
+                tvTagParent.visibility = View.VISIBLE
+            }
 
             btnEdit.setOnClickListener {
                 val pos = bindingAdapterPosition
@@ -107,6 +155,10 @@ class TagManageAdapter(
             btnDelete.setOnClickListener {
                 val pos = bindingAdapterPosition
                 if (pos != RecyclerView.NO_ID.toInt()) onDelete(pos, tags[pos])
+            }
+            btnSetParent.setOnClickListener {
+                val pos = bindingAdapterPosition
+                if (pos != RecyclerView.NO_ID.toInt()) onSetParent(pos, tags[pos])
             }
 
             // 触摸拖拽把手时立即启动拖拽

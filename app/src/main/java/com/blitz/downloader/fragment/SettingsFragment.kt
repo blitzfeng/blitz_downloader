@@ -23,6 +23,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.blitz.downloader.R
 import com.blitz.downloader.config.AppSettings
+import com.blitz.downloader.config.VideoQualityPreference
 import com.blitz.downloader.data.db.DatabaseBackupManager
 import com.blitz.downloader.databinding.FragmentSettingsBinding
 import com.blitz.downloader.dialog.AllFilesAccessDialogFragment
@@ -30,6 +31,9 @@ import com.blitz.downloader.util.MediaVisibilityManager
 import com.blitz.downloader.util.MediaVisibilityManager.MediaFolder
 import com.blitz.downloader.viewmodel.SettingsEvent
 import com.blitz.downloader.viewmodel.SettingsViewModel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.launch
 import kotlin.system.exitProcess
 
@@ -82,6 +86,12 @@ class SettingsFragment : Fragment() {
         binding.itemRestoreDb.setOnClickListener { viewModel.loadBackups() }
         binding.itemTagFilterMode.setOnClickListener { showTagFilterModeDialog() }
         refreshTagFilterModeSummary()
+        binding.itemVideoQuality.setOnClickListener { showVideoQualityDialog() }
+        refreshVideoQualitySummary()
+        binding.itemHighFreqThreshold.setOnClickListener { showHighFreqThresholdDialog() }
+        refreshHighFreqThresholdSummary()
+        binding.itemAnalyzeTagFrequency.setOnClickListener { viewModel.analyzeTagFrequency() }
+        refreshAnalyzeTagFrequencySummary()
 
         pendingHideFolder = savedInstanceState?.getString(STATE_PENDING_HIDE_FOLDER)
         binding.itemHideVideos.setOnClickListener { onFolderRowClicked(MediaFolder.VIDEOS) }
@@ -118,10 +128,10 @@ class SettingsFragment : Fragment() {
         progressDialog = ProgressDialog(requireContext()).apply {
             setMessage(
                 getString(
-                    if (kind == SettingsViewModel.BusyKind.BACKUP) {
-                        R.string.manage_backup_doing
-                    } else {
-                        R.string.manage_restore_doing
+                    when (kind) {
+                        SettingsViewModel.BusyKind.BACKUP -> R.string.manage_backup_doing
+                        SettingsViewModel.BusyKind.RESTORE -> R.string.manage_restore_doing
+                        SettingsViewModel.BusyKind.TAG_ANALYSIS -> R.string.manage_tag_analysis_doing
                     },
                 ),
             )
@@ -156,6 +166,12 @@ class SettingsFragment : Fragment() {
                     },
                 ),
             )
+            is SettingsEvent.TagAnalysisDone -> {
+                toast(getString(R.string.settings_analyze_tag_frequency_done, event.authorCount, event.tagRowCount))
+                refreshAnalyzeTagFrequencySummary()
+            }
+            is SettingsEvent.TagAnalysisFailed ->
+                toast(getString(R.string.settings_analyze_tag_frequency_failed, event.message))
         }
     }
 
@@ -207,6 +223,77 @@ class SettingsFragment : Fragment() {
                 R.string.settings_tag_filter_mode_any_short
             }
         )
+    }
+
+    // ── 视频下载画质 ───────────────────────────────────────────────────────────
+
+    /**
+     * 批量下载列表接口挑选直链清晰度的偏好。只影响之后新加载的列表页，详见 [AppSettings.getVideoQualityPreference]。
+     */
+    private fun showVideoQualityDialog() {
+        val context = requireContext()
+        val options = VideoQualityPreference.entries.map { getString(labelFor(it)) }.toTypedArray()
+        val current = AppSettings.getVideoQualityPreference(context)
+        val checked = VideoQualityPreference.entries.indexOf(current)
+        AlertDialog.Builder(context)
+            .setTitle(R.string.settings_video_quality)
+            .setSingleChoiceItems(options, checked) { dialog, which ->
+                AppSettings.setVideoQualityPreference(context, VideoQualityPreference.entries[which])
+                refreshVideoQualitySummary()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun refreshVideoQualitySummary() {
+        binding.tvVideoQualitySummary.setText(
+            labelFor(AppSettings.getVideoQualityPreference(requireContext()))
+        )
+    }
+
+    private fun labelFor(preference: VideoQualityPreference): Int = when (preference) {
+        VideoQualityPreference.HIGHEST -> R.string.settings_video_quality_highest
+        VideoQualityPreference.P1080 -> R.string.settings_video_quality_1080p
+        VideoQualityPreference.P720 -> R.string.settings_video_quality_720p
+        VideoQualityPreference.P540 -> R.string.settings_video_quality_540p
+    }
+
+    // ── 标签智能预选 ───────────────────────────────────────────────────────────
+
+    /**
+     * 批量打标签弹窗自动预勾选的高频阈值（1-5，默认 2）。只影响 `author_tag_frequency`
+     * 缓存表的**读取**过滤，改这里不需要点「重新分析」。
+     */
+    private fun showHighFreqThresholdDialog() {
+        val context = requireContext()
+        val options = (1..5).map { getString(R.string.settings_high_freq_threshold_n, it) }.toTypedArray()
+        val current = AppSettings.getHighFrequencyTagThreshold(context)
+        AlertDialog.Builder(context)
+            .setTitle(R.string.settings_high_freq_threshold)
+            .setSingleChoiceItems(options, current - 1) { dialog, which ->
+                AppSettings.setHighFrequencyTagThreshold(context, which + 1)
+                refreshHighFreqThresholdSummary()
+                dialog.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun refreshHighFreqThresholdSummary() {
+        val threshold = AppSettings.getHighFrequencyTagThreshold(requireContext())
+        binding.tvHighFreqThresholdSummary.text =
+            getString(R.string.settings_high_freq_threshold_n, threshold)
+    }
+
+    private fun refreshAnalyzeTagFrequencySummary() {
+        val lastAnalyzedAt = AppSettings.getTagFrequencyLastAnalyzedAtMillis(requireContext())
+        binding.tvAnalyzeTagFrequencySummary.text = if (lastAnalyzedAt == 0L) {
+            getString(R.string.settings_analyze_tag_frequency_never)
+        } else {
+            val formatted = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(lastAnalyzedAt))
+            getString(R.string.settings_analyze_tag_frequency_last, formatted)
+        }
     }
 
     // ── 相册可见性 ─────────────────────────────────────────────────────────────

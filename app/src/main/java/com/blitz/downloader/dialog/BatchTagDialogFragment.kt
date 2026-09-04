@@ -30,6 +30,9 @@ import com.blitz.downloader.ui.theme.BlitzTheme
  *   `R.string.manage_set_tags_none_checked` 因此不再被用到（字符串保留，未删）。
  *   注意这条**只适用于本弹窗**：它的语义是「追加」，空集合等于什么都没做；
  *   单条编辑弹窗 [TagEditDialogFragment] 是「整体覆盖」，清空是有效操作，不能禁用。
+ * - **打开时按选中记录涉及的作者历史高频标签自动预勾选**（[preCheckedTags]，由宿主 ViewModel
+ *   算好传入，见 [com.blitz.downloader.viewmodel.ManageVideoViewModel.requestBatchTagPicker]），
+ *   不再永远从空白开始；预勾选非空时会在标题下方提示，避免用户看到「平白无故已经勾了几个」。
  * - **「仅次数 +1」的二次确认不再另开一个弹窗**，而是在同一个窗口内换页（[Stage]）。
  *   确认页的「取消」会退回勾选页，不像原来那样整个流程被丢掉。
  * - 勾选状态与当前处在哪一页都用 `rememberSaveable` 保存，**转屏不再丢**（旧的 AlertDialog
@@ -47,11 +50,24 @@ class BatchTagDialogFragment : ComposeDialogFragment() {
     private val allTags: List<String>
         get() = requireArguments().getStringArrayList(ARG_ALL_TAGS).orEmpty()
 
+    private val preCheckedTags: List<String>
+        get() = requireArguments().getStringArrayList(ARG_PRECHECKED_TAGS).orEmpty()
+
+    /** 标签名 → 上级标签名，只含有上级的条目；见 [com.blitz.downloader.data.VideoTagRepository.getParentMap]。 */
+    private val parentMap: Map<String, String>
+        get() {
+            val keys = requireArguments().getStringArrayList(ARG_PARENT_MAP_KEYS).orEmpty()
+            val values = requireArguments().getStringArrayList(ARG_PARENT_MAP_VALUES).orEmpty()
+            return keys.zip(values).toMap()
+        }
+
     @Composable
     override fun DialogContent() {
         BatchTagDialogContent(
             selectedCount = awemeIds.size,
             allTags = allTags,
+            preCheckedTags = preCheckedTags,
+            parentMap = parentMap,
             onConfirmTags = { tags -> finishWith(ACTION_ADD_TAGS, tags) },
             onConfirmBump = { finishWith(ACTION_BUMP_COUNT, emptyList()) },
             onCancel = { dismiss() },
@@ -86,17 +102,33 @@ class BatchTagDialogFragment : ComposeDialogFragment() {
 
         private const val ARG_AWEME_IDS = "arg_aweme_ids"
         private const val ARG_ALL_TAGS = "arg_all_tags"
+        private const val ARG_PRECHECKED_TAGS = "arg_prechecked_tags"
+        private const val ARG_PARENT_MAP_KEYS = "arg_parent_map_keys"
+        private const val ARG_PARENT_MAP_VALUES = "arg_parent_map_values"
         private const val TAG = "BatchTagDialogFragment"
 
         /**
          * 在 [host] 的 childFragmentManager 上弹出。
          * 宿主监听结果用 `childFragmentManager.setFragmentResultListener(REQUEST_KEY, ...)`。
+         * [preCheckedTags] 是宿主算好的自动预勾选集合（默认空，即回到原来「从空白开始」的行为）。
+         * [parentMap]（标签名 → 上级标签名）默认空，缺省时勾选界面不会有"选中带默认值"的联动；
+         * 不会对 [preCheckedTags] 做任何祖先展开——高频标签预勾选与层级默认值是两套独立机制，
+         * 互不干涉。
          */
-        fun show(host: Fragment, awemeIds: List<String>, allTags: List<String>) {
+        fun show(
+            host: Fragment,
+            awemeIds: List<String>,
+            allTags: List<String>,
+            preCheckedTags: Collection<String> = emptySet(),
+            parentMap: Map<String, String> = emptyMap(),
+        ) {
             BatchTagDialogFragment().apply {
                 arguments = Bundle().apply {
                     putStringArrayList(ARG_AWEME_IDS, ArrayList(awemeIds))
                     putStringArrayList(ARG_ALL_TAGS, ArrayList(allTags))
+                    putStringArrayList(ARG_PRECHECKED_TAGS, ArrayList(preCheckedTags))
+                    putStringArrayList(ARG_PARENT_MAP_KEYS, ArrayList(parentMap.keys))
+                    putStringArrayList(ARG_PARENT_MAP_VALUES, ArrayList(parentMap.values))
                 }
             }.show(host.childFragmentManager, TAG)
         }
@@ -110,21 +142,40 @@ private enum class Stage { PICK_TAGS, CONFIRM_BUMP }
 private fun BatchTagDialogContent(
     selectedCount: Int,
     allTags: List<String>,
+    preCheckedTags: List<String>,
+    parentMap: Map<String, String>,
     onConfirmTags: (List<String>) -> Unit,
     onConfirmBump: () -> Unit,
     onCancel: () -> Unit,
 ) {
     var stage by rememberSaveable { mutableStateOf(Stage.PICK_TAGS) }
-    val checked = rememberCheckedTags()
+    val checked = rememberCheckedTags(preCheckedTags)
 
     when (stage) {
         Stage.PICK_TAGS -> {
             DialogHeadline(stringResource(R.string.manage_set_tags_title, selectedCount))
+            if (preCheckedTags.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.manage_set_tags_prechecked_hint, preCheckedTags.size),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+            }
             Spacer(Modifier.height(16.dp))
             TagCheckGrid(
                 allTags = allTags,
                 checked = checked,
-                onToggle = { tag -> if (tag in checked) checked.remove(tag) else checked.add(tag) },
+                onToggle = { tag ->
+                    if (tag in checked) {
+                        checked.remove(tag) // 取消：只影响这一个标签，不联动
+                    } else {
+                        checked.add(tag)
+                        val parent = parentMap[tag]
+                        if (!parent.isNullOrBlank()) checked.add(parent) // 选中：顺手带上父标签默认值
+                    }
+                },
             )
             Spacer(Modifier.height(16.dp))
             DialogActions(
@@ -177,6 +228,8 @@ private fun BatchTagDialogPreview() {
             BatchTagDialogContent(
                 selectedCount = 12,
                 allTags = listOf("美腿", "可爱", "纯欲", "波霸", "小沟", "穿搭"),
+                preCheckedTags = listOf("美腿"),
+                parentMap = emptyMap(),
                 onConfirmTags = {},
                 onConfirmBump = {},
                 onCancel = {},

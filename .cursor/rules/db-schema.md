@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v15**
+> **当前版本：v17**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -14,6 +14,7 @@
 | `downloaded_videos` | `DownloadedVideoEntity` | 已下载视频/图集的核心记录 |
 | `video_tags` | `VideoTagEntity` | 视频-标签关联（多对多） |
 | `tags` | `TagEntity` | 独立标签名册（支持先建标签再打给视频） |
+| `author_tag_frequency` | `AuthorTagFrequencyEntity` | 作者-标签出现次数缓存，服务批量打标签弹窗自动预勾选 |
 
 ---
 
@@ -36,6 +37,8 @@
 | v13 | `downloaded_videos` 新增 `watched`（是否已看过） |
 | v14 | `downloaded_videos` 新增 `mediaWidth` / `mediaHeight`（媒体呈现宽高，用于局域网导出分横屏/竖屏包） |
 | v15 | `downloaded_videos` 新增 `hasLivePhoto`（是否实况图/动图图集，用于下载页/管理页列表的动图角标） |
+| v16 | 新建 `author_tag_frequency` 缓存表（作者-标签出现次数，服务批量打标签弹窗自动预勾选） |
+| v17 | `tags` 新增 `parentTagName`（上级标签名，空字符串=无上级；勾选界面默认值/AI 上下文用，非写入约束） |
 
 > **注意**：v4 的 `likeType` 与 `downloadType` 语义重叠，v5 通过重建表删除，**后续不要再加同类冗余字段**。
 
@@ -267,6 +270,7 @@ SELECT tagName, COUNT(*) AS count FROM video_tags GROUP BY tagName ORDER BY coun
 |------|------|------|
 | `tagName` | TEXT PK | 标签名，主键唯一 |
 | `sortOrder` | INTEGER | 展示排列顺序，数值越小越靠前；用户在标签管理页拖拽后持久化（v8 新增） |
+| `parentTagName` | TEXT | 上级标签名，空字符串 = 无上级（顶层）；构成森林，每个标签至多一个上级（v17 新增）。**只是勾选界面的默认值来源与 AI 建议的上下文，不是写入约束**——打了子标签不强制要求同时有父标签，反之亦然，任何标签写入路径都不会因为这个字段自动补充别的标签 |
 
 ### 预设默认标签（v7 migration 预插入）
 
@@ -284,7 +288,38 @@ SELECT tagName FROM tags ORDER BY sortOrder ASC, tagName ASC
 SELECT COUNT(*) FROM tags WHERE tagName = '美腿'
 ```
 
-**操作入口：** `VideoTagRepository`（`createTag`、`deleteTag`、`renameTag`、`getAvailableTags`）
+**操作入口：** `VideoTagRepository`（`createTag`、`deleteTag`、`renameTag`、`getAvailableTags`、`setParentTag`、`clearParentTag`、`getAncestors`、`getDescendants`、`getParentMap`）
+
+---
+
+## 表四：`author_tag_frequency`
+
+### 设计思路
+
+**纯衍生缓存表**，不是用户数据：记录"某作者的视频里，某标签出现过几次"，服务管理页批量打
+标签弹窗的自动预勾选（把「重新选标签」降级成「确认」）。`count` 由全库 `downloaded_videos` JOIN
+`video_tags`、按 `videoAuthorSecUserId + tagName` 聚合算出。
+
+全量重算（先 `DELETE FROM author_tag_frequency` 再一条 `INSERT ... SELECT ...` 聚合写入，单条
+事务）有两个触发点：设置页「重新分析标签数据」按钮手动触发，以及 `DownloadService.processJob`
+每次批量下载写库成功后自动触发一次。**仍然不随单次打标签操作实时增量更新**——改一条视频的
+标签不会立刻反映，要等下一次下载或手动分析。高频阈值（默认 2，1-5 可调，
+`AppSettings.getHighFrequencyTagThreshold`）**只在读取时过滤**，不影响这张表存的 `count`
+本身，改阈值不需要重新分析。
+
+### 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `secUserId` | TEXT | 视频作者稳定 ID（对应 `downloaded_videos.videoAuthorSecUserId`），复合主键之一 |
+| `tagName` | TEXT | 标签名，复合主键之一 |
+| `count` | INTEGER | 该作者名下打了这个标签的视频数 |
+
+复合主键 `(secUserId, tagName)`；按 `secUserId` 查询可直接用主键索引前缀，未单独建索引。
+空 `secUserId`（老记录无稳定作者 ID）在重算聚合的 `WHERE v.videoAuthorSecUserId != ''` 里被
+天然排除，不会被错误地聚合成"同一个作者"。
+
+**操作入口：** `VideoTagRepository`（`recomputeAuthorTagFrequency`、`getHighFrequencyTagsForAuthor`）
 
 ---
 

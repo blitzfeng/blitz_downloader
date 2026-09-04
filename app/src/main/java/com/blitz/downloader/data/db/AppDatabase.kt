@@ -8,8 +8,13 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [DownloadedVideoEntity::class, VideoTagEntity::class, TagEntity::class],
-    version = 15,
+    entities = [
+        DownloadedVideoEntity::class,
+        VideoTagEntity::class,
+        TagEntity::class,
+        AuthorTagFrequencyEntity::class,
+    ],
+    version = 17,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -19,6 +24,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun videoTagDao(): VideoTagDao
 
     abstract fun tagDao(): TagDao
+
+    abstract fun authorTagFrequencyDao(): AuthorTagFrequencyDao
 
     companion object {
         /** 数据库文件名；[DatabaseBackupManager] 也会用这个名字（务必保持一致）。 */
@@ -262,6 +269,38 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v15 → v16：新建 `author_tag_frequency` 缓存表（作者-标签出现次数），服务于管理页
+         * 批量打标签弹窗的自动预勾选（见 [VideoTagRepository.getHighFrequencyTagsForAuthor]）。
+         * 纯衍生缓存、不含不可再生数据，迁移只建空表，靠设置页「重新分析标签数据」手动填充。
+         */
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS author_tag_frequency (
+                        secUserId TEXT NOT NULL,
+                        tagName TEXT NOT NULL,
+                        count INTEGER NOT NULL,
+                        PRIMARY KEY(secUserId, tagName)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        /**
+         * v16 → v17：`tags` 表新增 `parentTagName`（上级标签名，空字符串 = 无上级）。
+         * 只是勾选界面默认值与 AI 建议上下文的来源，不是写入约束，见 [TagEntity.parentTagName] KDoc。
+         */
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE tags ADD COLUMN parentTagName TEXT NOT NULL DEFAULT ''",
+                )
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -276,7 +315,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
-                        MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
+                        MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
+                        MIGRATION_16_17,
                     )
                     .fallbackToDestructiveMigration()
                     .build()

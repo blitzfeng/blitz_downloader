@@ -6,6 +6,7 @@ import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.data.db.TagEntity
 import com.blitz.downloader.data.db.VideoTagDao
 import com.blitz.downloader.data.db.VideoTagEntity
+import com.blitz.downloader.model.TagHierarchy
 
 /**
  * 标签的完整持久化与查询入口，统一管理：
@@ -29,6 +30,7 @@ class VideoTagRepository(context: Context) {
     private val db = AppDatabase.getInstance(context)
     private val videoTagDao = db.videoTagDao()
     private val tagDao = db.tagDao()
+    private val authorTagFrequencyDao = db.authorTagFrequencyDao()
 
     /** 仅用于给 `downloaded_videos.tagEditCount` 累加，标签本身的读写不经过它。 */
     private val downloadedVideoDao = db.downloadedVideoDao()
@@ -61,14 +63,17 @@ class VideoTagRepository(context: Context) {
 
     /**
      * 删除标签：同步从 `tags` 名册和 `video_tags` 所有视频关联中移除。
+     * 若有其他标签把它设为上级，那些标签的上级引用被清空（回到顶层），**不级联删除**它们本身。
      */
     suspend fun deleteTag(tagName: String) {
         tagDao.delete(tagName)
         videoTagDao.deleteTagFromAllVideos(tagName)
+        tagDao.reassignChildren(oldParent = tagName, newParent = "")
     }
 
     /**
      * 重命名标签：同步更新 `tags` 名册和 `video_tags` 所有关联行。
+     * 若有其他标签把它设为上级，那些标签的上级引用同步更新为新名字。
      *
      * 注意：若同一视频已同时持有旧名和新名两个标签，`video_tags` 的批量
      * UPDATE 会触发主键冲突；UI 层应提前提示用户避免此情况。
@@ -77,6 +82,7 @@ class VideoTagRepository(context: Context) {
         val trimmed = newName.trim()
         tagDao.rename(oldName, trimmed)
         videoTagDao.renameTag(oldName, trimmed)
+        tagDao.reassignChildren(oldParent = oldName, newParent = trimmed)
     }
 
     /**
@@ -94,6 +100,56 @@ class VideoTagRepository(context: Context) {
         orderedNames.forEachIndexed { index, name ->
             tagDao.updateSortOrder(name, index)
         }
+    }
+
+    // ──────────────────── 标签层级关系（parentTagName 字段） ────────────────────
+    //
+    // 表达"细分标签属于某个大类标签"（如「甜妹」的上级是「颜值」），只服务于：
+    // (1) 标签管理页展示/编辑层级；(2) 勾选界面（TagCheckGrid）选中子标签时顺手带出父标签
+    // 的默认值；(3) AI 建议 prompt 的上下文。**不是写入约束**——[addTag]/[addTags]/[setTags]
+    // 等打标签方法完全不读这个字段，写入的标签集合永远与调用方给出的一致，见 [setParentTag] KDoc。
+
+    /**
+     * 全量"标签名 → 上级标签名"映射，只含有上级的条目。供 [getAncestors]/[getDescendants]/
+     * [setParentTag] 内部复用，也可直接供 UI（勾选界面默认值计算）使用。
+     */
+    suspend fun getParentMap(): Map<String, String> =
+        tagDao.getAllEntities()
+            .filter { it.parentTagName.isNotBlank() }
+            .associate { it.tagName to it.parentTagName }
+
+    /** [tagName] 的完整祖先链，从近到远（父、祖父……）；没有上级则为空列表。 */
+    suspend fun getAncestors(tagName: String): List<String> =
+        TagHierarchy.ancestorsOf(tagName, getParentMap())
+
+    /** [tagName] 的全部后代（不限层级）；设置上级标签时用于过滤候选列表，防止选出环。 */
+    suspend fun getDescendants(tagName: String): Set<String> =
+        TagHierarchy.descendantsOf(tagName, getParentMap())
+
+    /**
+     * 设置 [tagName] 的上级为 [parentTagName]。设置前做环检测——若 [parentTagName] 是
+     * [tagName] 自己或它的某个后代，拒绝这次设置，层级关系保持不变。
+     *
+     * 这个方法**只影响标签名册里的层级元数据**，不会给任何视频补写标签：细分标签成立、
+     * 大类标签不成立的视频是真实存在的场景（例如内容符合某个细分特征但不适合归进对应大类），
+     * 系统不应该、也不会强制"打了子标签就一定有父标签"。
+     *
+     * @return true 表示设置成功；false 表示会成环而被拒绝。
+     */
+    suspend fun setParentTag(tagName: String, parentTagName: String): Boolean {
+        val parent = parentTagName.trim()
+        if (parent.isEmpty()) {
+            clearParentTag(tagName)
+            return true
+        }
+        if (parent == tagName || parent in getDescendants(tagName)) return false
+        tagDao.updateParentTagName(tagName, parent)
+        return true
+    }
+
+    /** 清除 [tagName] 的上级，使其回到顶层标签。 */
+    suspend fun clearParentTag(tagName: String) {
+        tagDao.updateParentTagName(tagName, "")
     }
 
     // ──────────────────── 视频打标签（video_tags 表） ────────────────────
@@ -261,4 +317,29 @@ class VideoTagRepository(context: Context) {
      */
     suspend fun getTagCountMap(): Map<String, Int> =
         videoTagDao.getTagCountPerVideo().associate { it.awemeId to it.count }
+
+    // ──────────────── 作者高频标签缓存（author_tag_frequency 表） ────────────────
+
+    /** [recomputeAuthorTagFrequency] 的结果摘要，供设置页提示文案用。 */
+    data class TagFrequencyAnalysisResult(val authorCount: Int, val tagRowCount: Int)
+
+    /**
+     * 全量重算 `author_tag_frequency` 缓存表：清空后按 `videoAuthorSecUserId + tagName`
+     * 重新聚合。**不随打标签/下载操作自动增量更新**，只由设置页「重新分析标签数据」触发。
+     */
+    suspend fun recomputeAuthorTagFrequency(): TagFrequencyAnalysisResult {
+        authorTagFrequencyDao.recompute()
+        return TagFrequencyAnalysisResult(
+            authorCount = authorTagFrequencyDao.countDistinctAuthors(),
+            tagRowCount = authorTagFrequencyDao.countRows(),
+        )
+    }
+
+    /**
+     * 某作者出现次数达到 [threshold] 的高频标签（按次数倒序），供批量打标签弹窗自动预勾选。
+     * [threshold] 只在读取时过滤——改阈值不需要重新调用 [recomputeAuthorTagFrequency]。
+     * [secUserId] 为空（老记录无稳定作者 ID）时直接返回空列表。
+     */
+    suspend fun getHighFrequencyTagsForAuthor(secUserId: String, threshold: Int): List<String> =
+        if (secUserId.isBlank()) emptyList() else authorTagFrequencyDao.getHighFrequencyTags(secUserId, threshold)
 }

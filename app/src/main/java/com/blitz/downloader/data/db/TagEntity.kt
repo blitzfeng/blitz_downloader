@@ -16,4 +16,10 @@ data class TagEntity(
     @PrimaryKey val tagName: String,
     /** 展示顺序，数值越小越靠前；用户在标签管理页拖拽排序后持久化。 */
     val sortOrder: Int = 0,
+    /**
+     * 上级标签名，空字符串表示无上级（顶层标签）。构成森林（每个标签至多一个上级）。
+     * 仅作为勾选界面的默认值来源与 AI 建议的上下文，**不是写入时的强制约束**——
+     * 详见 [com.blitz.downloader.data.VideoTagRepository] 中层级相关方法的 KDoc。
+     */
+    val parentTagName: String = "",
 )

@@ -4,6 +4,8 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.blitz.downloader.BlitzApp
+import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.db.DatabaseBackupManager
 import com.blitz.downloader.util.MediaVisibilityManager
 import com.blitz.downloader.util.MediaVisibilityManager.MediaFolder
@@ -156,13 +158,37 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ── 标签智能预选（author_tag_frequency 缓存表） ───────────────────────────────
+
+    /**
+     * 全量重算作者-标签高频缓存。非破坏性、可重复执行的衍生数据重建，不需要二次确认
+     * （区别于备份恢复那类有风险的操作）。
+     */
+    fun analyzeTagFrequency() {
+        if (_busy.value != null) return
+        _busy.value = BusyKind.TAG_ANALYSIS
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { BlitzApp.instance.videoTagRepository.recomputeAuthorTagFrequency() }
+            }
+            _busy.value = null
+            result.fold(
+                onSuccess = {
+                    AppSettings.setTagFrequencyLastAnalyzedAtMillis(getApplication(), System.currentTimeMillis())
+                    emit(SettingsEvent.TagAnalysisDone(it.authorCount, it.tagRowCount))
+                },
+                onFailure = { emit(SettingsEvent.TagAnalysisFailed(it.readableMessage())) },
+            )
+        }
+    }
+
     private fun emit(event: SettingsEvent) {
         _events.tryEmit(event)
     }
 
     private fun Throwable.readableMessage(): String = message ?: javaClass.simpleName
 
-    enum class BusyKind { BACKUP, RESTORE }
+    enum class BusyKind { BACKUP, RESTORE, TAG_ANALYSIS }
 }
 
 sealed interface SettingsEvent {
@@ -183,4 +209,8 @@ sealed interface SettingsEvent {
     data class NeedsAllFilesAccess(val folder: MediaFolder) : SettingsEvent
 
     data class FolderVisibilityChanged(val folder: MediaFolder, val hidden: Boolean) : SettingsEvent
+
+    /** 作者-标签高频缓存重算完成：覆盖了多少作者、写入多少条高频记录。 */
+    data class TagAnalysisDone(val authorCount: Int, val tagRowCount: Int) : SettingsEvent
+    data class TagAnalysisFailed(val message: String) : SettingsEvent
 }

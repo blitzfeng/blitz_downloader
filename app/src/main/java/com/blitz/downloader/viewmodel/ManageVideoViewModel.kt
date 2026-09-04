@@ -2,6 +2,7 @@ package com.blitz.downloader.viewmodel
 
 import android.app.Application
 import androidx.lifecycle.viewModelScope
+import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.DownloadMediaType
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import kotlinx.coroutines.Dispatchers
@@ -32,33 +33,79 @@ class ManageVideoViewModel(app: Application) : ManageTabViewModel(app) {
         }
     }
 
+    private val _authorHighFreqTags = MutableStateFlow<List<String>>(emptyList())
+
+    /** 当前作者筛选下的高频标签（作者筛选后在列表上方展示的快捷筛选块），未按作者筛选时为空。 */
+    val authorHighFreqTags: StateFlow<List<String>> = _authorHighFreqTags.asStateFlow()
+
+    /**
+     * 按当前作者筛选（`secUserId`）加载高频标签。空 ID（未按作者筛选，或老记录无稳定 ID）
+     * 直接清空——`getHighFrequencyTagsForAuthor` 本身也会对空 ID 短路返回空列表，这里提前判断
+     * 只是省一次协程调度。
+     */
+    fun loadAuthorHighFreqTags(secUserId: String) {
+        if (secUserId.isBlank()) {
+            _authorHighFreqTags.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            val threshold = AppSettings.getHighFrequencyTagThreshold(getApplication())
+            _authorHighFreqTags.value = withContext(Dispatchers.IO) {
+                tagRepo.getHighFrequencyTagsForAuthor(secUserId, threshold)
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // 标签编辑
     // -----------------------------------------------------------------------
 
-    /** 点击单条记录的标签行：取全部可用标签后发事件，由 Fragment 弹窗。 */
+    /** 点击单条记录的标签行：取全部可用标签 + 层级关系后发事件，由 Fragment 弹窗。 */
     fun requestTagEditor(awemeId: String, currentTags: List<String>) {
         viewModelScope.launch {
-            val allTags = withContext(Dispatchers.IO) { tagRepo.getAvailableTags() }
+            val (allTags, parentMap) = withContext(Dispatchers.IO) {
+                tagRepo.getAvailableTags() to tagRepo.getParentMap()
+            }
             if (allTags.isEmpty()) {
                 emit(ManageTabEvent.NoTagsAvailable)
                 return@launch
             }
-            emit(ManageTabEvent.ShowTagEditor(awemeId, allTags, currentTags.toSet()))
+            emit(ManageTabEvent.ShowTagEditor(awemeId, allTags, currentTags.toSet(), parentMap))
         }
     }
 
-    /** 多选后「设置标签」：取全部可用标签后发事件，由 Fragment 弹窗。 */
+    /** 多选后「设置标签」：取全部可用标签 + 层级关系 + 自动预勾选后发事件，由 Fragment 弹窗。 */
     fun requestBatchTagPicker(awemeIds: List<String>) {
         if (awemeIds.isEmpty()) return
         viewModelScope.launch {
-            val allTags = withContext(Dispatchers.IO) { tagRepo.getAvailableTags() }
+            val (allTags, parentMap) = withContext(Dispatchers.IO) {
+                tagRepo.getAvailableTags() to tagRepo.getParentMap()
+            }
             if (allTags.isEmpty()) {
                 emit(ManageTabEvent.NoTagsAvailable)
                 return@launch
             }
-            emit(ManageTabEvent.ShowBatchTagPicker(awemeIds, allTags))
+            val preChecked = withContext(Dispatchers.IO) { resolveHighFrequencyPreCheckedTags(awemeIds) }
+            emit(ManageTabEvent.ShowBatchTagPicker(awemeIds, allTags, preChecked, parentMap))
         }
+    }
+
+    /**
+     * 按选中记录涉及的每个作者分别查 `author_tag_frequency` 缓存表的高频标签，取并集。
+     * 跨作者时可能出现与部分选中视频无关的标签——这是有意为之（减少选择动作优先于精确性）。
+     * 空 `videoAuthorSecUserId`（老记录）不参与统计。作者信息直接从当前 Tab 已加载的
+     * [uiState] 反查，不需要额外查库——多选操作本身就是对已加载条目做的。
+     */
+    private suspend fun resolveHighFrequencyPreCheckedTags(awemeIds: List<String>): Set<String> {
+        val ids = awemeIds.toSet()
+        val authors = uiState.value.items.asSequence()
+            .filter { it.entity.awemeId in ids }
+            .map { it.entity.videoAuthorSecUserId }
+            .filter { it.isNotBlank() }
+            .toSet()
+        if (authors.isEmpty()) return emptySet()
+        val threshold = AppSettings.getHighFrequencyTagThreshold(getApplication())
+        return authors.flatMapTo(mutableSetOf()) { tagRepo.getHighFrequencyTagsForAuthor(it, threshold) }
     }
 
     /**

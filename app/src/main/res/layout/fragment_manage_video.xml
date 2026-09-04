@@ -13,6 +13,37 @@
         android:clipToPadding="false"
         android:paddingHorizontal="4dp" />
 
+    <!--
+        作者筛选后的「高频标签」快捷筛选块，默认隐藏；只在有作者筛选且该作者有高频标签时显示
+        （见 ManageVideoFragment.renderAuthorHighFreqTagBar）。
+    -->
+    <LinearLayout
+        android:id="@+id/authorHighFreqTagBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:visibility="gone"
+        android:paddingStart="12dp"
+        android:paddingEnd="4dp">
+
+        <TextView
+            android:id="@+id/tvAuthorHighFreqTagsLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/manage_author_high_freq_tags_label"
+            android:textSize="12sp"
+            android:textColor="@color/text_color_secondary" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvAuthorHighFreqTags"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:clipToPadding="false" />
+
+    </LinearLayout>
+
     <!-- 视频网格列表区域 -->
     <FrameLayout
         android:layout_width="match_parent"

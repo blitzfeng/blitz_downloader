@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    管理页「作者高频标签」快捷筛选块的背景形状。只定形状，不定色——
+    AuthorHighFreqTagAdapter 在 onBindViewHolder 里按下标从多巴胺色板循环取色并整体 tint。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="20dp" />
+    <solid android:color="@android:color/white" />
+</shape>

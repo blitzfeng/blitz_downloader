@@ -225,13 +225,23 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
         return if (firstPage) block() else emptyList()
     }
 
-    /** 按当前作者筛选取该 mediaType 下的全部作品：有稳定 ID 走 ID，无则退回昵称。 */
-    private suspend fun loadAuthorEntities(): List<DownloadedVideoEntity> =
-        if (filters.authorSecId.isNotBlank()) {
+    /**
+     * 按当前作者筛选取该 mediaType 下的全部作品：有稳定 ID 走 ID，无则退回昵称。
+     *
+     * `filters.tags` 非空时再求交集——这是唯一允许作者与标签共存的路径（管理页作者筛选后
+     * 展示的"高频标签"快捷筛选块点击，见 [ManageFilterState.toggleTagKeepingAuthor]），
+     * 其余取数分支都建立在"设了作者就不会同时有标签"的假设上，不受影响。
+     */
+    private suspend fun loadAuthorEntities(): List<DownloadedVideoEntity> {
+        val base = if (filters.authorSecId.isNotBlank()) {
             repo.getByMediaTypeAndAuthorSecUserId(mediaType, filters.authorSecId)
         } else {
             repo.getByMediaTypeAndUserName(mediaType, filters.authorName)
         }
+        if (filters.tags.isEmpty()) return base
+        val taggedIds = tagRepo.getVideosByTags(filters.tags, tagMatchAll()).map { it.awemeId }.toSet()
+        return base.filter { it.awemeId in taggedIds }
+    }
 
     /**
      * 「标签精细检索」的取数：先在 SQL 侧把每个涉及标签的 awemeId 捞出来，
@@ -519,15 +529,25 @@ sealed interface ManageTabEvent {
     data object ClearInvalidNone : ManageTabEvent
     data object NoTagsAvailable : ManageTabEvent
 
-    /** 单条记录的标签编辑弹窗数据就绪。 */
+    /** 单条记录的标签编辑弹窗数据就绪。[parentMap] 是标签层级关系，见 `VideoTagRepository.getParentMap`。 */
     data class ShowTagEditor(
         val awemeId: String,
         val allTags: List<String>,
         val currentTags: Set<String>,
+        val parentMap: Map<String, String> = emptyMap(),
     ) : ManageTabEvent
 
-    /** 多选后的批量标签弹窗数据就绪。 */
-    data class ShowBatchTagPicker(val awemeIds: List<String>, val allTags: List<String>) : ManageTabEvent
+    /**
+     * 多选后的批量标签弹窗数据就绪。[preCheckedTags] 是按选中记录涉及的各作者高频标签
+     * 算出的自动预勾选集合（见 [ManageVideoViewModel.requestBatchTagPicker]），可能为空。
+     * [parentMap] 是标签层级关系，见 `VideoTagRepository.getParentMap`。
+     */
+    data class ShowBatchTagPicker(
+        val awemeIds: List<String>,
+        val allTags: List<String>,
+        val preCheckedTags: Set<String> = emptySet(),
+        val parentMap: Map<String, String> = emptyMap(),
+    ) : ManageTabEvent
 
     data class TagsApplied(val count: Int) : ManageTabEvent
     data class TagEditCountBumped(val count: Int) : ManageTabEvent

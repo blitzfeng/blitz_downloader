@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="52dp"
+    android:layout_height="wrap_content"
+    android:minHeight="52dp"
     android:background="?android:attr/selectableItemBackground"
     android:gravity="center_vertical"
     android:orientation="horizontal"
+    android:paddingTop="4dp"
+    android:paddingBottom="4dp"
     android:paddingEnd="8dp">
 
     <!-- 拖拽排序把手 -->
@@ -17,16 +21,35 @@
         android:src="@drawable/ic_drag_handle"
         android:contentDescription="@null" />
 
-    <!-- 标签名 -->
-    <TextView
-        android:id="@+id/tvTagName"
+    <!-- 标签名 + 上级标签副标题（有上级才显示） -->
+    <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:textSize="15sp"
-        android:textColor="?android:attr/textColorPrimary"
-        android:maxLines="1"
-        android:ellipsize="end" />
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvTagName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="15sp"
+            android:textColor="?android:attr/textColorPrimary"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/tvTagParent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:textSize="12sp"
+            android:textColor="@color/text_color_secondary"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:visibility="gone"
+            tools:text="上级：颜值" />
+
+    </LinearLayout>
 
     <!-- 编辑按钮 -->
     <ImageView
@@ -50,5 +73,16 @@
         android:background="?android:attr/selectableItemBackgroundBorderless"
         android:contentDescription="@null"
          />
+
+    <!-- 设置上级标签按钮 -->
+    <ImageView
+        android:id="@+id/btnSetParentTag"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:padding="10dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_tag_parent"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@null" />
 
 </LinearLayout>
