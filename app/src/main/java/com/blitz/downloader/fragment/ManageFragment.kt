@@ -887,15 +887,24 @@ class ManageFragment : Fragment() {
         content.findViewById<TextView>(R.id.tvLanHint).text =
             getString(R.string.manage_export_lan_hint, state.fileCount)
         content.findViewById<TextView>(R.id.tvLanSplit).apply {
-            if (state.splitByOrientation && (state.landscapeCount > 0 || state.portraitCount > 0)) {
-                text = getString(
-                    R.string.manage_export_lan_split_hint,
-                    state.landscapeCount,
-                    state.portraitCount,
-                )
-                visibility = View.VISIBLE
-            } else {
-                visibility = View.GONE
+            when {
+                state.splitByOrientation && (state.landscapeCount > 0 || state.portraitCount > 0) -> {
+                    text = getString(
+                        R.string.manage_export_lan_split_hint,
+                        state.landscapeCount,
+                        state.portraitCount,
+                    )
+                    visibility = View.VISIBLE
+                }
+                state.splitByMediaKind && (state.staticCount > 0 || state.liveCount > 0) -> {
+                    text = getString(
+                        R.string.manage_export_lan_split_hint_media,
+                        state.staticCount,
+                        state.liveCount,
+                    )
+                    visibility = View.VISIBLE
+                }
+                else -> visibility = View.GONE
             }
         }
         content.findViewById<TextView>(R.id.tvLanUrl).text = state.url

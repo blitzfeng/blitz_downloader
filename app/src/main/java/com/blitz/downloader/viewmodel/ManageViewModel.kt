@@ -452,8 +452,9 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
             _lanError.tryEmit(LanStartFailure.NoWifi)
             return
         }
-        // 只有视频 Tab 分横屏/竖屏包；图片 Tab 的行为与改动前完全一致。
+        // 只有视频 Tab 分横屏/竖屏包，只有图片 Tab 分静态图/动图包；两者互斥。
         val split = tab == TAB_VIDEO
+        val splitMediaKind = tab == TAB_IMAGE
         viewModelScope.launch {
             // 图片 Tab 不分包，探测对本次导出毫无用处，直接跳过回填。
             val resolved = if (split) {
@@ -475,7 +476,7 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             stopLanExport() // 若已有服务在跑，先停掉
-            val server = LanFileServer(files, split) { event -> onLanTransferComplete(tab, event) }
+            val server = LanFileServer(files, split, splitMediaKind) { event -> onLanTransferComplete(tab, event) }
             val port = try {
                 server.start()
             } catch (e: Exception) {
@@ -489,6 +490,9 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
                 splitByOrientation = split,
                 landscapeCount = if (split) files.count { it.orientation == MediaOrientation.LANDSCAPE } else 0,
                 portraitCount = if (split) files.count { it.orientation == MediaOrientation.PORTRAIT } else 0,
+                splitByMediaKind = splitMediaKind,
+                staticCount = if (splitMediaKind) files.count { !isLiveVideoFile(it) } else 0,
+                liveCount = if (splitMediaKind) files.count { isLiveVideoFile(it) } else 0,
             )
         }
     }
@@ -535,6 +539,10 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
         stopLanExport()
         super.onCleared()
     }
+
+    /** 是否为动图(实况图)的 mp4 本体；判据是文件扩展名，与 [LanFileServer] 内部口径一致。 */
+    private fun isLiveVideoFile(ef: MediaExportManager.ExportFile): Boolean =
+        ef.file.extension.equals("mp4", ignoreCase = true)
 
     private fun mediaTypeOf(tab: Int): String =
         if (tab == TAB_VIDEO) DownloadMediaType.VIDEO else DownloadMediaType.IMAGE
@@ -598,6 +606,12 @@ data class LanExportState(
     val landscapeCount: Int = 0,
     /** 竖屏文件数；[splitByOrientation] 为 false 时恒为 0。 */
     val portraitCount: Int = 0,
+    /** 是否按静态图/动图分包（仅图片 Tab 为 true）。 */
+    val splitByMediaKind: Boolean = false,
+    /** 静态图文件数（含实况图静态封面）；[splitByMediaKind] 为 false 时恒为 0。 */
+    val staticCount: Int = 0,
+    /** 动图(mp4)文件数；[splitByMediaKind] 为 false 时恒为 0。 */
+    val liveCount: Int = 0,
     val transferCount: Int = 0,
     val lastTransfer: Transfer? = null,
 ) {

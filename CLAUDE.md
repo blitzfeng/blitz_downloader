@@ -374,6 +374,8 @@ owner 为 NULL 的全变 `ic_video_placeholder`——所以**不能**把可用�
 
 关键约束：**图集的 `filePath` 只存了第一张图（`base_01.jpg`）**，导出时必须扫描同目录 `base_\d+.<ext>` 的全部兄弟文件——扫描规则与 `ImageViewerActivity.findImageSet` 一致，改一处需同步。**实况图**：兄弟扫描现在把封面图片扩展（webp/jpg/jpeg/png）**和 mp4 都纳入**，导出会把静态封面与动图 mp4 一起打包；浏览页那边同规则扫描，只是聚合成 `LivePhotoPage(cover, video?)`（判断每张封面是否有 mp4 兄弟），两者扫描口径相同、聚合形态不同。
 
+**局域网导出的静态图 / 动图分包（图片 Tab 专属）**：与视频 Tab 的横竖屏分包是同一套模式的另一根轴，电脑端页面除「打包下载全部」外，另有 `/static.zip` 与 `/live.zip` 两个类型包。判定不依赖数据库字段，直接按 `MediaExportManager.ExportFile.file` 的扩展名现算——`mp4` 即「动图」，其余（webp/jpg/jpeg/png）都算「静态图」，**实况图的静态封面算在静态图里，不算动图**。四条分包路由（横屏/竖屏/静态图/动图）共用 `LanFileServer.serveGatedZip(...)` 的同一份「未启用或子集为空即 404」判定与 `serveZip(...)` 流式打包实现。`splitByOrientation`（视频 Tab）与 `splitByMediaKind`（图片 Tab）按 Tab 互斥使用，但实现上互不依赖，理论上可以同时打开。视频 Tab 传 `splitByMediaKind = false`，两条类型路由 404、页面不按类型分组，行为不受影响。手机端 `LanExportState` 对话框的提示行（`tvLanSplit`）横竖屏与静态/动图二选一展示，互斥判定同样按 `state.splitByOrientation` / `state.splitByMediaKind` 二选一。
+
 导出计数（`exportCount`，v11）：**只有局域网导出会累加**——`LanFileServer` 把某条记录字节完整写出 socket 后回调 `TransferEvent`，由 `DownloadedVideoRepository.incrementExportCount(...)` 做 `SET exportCount = exportCount + 1` 的原子累加（**不要**改成"读实体→改→整行 update"，并发写会互相覆盖）。ZIP 导出、`HEAD` 探测、中途断连都不累加。它只表示"手机已完整发出"，不代表电脑落盘，只作提示与二次确认依据。语义细节见 `.cursor/rules/db-schema.md` 的 exportCount 小节。
 
 ### 跨 tab 导航（`ShellNavViewModel`）

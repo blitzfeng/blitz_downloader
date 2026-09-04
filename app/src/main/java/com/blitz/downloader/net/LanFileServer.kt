@@ -26,7 +26,9 @@ import kotlin.concurrent.thread
  * 设计取舍：
  * - **零第三方依赖**：手写请求行 + 头解析，只支持 GET，够用即可，不引入 NanoHTTPD。
  * - 路由：`/` 列表页；`/f?i=N` 下载第 N 个文件；`/all.zip` 流式打包全部文件；
- *   开启 [splitByOrientation] 时另有 `/landscape.zip`、`/portrait.zip` 按画面方向分包。
+ *   开启 [splitByOrientation] 时另有 `/landscape.zip`、`/portrait.zip` 按画面方向分包；
+ *   开启 [splitByMediaKind] 时另有 `/static.zip`、`/live.zip` 按静态图/动图(mp4)分包。
+ *   两个分包开关按 Tab 互斥使用（视频 Tab 只开方向、图片 Tab 只开类型），但实现上互不依赖。
  * - 单文件带 `Content-Length`（浏览器可显示进度）；zip 流长度未知，用 `Connection: close` 收尾。
  * - 每个连接开一个 daemon 线程处理，简单可靠；导出文件数量级不大，无需线程池。
  *
@@ -46,6 +48,14 @@ class LanFileServer(
      * `h2` 等规则，不代表逐字节相同）。
      */
     private val splitByOrientation: Boolean = false,
+    /**
+     * 是否按静态图 / 动图(mp4)分包。
+     *
+     * 只有管理页**图片 Tab** 的导出传 `true`：与 [splitByOrientation] 互斥使用（视频 Tab 才有画面
+     * 方向概念，图片 Tab 才有实况图动图概念），`false` 时两条类型路由一律 404、首页不渲染类型按钮
+     * 也不分组。「动图」严格指 mp4 本体；实况图的静态封面（webp）算在「静态图」里。
+     */
+    private val splitByMediaKind: Boolean = false,
     private val onTransfer: ((TransferEvent) -> Unit)? = null,
 ) {
 
@@ -76,6 +86,16 @@ class LanFileServer(
     /** 竖屏子集；[splitByOrientation] 为 false 时恒为空。 */
     private val portraitFiles: List<MediaExportManager.ExportFile> by lazy {
         if (splitByOrientation) files.filter { it.orientation == MediaOrientation.PORTRAIT } else emptyList()
+    }
+
+    /** 静态图子集（含实况图静态封面）；[splitByMediaKind] 为 false 时恒为空。 */
+    private val staticFiles: List<MediaExportManager.ExportFile> by lazy {
+        if (splitByMediaKind) files.filterNot { it.isLiveVideo } else emptyList()
+    }
+
+    /** 动图(mp4)子集；[splitByMediaKind] 为 false 时恒为空。 */
+    private val liveFiles: List<MediaExportManager.ExportFile> by lazy {
+        if (splitByMediaKind) files.filter { it.isLiveVideo } else emptyList()
     }
 
     @Volatile private var running = false
@@ -166,11 +186,17 @@ class LanFileServer(
         when {
             path == "/" -> serveIndex(out, writeBody)
             path == "/all.zip" -> serveZip(out, writeBody, files, "bDouyin_export.zip", ZIP_LABEL_ALL)
-            path == "/landscape.zip" -> serveOrientationZip(
-                out, writeBody, landscapeFiles, "bDouyin_export_landscape.zip", ZIP_LABEL_LANDSCAPE,
+            path == "/landscape.zip" -> serveGatedZip(
+                out, writeBody, splitByOrientation, landscapeFiles, "bDouyin_export_landscape.zip", ZIP_LABEL_LANDSCAPE,
             )
-            path == "/portrait.zip" -> serveOrientationZip(
-                out, writeBody, portraitFiles, "bDouyin_export_portrait.zip", ZIP_LABEL_PORTRAIT,
+            path == "/portrait.zip" -> serveGatedZip(
+                out, writeBody, splitByOrientation, portraitFiles, "bDouyin_export_portrait.zip", ZIP_LABEL_PORTRAIT,
+            )
+            path == "/static.zip" -> serveGatedZip(
+                out, writeBody, splitByMediaKind, staticFiles, "bDouyin_export_static.zip", ZIP_LABEL_STATIC,
+            )
+            path == "/live.zip" -> serveGatedZip(
+                out, writeBody, splitByMediaKind, liveFiles, "bDouyin_export_live.zip", ZIP_LABEL_LIVE,
             )
             path == "/f" -> serveFile(out, parseIntParam(query, "i"), writeBody)
             else -> writeText(out, "404 Not Found", "not found")
@@ -224,6 +250,17 @@ class LanFileServer(
             }
             appendGroup(sb, "横屏", landscapeFiles)
             appendGroup(sb, "竖屏", portraitFiles)
+        } else if (splitByMediaKind) {
+            // 类型按钮：数量为 0 的那个不渲染（对应路由也会 404）
+            val hasAny = staticFiles.isNotEmpty() || liveFiles.isNotEmpty()
+            if (hasAny) {
+                sb.append("<div class=\"splitrow\">")
+                appendSplitButton(sb, "/static.zip", "⬇ 静态图", staticFiles)
+                appendSplitButton(sb, "/live.zip", "⬇ 动图", liveFiles)
+                sb.append("</div>")
+            }
+            appendGroup(sb, "静态图", staticFiles)
+            appendGroup(sb, "动图", liveFiles)
         } else {
             sb.append("<ul>")
             files.forEach { ef -> appendFileItem(sb, ef) }
@@ -315,17 +352,18 @@ class LanFileServer(
     }
 
     /**
-     * 方向包入口。未开启分包、或该方向一个文件都没有时返回 404——
-     * 首页本就不渲染空方向的按钮，正常操作点不到，直接访问 URL 时明确报 404 比返回空 zip 更诚实。
+     * 分包路由入口（横竖屏 / 静态动图共用）。对应开关未开启、或子集一个文件都没有时返回 404——
+     * 首页本就不渲染空子集的按钮，正常操作点不到，直接访问 URL 时明确报 404 比返回空 zip 更诚实。
      */
-    private fun serveOrientationZip(
+    private fun serveGatedZip(
         out: OutputStream,
         writeBody: Boolean,
+        enabled: Boolean,
         subset: List<MediaExportManager.ExportFile>,
         downloadName: String,
         label: String,
     ) {
-        if (!splitByOrientation || subset.isEmpty()) {
+        if (!enabled || subset.isEmpty()) {
             writeText(out, "404 Not Found", "not found")
             return
         }
@@ -453,6 +491,10 @@ class LanFileServer(
         else -> "application/octet-stream"
     }
 
+    /** 是否为动图(实况图)的 mp4 本体；判据是文件扩展名，与 [MediaExportManager] 的落盘约定一致。 */
+    private val MediaExportManager.ExportFile.isLiveVideo: Boolean
+        get() = file.extension.equals("mp4", ignoreCase = true)
+
     private fun escapeHtml(s: String): String = s
         .replace("&", "&amp;")
         .replace("<", "&lt;")
@@ -483,6 +525,12 @@ class LanFileServer(
 
         /** `/portrait.zip` 传输事件的展示名。 */
         const val ZIP_LABEL_PORTRAIT = "portrait.zip"
+
+        /** `/static.zip` 传输事件的展示名。 */
+        const val ZIP_LABEL_STATIC = "static.zip"
+
+        /** `/live.zip` 传输事件的展示名。 */
+        const val ZIP_LABEL_LIVE = "live.zip"
 
         /**
          * 取本机在 WiFi/局域网下的 IPv4 站点本地地址（192.168.x / 10.x / 172.16-31.x）。
