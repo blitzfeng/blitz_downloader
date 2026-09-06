@@ -27,10 +27,10 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadTags() {
         viewModelScope.launch {
-            val (tags, parentMap) = withContext(Dispatchers.IO) {
-                repo.getAvailableTags() to repo.getParentMap()
+            val (tags, parentMap, descriptionMap) = withContext(Dispatchers.IO) {
+                Triple(repo.getAvailableTags(), repo.getParentMap(), repo.getDescriptionMap())
             }
-            emit(TagManageEvent.TagsLoaded(tags, parentMap))
+            emit(TagManageEvent.TagsLoaded(tags, parentMap, descriptionMap))
         }
     }
 
@@ -96,6 +96,16 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ── 标签描述（辅助 ai-tag-suggestions 的 AI 建议） ───────────────────────────
+
+    /** 保存标签描述（[description] 传空字符串即清空）。这是标签名册元数据编辑，不产生 `tagEditCount`。 */
+    fun setTagDescription(tagName: String, description: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { repo.setTagDescription(tagName, description) }
+            emit(TagManageEvent.TagDescriptionSet(tagName, description))
+        }
+    }
+
     /**
      * 持久化标签顺序。
      *
@@ -115,7 +125,11 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 sealed interface TagManageEvent {
-    data class TagsLoaded(val tags: List<String>, val parentMap: Map<String, String>) : TagManageEvent
+    data class TagsLoaded(
+        val tags: List<String>,
+        val parentMap: Map<String, String>,
+        val descriptionMap: Map<String, String>,
+    ) : TagManageEvent
     data class TagCreated(val name: String) : TagManageEvent
     data class TagRenamed(val position: Int, val oldName: String, val newName: String) : TagManageEvent
     data class TagDeleted(val position: Int, val name: String) : TagManageEvent
@@ -131,4 +145,7 @@ sealed interface TagManageEvent {
 
     /** 上级设置成功；[parentTagName] 空表示清除为顶层标签。 */
     data class TagParentSet(val position: Int, val tagName: String, val parentTagName: String) : TagManageEvent
+
+    /** 描述保存成功；[description] 空表示清空。 */
+    data class TagDescriptionSet(val tagName: String, val description: String) : TagManageEvent
 }

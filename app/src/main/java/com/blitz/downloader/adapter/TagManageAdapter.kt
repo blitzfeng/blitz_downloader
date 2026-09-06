@@ -28,6 +28,7 @@ class TagManageAdapter(
     private val onEdit: (position: Int, tagName: String) -> Unit,
     private val onDelete: (position: Int, tagName: String) -> Unit,
     private val onSetParent: (position: Int, tagName: String) -> Unit,
+    private val onEditDescription: (position: Int, tagName: String) -> Unit,
 ) : RecyclerView.Adapter<TagManageAdapter.ViewHolder>() {
 
     private val tags = mutableListOf<String>()
@@ -35,11 +36,15 @@ class TagManageAdapter(
     /** 标签名 → 上级标签名，只含有上级的条目，语义与 `VideoTagRepository.getParentMap()` 一致。 */
     private var parentMap: Map<String, String> = emptyMap()
 
+    /** 标签名 → 描述，只含有已填写描述的条目，语义与 `VideoTagRepository.getDescriptionMap()` 一致。 */
+    private var descriptionMap: Map<String, String> = emptyMap()
+
     /** 由 Activity 在初始化和刷新时调用。 */
-    fun submitList(list: List<String>, parents: Map<String, String> = emptyMap()) {
+    fun submitList(list: List<String>, parents: Map<String, String> = emptyMap(), descriptions: Map<String, String> = emptyMap()) {
         tags.clear()
         tags.addAll(list)
         parentMap = parents
+        descriptionMap = descriptions
         notifyDataSetChanged()
     }
 
@@ -51,6 +56,24 @@ class TagManageAdapter(
             parentMap + (tagName to parentTagName)
         }
         if (position in tags.indices) notifyItemChanged(position)
+    }
+
+    /** 当前缓存的描述文本，供弹窗预填；未设置返回空字符串。 */
+    fun getDescription(tagName: String): String = descriptionMap[tagName].orEmpty()
+
+    /**
+     * 单个标签的描述保存成功后调用，只刷新这一行。不接收 position 参数——描述编辑弹窗是
+     * 异步的 Compose `DialogFragment`，结果通过 `FragmentResult` 回调时无法安全假设列表顺序
+     * 与弹出时一致（用户理论上可能同时在拖拽排序），当场按 [tagName] 重新查行号更稳妥。
+     */
+    fun updateDescription(tagName: String, description: String) {
+        descriptionMap = if (description.isBlank()) {
+            descriptionMap - tagName
+        } else {
+            descriptionMap + (tagName to description)
+        }
+        val position = tags.indexOf(tagName)
+        if (position >= 0) notifyItemChanged(position)
     }
 
     /**
@@ -70,6 +93,20 @@ class TagManageAdapter(
     fun clearParentReferences(deletedName: String) {
         parentMap = parentMap.filterKeys { it != deletedName }.filterValues { it != deletedName }
         notifyDataSetChanged()
+    }
+
+    /**
+     * 标签重命名后同步描述条目的 key。描述是自由文本、不像 [parentMap] 那样可能被
+     * 其他标签的值引用，只需要处理"这个标签自己有没有描述"这一种情况。
+     */
+    fun renameDescriptionReference(oldName: String, newName: String) {
+        val description = descriptionMap[oldName] ?: return
+        descriptionMap = (descriptionMap - oldName) + (newName to description)
+    }
+
+    /** 标签删除后移除其描述条目。 */
+    fun clearDescriptionReference(deletedName: String) {
+        descriptionMap = descriptionMap - deletedName
     }
 
     /** 返回当前排列顺序（用于拖拽结束后持久化）。 */
@@ -124,7 +161,7 @@ class TagManageAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val tagName = tags[position]
-        holder.bind(tagName, parentMap[tagName])
+        holder.bind(tagName, parentMap[tagName], descriptionMap[tagName])
     }
 
     override fun getItemCount(): Int = tags.size
@@ -135,17 +172,25 @@ class TagManageAdapter(
         val dragHandle: ImageView = itemView.findViewById(R.id.ivDragHandle)
         private val tvTagName: TextView = itemView.findViewById(R.id.tvTagName)
         private val tvTagParent: TextView = itemView.findViewById(R.id.tvTagParent)
+        private val tvTagDescription: TextView = itemView.findViewById(R.id.tvTagDescription)
         private val btnEdit: ImageView = itemView.findViewById(R.id.btnEditTag)
         private val btnDelete: ImageView = itemView.findViewById(R.id.btnDeleteTag)
         private val btnSetParent: ImageView = itemView.findViewById(R.id.btnSetParentTag)
+        private val btnEditDescription: ImageView = itemView.findViewById(R.id.btnEditTagDescription)
 
-        fun bind(tagName: String, parentTagName: String?) {
+        fun bind(tagName: String, parentTagName: String?, description: String?) {
             tvTagName.text = tagName
             if (parentTagName.isNullOrBlank()) {
                 tvTagParent.visibility = View.GONE
             } else {
                 tvTagParent.text = "上级：$parentTagName"
                 tvTagParent.visibility = View.VISIBLE
+            }
+            if (description.isNullOrBlank()) {
+                tvTagDescription.visibility = View.GONE
+            } else {
+                tvTagDescription.text = description
+                tvTagDescription.visibility = View.VISIBLE
             }
 
             btnEdit.setOnClickListener {
@@ -159,6 +204,10 @@ class TagManageAdapter(
             btnSetParent.setOnClickListener {
                 val pos = bindingAdapterPosition
                 if (pos != RecyclerView.NO_ID.toInt()) onSetParent(pos, tags[pos])
+            }
+            btnEditDescription.setOnClickListener {
+                val pos = bindingAdapterPosition
+                if (pos != RecyclerView.NO_ID.toInt()) onEditDescription(pos, tags[pos])
             }
 
             // 触摸拖拽把手时立即启动拖拽

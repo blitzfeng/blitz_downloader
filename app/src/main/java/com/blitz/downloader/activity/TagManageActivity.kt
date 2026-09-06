@@ -22,6 +22,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
 import com.blitz.downloader.adapter.TagManageAdapter
 import com.blitz.downloader.databinding.ActivityTagManageBinding
+import com.blitz.downloader.dialog.TagDescriptionDialogFragment
 import com.blitz.downloader.viewmodel.TagManageEvent
 import com.blitz.downloader.viewmodel.TagManageViewModel
 import kotlinx.coroutines.launch
@@ -74,6 +75,15 @@ class TagManageActivity : AppCompatActivity() {
 
         binding.fabAddTag.setOnClickListener { showAddTagDialog() }
 
+        supportFragmentManager.setFragmentResultListener(
+            TagDescriptionDialogFragment.REQUEST_KEY,
+            this,
+        ) { _, bundle ->
+            val tagName = bundle.getString(TagDescriptionDialogFragment.RESULT_TAG_NAME).orEmpty()
+            val description = bundle.getString(TagDescriptionDialogFragment.RESULT_DESCRIPTION).orEmpty()
+            viewModel.setTagDescription(tagName, description)
+        }
+
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.events.collect { handleEvent(it) }
@@ -91,7 +101,7 @@ class TagManageActivity : AppCompatActivity() {
     }
 
     private fun handleEvent(event: TagManageEvent) = when (event) {
-        is TagManageEvent.TagsLoaded -> adapter.submitList(event.tags, event.parentMap)
+        is TagManageEvent.TagsLoaded -> adapter.submitList(event.tags, event.parentMap, event.descriptionMap)
         is TagManageEvent.TagCreated -> {
             adapter.addItem(event.name)
             binding.rvTagManage.scrollToPosition(adapter.itemCount - 1)
@@ -100,10 +110,12 @@ class TagManageActivity : AppCompatActivity() {
         is TagManageEvent.TagRenamed -> {
             adapter.renameAt(event.position, event.newName)
             adapter.renameParentReferences(event.oldName, event.newName)
+            adapter.renameDescriptionReference(event.oldName, event.newName)
         }
         is TagManageEvent.TagDeleted -> {
             adapter.removeAt(event.position)
             adapter.clearParentReferences(event.name)
+            adapter.clearDescriptionReference(event.name)
             orderDirty = true
             toast("已删除「${event.name}」")
         }
@@ -111,6 +123,8 @@ class TagManageActivity : AppCompatActivity() {
         is TagManageEvent.ShowParentPicker -> showParentPickerDialog(event)
         is TagManageEvent.TagParentSet ->
             adapter.updateParent(event.position, event.tagName, event.parentTagName)
+        is TagManageEvent.TagDescriptionSet ->
+            adapter.updateDescription(event.tagName, event.description)
     }
 
     private fun toast(text: CharSequence) {
@@ -132,6 +146,9 @@ class TagManageActivity : AppCompatActivity() {
             onEdit = { pos, name -> showEditTagDialog(pos, name) },
             onDelete = { pos, name -> showDeleteTagDialog(pos, name) },
             onSetParent = { pos, name -> viewModel.requestParentPicker(pos, name) },
+            onEditDescription = { _, name ->
+                TagDescriptionDialogFragment.show(this, name, adapter.getDescription(name))
+            },
         )
 
         val touchCallback = object : ItemTouchHelper.SimpleCallback(

@@ -77,6 +77,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.8.7")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.11.0")
+    // ai-tag-suggestions 关键帧优选：免费、设备端处理、无用量计费；bundled 版本避免 unbundled
+    // 依赖运行时联网下载模型导致离线场景下第一次人脸检测就不可用，见 openspec design.md Decision 4
+    implementation("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     implementation("io.coil-kt:coil:2.7.0")

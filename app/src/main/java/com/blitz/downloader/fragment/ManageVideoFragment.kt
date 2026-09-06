@@ -309,7 +309,17 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
      * 确认后整体覆盖写库。已改为 Compose（Material 3），见 [TagEditDialogFragment]。
      */
     private fun showTagEditDialog(event: ManageTabEvent.ShowTagEditor) {
-        TagEditDialogFragment.show(this, event.awemeId, event.allTags, event.currentTags, event.parentMap)
+        TagEditDialogFragment.show(
+            host = this,
+            awemeId = event.awemeId,
+            allTags = event.allTags,
+            currentTags = event.currentTags,
+            parentMap = event.parentMap,
+            secUserId = event.secUserId,
+            desc = event.desc,
+            coverPath = event.coverPath,
+            videoFilePath = event.filePath,
+        )
     }
 
     /**
@@ -336,7 +346,9 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
         ) { _, bundle ->
             val awemeId = bundle.getString(TagEditDialogFragment.RESULT_AWEME_ID).orEmpty()
             val tags = bundle.getStringArrayList(TagEditDialogFragment.RESULT_TAGS).orEmpty()
-            if (awemeId.isNotEmpty()) viewModel.applyTagsToVideo(awemeId, tags)
+            val aiAnalysisId = bundle.takeIf { it.containsKey(TagEditDialogFragment.RESULT_AI_ANALYSIS_ID) }
+                ?.getLong(TagEditDialogFragment.RESULT_AI_ANALYSIS_ID)
+            if (awemeId.isNotEmpty()) viewModel.applyTagsToVideo(awemeId, tags, aiAnalysisId)
         }
         // 多选批量：追加标签，或只给标签修改次数 +1
         childFragmentManager.setFragmentResultListener(

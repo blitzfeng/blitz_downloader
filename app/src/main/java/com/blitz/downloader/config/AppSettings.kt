@@ -25,6 +25,19 @@ object AppSettings {
     /** `author_tag_frequency` 缓存表上次全量重算的时间戳（0 = 从未分析）。 */
     private const val KEY_TAG_FREQ_LAST_ANALYZED_AT = "tag_freq_last_analyzed_at"
 
+    /**
+     * 是否启用 AI 建议标签功能（`ai-tag-suggestions`），默认 `false`。
+     * 涉及把视频封面/关键帧、文案发给第三方 LLM 服务，不能默认开启。
+     */
+    private const val KEY_AI_SUGGESTION_ENABLED = "ai_suggestion_enabled"
+
+    /**
+     * Gemini API Key，**明文存储**（用户决策：当前阶段不引入 `androidx.security:security-crypto`）。
+     * 与其余非敏感偏好同等对待，走同一个 `blitz_app_settings` 文件——不要在任何日志/异常堆栈
+     * 里打印这个值，遵循项目"日志不打印 Cookie/msToken"的既有基调。
+     */
+    private const val KEY_GEMINI_API_KEY = "gemini_api_key"
+
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -72,5 +85,21 @@ object AppSettings {
 
     fun setTagFrequencyLastAnalyzedAtMillis(context: Context, millis: Long) {
         prefs(context).edit().putLong(KEY_TAG_FREQ_LAST_ANALYZED_AT, millis).apply()
+    }
+
+    /** 是否启用 AI 建议标签功能，默认关闭。设置页「AI 建议」按钮/入口按这个值决定是否展示。 */
+    fun isAiSuggestionEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_AI_SUGGESTION_ENABLED, false)
+
+    fun setAiSuggestionEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_AI_SUGGESTION_ENABLED, enabled).apply()
+    }
+
+    /** Gemini API Key，未配置时返回空字符串（不是 `null`，避免调用方到处判空）。 */
+    fun getGeminiApiKey(context: Context): String =
+        prefs(context).getString(KEY_GEMINI_API_KEY, "").orEmpty()
+
+    fun setGeminiApiKey(context: Context, apiKey: String) {
+        prefs(context).edit().putString(KEY_GEMINI_API_KEY, apiKey.trim()).apply()
     }
 }

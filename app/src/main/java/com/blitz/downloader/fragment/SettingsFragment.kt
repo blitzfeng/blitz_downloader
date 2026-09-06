@@ -27,6 +27,7 @@ import com.blitz.downloader.config.VideoQualityPreference
 import com.blitz.downloader.data.db.DatabaseBackupManager
 import com.blitz.downloader.databinding.FragmentSettingsBinding
 import com.blitz.downloader.dialog.AllFilesAccessDialogFragment
+import com.blitz.downloader.dialog.GeminiApiKeyDialogFragment
 import com.blitz.downloader.util.MediaVisibilityManager
 import com.blitz.downloader.util.MediaVisibilityManager.MediaFolder
 import com.blitz.downloader.viewmodel.SettingsEvent
@@ -92,6 +93,25 @@ class SettingsFragment : Fragment() {
         refreshHighFreqThresholdSummary()
         binding.itemAnalyzeTagFrequency.setOnClickListener { viewModel.analyzeTagFrequency() }
         refreshAnalyzeTagFrequencySummary()
+        binding.itemBackfillTagIds.setOnClickListener { viewModel.backfillTagIds() }
+
+        binding.switchAiSuggestionEnabled.isChecked = AppSettings.isAiSuggestionEnabled(requireContext())
+        binding.switchAiSuggestionEnabled.setOnCheckedChangeListener { _, checked ->
+            AppSettings.setAiSuggestionEnabled(requireContext(), checked)
+        }
+        binding.itemGeminiApiKey.setOnClickListener {
+            GeminiApiKeyDialogFragment.show(this, AppSettings.getGeminiApiKey(requireContext()))
+        }
+        refreshGeminiApiKeySummary()
+        childFragmentManager.setFragmentResultListener(
+            GeminiApiKeyDialogFragment.REQUEST_KEY,
+            viewLifecycleOwner,
+        ) { _, bundle ->
+            val apiKey = bundle.getString(GeminiApiKeyDialogFragment.RESULT_API_KEY).orEmpty()
+            AppSettings.setGeminiApiKey(requireContext(), apiKey)
+            refreshGeminiApiKeySummary()
+            toast(getString(R.string.settings_gemini_api_key_saved))
+        }
 
         pendingHideFolder = savedInstanceState?.getString(STATE_PENDING_HIDE_FOLDER)
         binding.itemHideVideos.setOnClickListener { onFolderRowClicked(MediaFolder.VIDEOS) }
@@ -132,6 +152,7 @@ class SettingsFragment : Fragment() {
                         SettingsViewModel.BusyKind.BACKUP -> R.string.manage_backup_doing
                         SettingsViewModel.BusyKind.RESTORE -> R.string.manage_restore_doing
                         SettingsViewModel.BusyKind.TAG_ANALYSIS -> R.string.manage_tag_analysis_doing
+                        SettingsViewModel.BusyKind.TAG_ID_BACKFILL -> R.string.settings_backfill_tag_ids_doing
                     },
                 ),
             )
@@ -172,6 +193,10 @@ class SettingsFragment : Fragment() {
             }
             is SettingsEvent.TagAnalysisFailed ->
                 toast(getString(R.string.settings_analyze_tag_frequency_failed, event.message))
+            SettingsEvent.TagIdBackfillDone ->
+                toast(getString(R.string.settings_backfill_tag_ids_done))
+            is SettingsEvent.TagIdBackfillFailed ->
+                toast(getString(R.string.settings_backfill_tag_ids_failed, event.message))
         }
     }
 
@@ -293,6 +318,19 @@ class SettingsFragment : Fragment() {
         } else {
             val formatted = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(lastAnalyzedAt))
             getString(R.string.settings_analyze_tag_frequency_last, formatted)
+        }
+    }
+
+    /**
+     * 列表行只展示前 6 位 + 省略号，纯粹是避免一长串字符撑坏行高——不是安全遮罩，
+     * 点进编辑弹窗看到的仍是完整明文（存储本身就是明文，见 [GeminiApiKeyDialogFragment] KDoc）。
+     */
+    private fun refreshGeminiApiKeySummary() {
+        val apiKey = AppSettings.getGeminiApiKey(requireContext())
+        binding.tvGeminiApiKeySummary.text = if (apiKey.isBlank()) {
+            getString(R.string.settings_gemini_api_key_not_set)
+        } else {
+            getString(R.string.settings_gemini_api_key_masked, apiKey.take(6))
         }
     }
 

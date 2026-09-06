@@ -104,6 +104,23 @@
     <string name="settings_analyze_tag_frequency_done">分析完成：覆盖 %1$d 位作者、共 %2$d 条高频记录</string>
     <string name="settings_analyze_tag_frequency_failed">分析失败：%1$s</string>
     <string name="manage_tag_analysis_doing">正在分析标签数据…</string>
+    <!-- 临时维护入口：一次性回填标签的稳定数值 id（ai-tag-suggestions 需要），幂等、可重复点击 -->
+    <string name="settings_backfill_tag_ids">补齐标签 ID</string>
+    <string name="settings_backfill_tag_ids_summary">一次性维护操作，正常情况下无需手动点击</string>
+    <string name="settings_backfill_tag_ids_doing">正在补齐标签 ID…</string>
+    <string name="settings_backfill_tag_ids_done">已补齐</string>
+    <string name="settings_backfill_tag_ids_failed">补齐失败：%1$s</string>
+    <!-- AI 建议标签（ai-tag-suggestions）：默认关闭，需要用户显式开启并配置 Gemini API Key -->
+    <string name="settings_group_ai_suggestion">AI 建议标签</string>
+    <string name="settings_ai_suggestion_enabled">启用 AI 建议标签</string>
+    <string name="settings_ai_suggestion_enabled_summary">开启后会把视频封面/关键帧与文案发给 Gemini，仅在你手动点击「AI 建议」时才会发起请求</string>
+    <string name="settings_gemini_api_key">Gemini API Key</string>
+    <string name="settings_gemini_api_key_not_set">未配置</string>
+    <string name="settings_gemini_api_key_masked">已配置（%1$s…）</string>
+    <string name="settings_gemini_api_key_dialog_title">设置 Gemini API Key</string>
+    <string name="settings_gemini_api_key_dialog_hint">明文保存在本机，不会上传到任何服务器；仅用于直接调用 Gemini API</string>
+    <string name="settings_gemini_api_key_dialog_placeholder">粘贴你的 Gemini API Key</string>
+    <string name="settings_gemini_api_key_saved">已保存</string>
     <!-- 相册可见性：往目录里加/删 .nomedia，封面目录无开关、由权限自动维护 -->
     <string name="settings_group_gallery">相册可见性</string>
     <string name="settings_hide_videos">视频文件夹</string>
@@ -193,6 +210,13 @@
     <string name="manage_restore_doing">正在恢复…</string>
     <string name="manage_restore_failed">恢复失败：%1$s</string>
     <string name="manage_edit_tags_title">设置标签</string>
+    <!-- 单条标签编辑弹窗内的「AI 建议」入口（ai-tag-suggestions），功能关闭时不展示 -->
+    <string name="tag_edit_ai_suggest_button">AI 建议</string>
+    <string name="tag_edit_ai_suggest_failed">获取建议失败：%1$s</string>
+    <!-- 标签描述编辑弹窗（辅助 ai-tag-suggestions 的 AI 建议理解标签判断标准） -->
+    <string name="tag_description_dialog_title">编辑「%1$s」的描述</string>
+    <string name="tag_description_dialog_placeholder">帮助 AI 理解这个标签的判断标准</string>
+    <string name="tag_description_dialog_count">%1$d/%2$d</string>
     <string name="manage_menu_set_tags_selected">批量设置标签</string>
     <string name="manage_set_tags_title">为选中的 %1$d 项批量添加标签</string>
     <string name="manage_set_tags_no_tags">暂无可用标签，请先在「标签管理」中创建标签</string>

@@ -13,8 +13,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         VideoTagEntity::class,
         TagEntity::class,
         AuthorTagFrequencyEntity::class,
+        VideoAiAnalysisEntity::class,
+        VideoVisualFeatureEntity::class,
+        VideoTagFeedbackEntity::class,
+        TagPreferenceEntity::class,
+        PreferenceProfileEntity::class,
     ],
-    version = 17,
+    version = 19,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -26,6 +31,16 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tagDao(): TagDao
 
     abstract fun authorTagFrequencyDao(): AuthorTagFrequencyDao
+
+    abstract fun videoAiAnalysisDao(): VideoAiAnalysisDao
+
+    abstract fun videoVisualFeatureDao(): VideoVisualFeatureDao
+
+    abstract fun videoTagFeedbackDao(): VideoTagFeedbackDao
+
+    abstract fun tagPreferenceDao(): TagPreferenceDao
+
+    abstract fun preferenceProfileDao(): PreferenceProfileDao
 
     companion object {
         /** 数据库文件名；[DatabaseBackupManager] 也会用这个名字（务必保持一致）。 */
@@ -301,6 +316,98 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v17 → v18：`tags` 表新增 `id`（稳定数值标识，默认 0 = 未分配）与 `description`
+         * （人工标签判断标准，默认空字符串）两列，服务于 `ai-tag-suggestions`。历史标签的 `id`
+         * 迁移后仍是 0，需要设置页「补齐标签 ID」一次性回填（[com.blitz.downloader.data.VideoTagRepository.backfillTagIds]）
+         * 或等到下次重命名/新建时自然获得；不影响任何既有查询——`tagName` 依旧是主键与既有
+         * 外键语义的基础，这两列纯增量，见 [TagEntity] KDoc。
+         */
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tags ADD COLUMN id INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE tags ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
+         * v18 → v19：一次性建齐 `ai-tag-suggestions` 需要的 5 张新表（结构化视觉证据、
+         * 逐标签反馈、按标签准确率统计、个人偏好摘要）。全部是 `CREATE TABLE IF NOT EXISTS`，
+         * 与任何既有表无外键强约束（应用层保证引用一致性，例如标签被删除后历史分析记录仍应
+         * 保留用于回溯）。**不写 `DEFAULT` 子句**——对应 Entity 都没有 `@ColumnInfo(defaultValue=...)`，
+         * 写了反而会在 Room 运行时 schema 校验时和"预期 schema 无默认值"对不上（`tags` 表两处
+         * 历史 `ALTER TABLE ... DEFAULT` 是对已有行的列不得不给默认值，新建表没有这个限制）。
+         */
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS video_ai_analysis (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        awemeId TEXT NOT NULL,
+                        provider TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        profileVersion INTEGER NOT NULL,
+                        suggestedTagIds TEXT NOT NULL,
+                        succeeded INTEGER NOT NULL,
+                        createdAtMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS video_visual_feature (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        analysisId INTEGER NOT NULL,
+                        awemeId TEXT NOT NULL,
+                        profileJson TEXT NOT NULL,
+                        createdAtMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS video_tag_feedback (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        awemeId TEXT NOT NULL,
+                        analysisId INTEGER NOT NULL,
+                        tagId INTEGER NOT NULL,
+                        kind TEXT NOT NULL,
+                        confidence REAL,
+                        createdAtMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_video_tag_feedback_tagId ON video_tag_feedback(tagId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_video_tag_feedback_awemeId ON video_tag_feedback(awemeId)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS tag_preference (
+                        tagId INTEGER PRIMARY KEY NOT NULL,
+                        suggestedCount INTEGER NOT NULL,
+                        acceptedCount INTEGER NOT NULL,
+                        rejectedCount INTEGER NOT NULL,
+                        missedCount INTEGER NOT NULL,
+                        acceptanceRate REAL NOT NULL,
+                        recommendedThreshold REAL NOT NULL,
+                        updatedAtMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS preference_profile (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        version INTEGER NOT NULL,
+                        profileText TEXT NOT NULL,
+                        sampleCount INTEGER NOT NULL,
+                        updatedAtMillis INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -316,7 +423,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
-                        MIGRATION_16_17,
+                        MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19,
                     )
                     .fallbackToDestructiveMigration()
                     .build()

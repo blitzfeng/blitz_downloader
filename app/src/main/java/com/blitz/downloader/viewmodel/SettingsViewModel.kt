@@ -182,13 +182,32 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 一次性为迁移前的历史标签补齐稳定数值 id（`ai-tag-suggestions` 需要）。
+     * 幂等、可重复点击，正常情况下补齐一次后不需要再点。
+     */
+    fun backfillTagIds() {
+        if (_busy.value != null) return
+        _busy.value = BusyKind.TAG_ID_BACKFILL
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { BlitzApp.instance.videoTagRepository.backfillTagIds() }
+            }
+            _busy.value = null
+            result.fold(
+                onSuccess = { emit(SettingsEvent.TagIdBackfillDone) },
+                onFailure = { emit(SettingsEvent.TagIdBackfillFailed(it.readableMessage())) },
+            )
+        }
+    }
+
     private fun emit(event: SettingsEvent) {
         _events.tryEmit(event)
     }
 
     private fun Throwable.readableMessage(): String = message ?: javaClass.simpleName
 
-    enum class BusyKind { BACKUP, RESTORE, TAG_ANALYSIS }
+    enum class BusyKind { BACKUP, RESTORE, TAG_ANALYSIS, TAG_ID_BACKFILL }
 }
 
 sealed interface SettingsEvent {
@@ -213,4 +232,8 @@ sealed interface SettingsEvent {
     /** 作者-标签高频缓存重算完成：覆盖了多少作者、写入多少条高频记录。 */
     data class TagAnalysisDone(val authorCount: Int, val tagRowCount: Int) : SettingsEvent
     data class TagAnalysisFailed(val message: String) : SettingsEvent
+
+    /** 标签 id 一次性回填完成（幂等，可能"本来就没有需要补的"）。 */
+    data object TagIdBackfillDone : SettingsEvent
+    data class TagIdBackfillFailed(val message: String) : SettingsEvent
 }

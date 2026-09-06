@@ -62,4 +62,20 @@ interface TagDao {
      */
     @Query("UPDATE tags SET parentTagName = :newParent WHERE parentTagName = :oldParent")
     suspend fun reassignChildren(oldParent: String, newParent: String)
+
+    /** 查询当前最大 [TagEntity.id]；表为空或全部未分配时返回 0，新标签应使用 MAX+1。 */
+    @Query("SELECT COALESCE(MAX(id), 0) FROM tags")
+    suspend fun getMaxId(): Long
+
+    /** 更新单个标签的稳定数值标识（[TagEntity.id]）。 */
+    @Query("UPDATE tags SET id = :id WHERE tagName = :tagName")
+    suspend fun updateId(tagName: String, id: Long)
+
+    /** 尚未分配 id（迁移前的历史标签）的标签名，按 [TagEntity.sortOrder] 升序——供「补齐标签 ID」按分配顺序读取。 */
+    @Query("SELECT tagName FROM tags WHERE id = 0 ORDER BY sortOrder ASC, tagName ASC")
+    suspend fun getTagNamesWithoutId(): List<String>
+
+    /** 更新单个标签的描述文本，辅助 `ai-tag-suggestions` 的 AI 建议理解标签判断标准。 */
+    @Query("UPDATE tags SET description = :description WHERE tagName = :tagName")
+    suspend fun updateDescription(tagName: String, description: String)
 }

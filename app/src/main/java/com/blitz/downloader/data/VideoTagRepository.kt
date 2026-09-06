@@ -44,7 +44,26 @@ class VideoTagRepository(context: Context) {
      */
     suspend fun createTag(tagName: String) {
         val nextOrder = tagDao.getMaxSortOrder() + 1
-        tagDao.insert(TagEntity(tagName = tagName.trim(), sortOrder = nextOrder))
+        val nextId = tagDao.getMaxId() + 1
+        tagDao.insert(TagEntity(tagName = tagName.trim(), sortOrder = nextOrder, id = nextId))
+    }
+
+    /**
+     * 一次性把迁移前就存在、尚未分配稳定数值标识（[TagEntity.id] 仍是 0）的历史标签补齐 id，
+     * 按 [TagEntity.sortOrder] 升序分配连续递增值，从当前 `MAX(id) + 1` 开始。
+     *
+     * **幂等**：只处理 `id == 0` 的行，已分配过的标签不受影响，可安全重复点击。
+     * 由设置页「补齐标签 ID」触发，是迁移前历史数据的一次性维护动作，不是常规调用路径——
+     * 新建标签在 [createTag] 里已经自动分配 id，不依赖这个方法。
+     */
+    suspend fun backfillTagIds() {
+        val pending = tagDao.getTagNamesWithoutId()
+        if (pending.isEmpty()) return
+        var nextId = tagDao.getMaxId() + 1
+        for (tagName in pending) {
+            tagDao.updateId(tagName, nextId)
+            nextId += 1
+        }
     }
 
     /**
@@ -91,6 +110,13 @@ class VideoTagRepository(context: Context) {
      * 供打标签 UI 展示可选列表。
      */
     suspend fun getAvailableTags(): List<String> = tagDao.getAll()
+
+    /**
+     * 全量标签实体（含 [TagEntity.id]/[TagEntity.description]/[TagEntity.parentTagName]），
+     * 供 `ai-tag-suggestions` 组装标签词表使用——[getAvailableTags] 只返回名字，AI 建议需要
+     * 稳定 id 与描述文本。按 [TagEntity.sortOrder] 升序，与 [getAvailableTags] 同一顺序。
+     */
+    suspend fun getAvailableTagEntities(): List<TagEntity> = tagDao.getAllEntities()
 
     /**
      * 批量更新标签排序：将 [orderedNames] 的下标写入各标签的 `sortOrder`。
@@ -150,6 +176,29 @@ class VideoTagRepository(context: Context) {
     /** 清除 [tagName] 的上级，使其回到顶层标签。 */
     suspend fun clearParentTag(tagName: String) {
         tagDao.updateParentTagName(tagName, "")
+    }
+
+    // ──────────────────── 标签描述（description 字段） ────────────────────
+    //
+    // 人工填写的标签判断标准，供 ai-tag-suggestions 发起 AI 建议请求时理解标签语义、
+    // 避免模型按自己的通用语义自行发挥。与视频打标签无关，是标签名册本身的元数据。
+
+    /**
+     * 全量"标签名 → 描述"映射，只含有已填写描述（非空）的条目。
+     * 供标签管理页展示副标题预览，以及组装 AI 建议请求的标签词表上下文使用。
+     */
+    suspend fun getDescriptionMap(): Map<String, String> =
+        tagDao.getAllEntities()
+            .filter { it.description.isNotBlank() }
+            .associate { it.tagName to it.description }
+
+    /**
+     * 设置或清除（传空字符串）单个标签的描述文本。
+     * 这是标签名册本身的元数据编辑，**不计入** `downloaded_videos.tagEditCount`——
+     * 那个字段统计的是"打标签"操作被编辑的次数，与标签描述完全是两个维度。
+     */
+    suspend fun setTagDescription(tagName: String, description: String) {
+        tagDao.updateDescription(tagName, description.trim())
     }
 
     // ──────────────────── 视频打标签（video_tags 表） ────────────────────
@@ -342,4 +391,40 @@ class VideoTagRepository(context: Context) {
      */
     suspend fun getHighFrequencyTagsForAuthor(secUserId: String, threshold: Int): List<String> =
         if (secUserId.isBlank()) emptyList() else authorTagFrequencyDao.getHighFrequencyTags(secUserId, threshold)
+
+    /**
+     * 供 `ai-tag-suggestions` 组装 AI 建议请求的作者先验：附带该作者已下载视频总数与
+     * 每个高频标签的占比（而不是只给一份不带权重的标签名单），见 design.md Decision 15。
+     * [secUserId] 为空或没有达到 [threshold] 的标签时返回 `null`——`TagSuggestionRequestBuilder`
+     * 按 `null` 处理为"不携带作者先验"。
+     *
+     * **不影响** [getHighFrequencyTagsForAuthor]：两者各自独立读同一张 `author_tag_frequency`
+     * 缓存表，批量打标签弹窗的预勾选行为不受这个新方法影响。
+     */
+    suspend fun getAuthorProfileForAi(secUserId: String, threshold: Int): AuthorProfile? {
+        if (secUserId.isBlank()) return null
+        val rows = authorTagFrequencyDao.getHighFrequencyTagsWithRatio(secUserId, threshold)
+        if (rows.isEmpty()) return null
+        return AuthorProfile(
+            secUserId = secUserId,
+            sampleCount = rows.first().sampleCount,
+            topTags = rows.map { AuthorTagRatio(it.tagId, it.tagName, it.count, it.ratio) },
+        )
+    }
 }
+
+/** [VideoTagRepository.getAuthorProfileForAi] 的返回结果，对应评审文档第 9 节的 AuthorProfile。 */
+data class AuthorProfile(
+    val secUserId: String,
+    /** 该作者已下载视频总数。 */
+    val sampleCount: Int,
+    val topTags: List<AuthorTagRatio>,
+)
+
+/** [AuthorProfile.topTags] 单项；[ratio] 为 `null` 表示分母为 0（理论不应发生，仅作防御）。 */
+data class AuthorTagRatio(
+    val tagId: Long,
+    val tagName: String,
+    val count: Int,
+    val ratio: Float?,
+)

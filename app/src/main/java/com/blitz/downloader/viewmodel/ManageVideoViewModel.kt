@@ -60,7 +60,11 @@ class ManageVideoViewModel(app: Application) : ManageTabViewModel(app) {
     // 标签编辑
     // -----------------------------------------------------------------------
 
-    /** 点击单条记录的标签行：取全部可用标签 + 层级关系后发事件，由 Fragment 弹窗。 */
+    /**
+     * 点击单条记录的标签行：取全部可用标签 + 层级关系后发事件，由 Fragment 弹窗。
+     * 顺带从当前已加载条目里取该记录的 `secUserId`/`desc`/封面/文件路径，供弹窗内「AI 建议」
+     * 使用——同 [resolveHighFrequencyPreCheckedTags]，从内存反查，不需要额外查库。
+     */
     fun requestTagEditor(awemeId: String, currentTags: List<String>) {
         viewModelScope.launch {
             val (allTags, parentMap) = withContext(Dispatchers.IO) {
@@ -70,7 +74,19 @@ class ManageVideoViewModel(app: Application) : ManageTabViewModel(app) {
                 emit(ManageTabEvent.NoTagsAvailable)
                 return@launch
             }
-            emit(ManageTabEvent.ShowTagEditor(awemeId, allTags, currentTags.toSet(), parentMap))
+            val entity = uiState.value.items.firstOrNull { it.entity.awemeId == awemeId }?.entity
+            emit(
+                ManageTabEvent.ShowTagEditor(
+                    awemeId = awemeId,
+                    allTags = allTags,
+                    currentTags = currentTags.toSet(),
+                    parentMap = parentMap,
+                    secUserId = entity?.videoAuthorSecUserId.orEmpty(),
+                    desc = entity?.desc.orEmpty(),
+                    coverPath = entity?.coverPath.orEmpty(),
+                    filePath = entity?.filePath.orEmpty(),
+                ),
+            )
         }
     }
 
@@ -113,10 +129,24 @@ class ManageVideoViewModel(app: Application) : ManageTabViewModel(app) {
      *
      * 走**用户编辑入口** `setTagsAsUserEdit`：它会在标签集合确有变化时给
      * `downloaded_videos.tagEditCount` 累加，不能换成 `setTags`，否则「改过几次」会漏计。
+     *
+     * [aiAnalysisId] 非空表示本次编辑用过「AI 建议」
+     * （[com.blitz.downloader.dialog.TagEditDialogFragment.RESULT_AI_ANALYSIS_ID]），
+     * 写完标签后额外调用 [com.blitz.downloader.data.AiTagSuggestionRepository.recordFeedback]
+     * 记录反馈样例；未使用 AI 建议时
+     * 传 `null`，不产生任何反馈记录（对应 spec"未使用 AI 建议的手动打标签路径不产生反馈记录"）。
      */
-    fun applyTagsToVideo(awemeId: String, tags: List<String>) {
+    fun applyTagsToVideo(awemeId: String, tags: List<String>, aiAnalysisId: Long? = null) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) { tagRepo.setTagsAsUserEdit(awemeId, tags) }
+            withContext(Dispatchers.IO) {
+                tagRepo.setTagsAsUserEdit(awemeId, tags)
+                if (aiAnalysisId != null) {
+                    val confirmedTagIds = tagRepo.getAvailableTagEntities()
+                        .filter { it.tagName in tags }
+                        .mapTo(mutableSetOf()) { it.id }
+                    aiTagSuggestionRepo.recordFeedback(aiAnalysisId, confirmedTagIds)
+                }
+            }
             applyTagsToItem(awemeId, tags)
         }
     }

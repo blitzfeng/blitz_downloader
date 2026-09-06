@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 编辑标签描述图标：简化的文档/备注示意（矩形 + 三条文本线）。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20dp"
+    android:height="20dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1.5"
+        android:pathData="M5,3h11l3,3v15h-14z" />
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1.5"
+        android:pathData="M8,10h8 M8,14h8 M8,18h5" />
+</vector>

@@ -59,10 +59,17 @@ api/signing (DouyinWebSigner, XBogusSigner, ABogusSigner, Sm3)
    │
    ▼
 util (DouyinCookieStore, DouyinCookieSync, DouyinTokenBootstrap, DouyinVerifyFpGenerator,
-      UrlUtils, NumberFormatUtils, MediaPermissions, DiggBadgeStyle, MediaOrientationProbe)
+      UrlUtils, NumberFormatUtils, MediaPermissions, DiggBadgeStyle, MediaOrientationProbe,
+      VideoFrameExtractor, FaceFrameSelector — ai-tag-suggestions 关键帧优选)
 
-data + data/db (Room: AppDatabase, DownloadedVideoEntity/Dao, TagEntity/Dao, VideoTagEntity/Dao
-                + DownloadedVideoRepository, VideoTagRepository, DatabaseBackupManager)
+llm (LlmProvider — 可插拔接口, llm/providers/GeminiProvider — 唯一实现,
+     TagSuggestionRequestBuilder — ai-tag-suggestions 的 LLM 调用层)
+
+data + data/db (Room: AppDatabase, DownloadedVideoEntity/Dao, TagEntity/Dao, VideoTagEntity/Dao,
+                VideoAiAnalysisEntity/Dao, VideoVisualFeatureEntity/Dao, VideoTagFeedbackEntity/Dao,
+                TagPreferenceEntity/Dao, PreferenceProfileEntity/Dao
+                + DownloadedVideoRepository, VideoTagRepository, AiTagSuggestionRepository,
+                DatabaseBackupManager)
 
 model (VideoItemUiModel, ManageGridItem, MediaOrientation)
 model/filter (ManageFilterState, ManageRelationFilter, ManageSortOrder,
@@ -72,7 +79,7 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
         BatchListDownloadScope, DefaultTags)
 ```
 
-`BlitzApp`（Application）持有 `AppDatabase` 与两个 Repository 的单例。需要时统一通过 `BlitzApp.instance.downloadedVideoRepository` / `videoTagRepository` 获取，**不要**自行 new。
+`BlitzApp`（Application）持有 `AppDatabase` 与三个 Repository 的单例。需要时统一通过 `BlitzApp.instance.downloadedVideoRepository` / `videoTagRepository` / `aiTagSuggestionRepository` 获取，**不要**自行 new——`aiTagSuggestionRepository` 尤其不能自行 new，`GeminiProvider` 的 OkHttp 客户端只应构造一次。
 
 ### 包结构约定 — 新增类放哪
 
@@ -90,6 +97,7 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
 | `model/` | 跨层数据模型 | 只有一个 Adapter 用的私有类型 |
 | `model/filter/` | 筛选与排序的枚举、筛选状态 | 筛选的执行逻辑（在 ViewModel 里） |
 | `util/` | 无状态工具与样式常量 | 有生命周期的对象 |
+| `llm/` | LLM 调用层：Provider 接口、各厂商实现（`llm/providers/`）、请求/响应模型、prompt 组装（`ai-tag-suggestions`） | 抖音相关的一切（那是 `api/` 的地盘）、Room 实体 |
 | `api/` `download/` `data/` `net/` `config/` | 见上方架构图 | UI 相关的一切 |
 
 几条硬约定：
@@ -502,12 +510,69 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 - 精细检索的取数分支必须排在 `queryPage` / `loadFullScopeEntities` 的 `when` 里 **`tags` 相关分支之前**：它激活时 `tags` 恒为空，排在 `f.tags.isEmpty() && …` 之后会被那些分支截走。但**不得**再往前压过 `searchQuery` / `hasAuthorFilter`——搜索与精细检索不像标签栏那样互斥（`withSearchQuery` 故意不清 `tagQuery`），搜索优先只是「搜索期间临时压住规则」，退出搜索（清空输入框）规则结果要自动回来；压过 search 会让搜索框输入任何文字都不生效，看起来像搜索被吞掉了。它自己就是 `oneShot` 全量路径，**不要**再塞进 `hasMemoryOnlyFilter`。
 - **作者与标签筛选唯一的共存例外**：管理页按作者筛选后，列表上方会展示该作者的高频标签快捷筛选块（`AuthorHighFreqTagAdapter`，多巴胺配色，数据同批量打标签弹窗那条 `author_tag_frequency` 缓存表 + `AppSettings.getHighFrequencyTagThreshold`）。点击它走 `ManageFilterState.toggleTagKeepingAuthor`（`ManageViewModel.toggleAuthorHighFreqTag`），**故意不清作者筛选**，与标准标签栏（`withTags`，点击即清作者）刻意区分成两条通路。`ManageTabViewModel.loadAuthorEntities` 因此多了一步：`filters.tags` 非空时在作者全集里再与 `tagRepo.getVideosByTags(...)` 的结果求交集。**`ManageFilterState.withAuthor` 清除作者的分支必须同时清空 `tags`**（`copy(authorSecId = "", authorName = "", tags = emptySet())`）——旧不变量下"作者非空则标签必空"让这里原本不清标签也没事，这个例外一开就必须补上，否则清除作者筛选后标签栏显示"全部"但列表其实还残留着标签筛选。老记录（无稳定 `videoAuthorSecUserId`）这块不显示，与批量打标签弹窗预勾选的降级方式一致。
 
+### AI 建议标签（`ai-tag-suggestions`）
+
+单条记录标签编辑弹窗（`TagEditDialogFragment`）新增了「AI 建议」按钮，用视频封面/关键帧 + 文案 +
+标签词表 + 作者历史 + 个人偏好摘要，调用 Gemini 多模态模型生成候选标签，作为对纯统计式
+`author_tag_frequency` 预勾选的补充（能看懂新内容，不止复用作者自己的历史）。**默认关闭**，
+需要用户在设置页显式开启并配置 Gemini API Key 才会出现入口；批量场景（`batch-ai-tag-review`）
+尚未实现，目前只有这一个单条入口。完整设计见 `openspec/changes/ai-tag-suggestions/`。
+
+**数据流**（`data/AiTagSuggestionRepository.requestSuggestion`）：
+
+1. `util/VideoFrameExtractor` 从本地 mp4 按时长均匀抽 12~20 张候选帧，`util/FaceFrameSelector`
+   用 **ML Kit Face Detection**（`play-services-mlkit-face-detection`，免费、设备端处理、无用量
+   计费）优选含清晰人脸的帧；候选帧全部检测不到人脸时自动降级为纯时间点采样，**不报错**。
+   最终连封面一起裁到 ≤11 张，统一缩放到最长边 ≤512px 并 JPEG 压缩。本地视频文件已丢失时
+   两者都返回空列表，只用封面继续发起请求。
+2. `llm/TagSuggestionRequestBuilder`（纯函数，不做 IO）组装标签词表（含 `tags.id`/`description`/
+   父子关系）、`VideoTagRepository.getAuthorProfileForAi` 给的作者先验（**带占比 `ratio`**，
+   不是只给一份不带权重的标签名单，见下方持久化小节）、`PreferenceProfileEntity` 最新摘要、
+   few-shot 样例（同作者优先，不足补全局最近样例）。
+3. `llm/LlmProvider` 是可插拔接口，**V1 只有一个实现** `llm/providers/GeminiProvider`——供应商
+   已经因为现实原因（Claude/OpenAI 支付渠道受阻）换过一次，保留这层薄接口，但不为假设的
+   第三个供应商预先设计任何东西。Gemini 用 `generationConfig.responseSchema` 强制结构化 JSON
+   输出（结构化 VisualFeatureProfile 分维度证据 + 候选标签 `tagId`/`confidence`/`evidenceFrames`，
+   不是一句话摘要），鉴权走 `x-goog-api-key` 请求头（不放 URL query，避免出现在日志里）。
+4. 返回结果按 `tagId` 精确匹配当前标签词表过滤，词表外的项直接丢弃（不接受模型自造标签名）；
+   与弹窗里当前已勾选集合取**并集**（不覆盖）。
+
+**反馈与学习闭环**：用户保存后，`ManageVideoViewModel.applyTagsToVideo` 对比"AI 建议集合"与
+"最终确认集合"，按标签逐行分类写入 `video_tag_feedback`（`ACCEPTED`/`REJECTED`/`MISSED`，
+见 `AiTagFeedbackKind`），随后触发 `TagPreferenceDao.recomputeAll()` 重算按标签的建议/接受/
+拒绝/漏判统计。累计新反馈达到阈值（当前 20）时额外调用 `GeminiProvider.summarizePreference`
+生成一版新的个人偏好摘要（`PreferenceProfileEntity`，只保留最新一条）。**不做模型微调/训练**，
+"越用越准"完全靠这套统计 + few-shot 样例实现。
+
+**两个真机验证才暴露的坑，别再踩**：
+
+- **`downloaded_videos.coverPath`/`filePath` 是相对 `Environment.getExternalStorageDirectory()`
+  的路径，不是绝对路径**（`ManageGridAdapter`/`VideoPlayerActivity`/`ImageViewerActivity` 等
+  既有读取点都是 `File(Environment.getExternalStorageDirectory(), path)`）。`TagEditDialogViewModel`
+  读取封面/视频文件时必须走同一套解析，直接 `File(path)` 会因为路径不存在而静默失败，
+  表现为"封面明明存在却提示不存在"。
+- **Compose 弹窗的 `show()` 要用对 FragmentManager**：宿主是 Fragment（如 `SettingsFragment`）
+  就必须用 `host.childFragmentManager`，宿主是 Activity（如 `TagManageActivity`）才用
+  `activity.supportFragmentManager`——两者不是同一个 FragmentManager，弹窗结果发到了错误的
+  那个，宿主的 `setFragmentResultListener` 永远收不到回调，且不会有任何报错，只会表现成
+  "保存了但什么都没发生"。新增 Compose 弹窗时对照宿主类型选对方法，不要照抄别的弹窗的写法。
+
+**其他约束**：
+
+- API Key**明文存储**在 `AppSettings`（`getGeminiApiKey`/`setGeminiApiKey`），用户决策，不引入
+  `androidx.security:security-crypto`；日志里不能打印这个值，标准同 Cookie/msToken。
+- `tags` 表新增的 `id`（稳定数值标识，非主键）/`description`（人工判断标准）见下方持久化小节；
+  设置页「补齐标签 ID」是给历史数据用的一次性维护按钮，幂等，全量升级后可以考虑移除。
+- 标签管理页（`TagManageActivity`）新增「编辑描述」入口（第四个图标，`TagDescriptionDialogFragment`，
+  Compose），描述文本随标签词表一并发给 AI，帮模型理解判断标准；这是标签名册本身的元数据编辑，
+  **不计入** `tagEditCount`。
+
 ### 持久化（Room）
 
 **数据库结构的权威文档是 `.cursor/rules/db-schema.md`，改 `data/db/` 之前先读它。** 要点：
 
-- `AppDatabase` 当前 **version = 16**（v16 新建 `author_tag_frequency` 缓存表；v15 新增 `hasLivePhoto`；v14 新增 `mediaWidth` / `mediaHeight`）。四张表：`downloaded_videos`、`video_tags`、`tags`、`author_tag_frequency`。
-- 所有迁移 `MIGRATION_1_2 .. MIGRATION_15_16` 都在 `AppDatabase` 里显式列出。builder 上虽然还挂着 `fallbackToDestructiveMigration()` 作兜底，但**不要**依赖它来"对付过去"——漏写迁移 = 用户数据被清空。新增字段时：写下一版 `MIGRATION_x_y` → `version` 递增 → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。
+- `AppDatabase` 当前 **version = 19**（v19 新建 `ai-tag-suggestions` 的 5 张 AI 学习资产表；v18 新增 `tags.id`/`tags.description`；v17 新增 `tags.parentTagName`；v16 新建 `author_tag_frequency` 缓存表；v15 新增 `hasLivePhoto`；v14 新增 `mediaWidth` / `mediaHeight`）。九张表：`downloaded_videos`、`video_tags`、`tags`、`author_tag_frequency`、`video_ai_analysis`、`video_visual_feature`、`video_tag_feedback`、`tag_preference`、`preference_profile`。
+- 所有迁移 `MIGRATION_1_2 .. MIGRATION_18_19` 都在 `AppDatabase` 里显式列出。builder 上虽然还挂着 `fallbackToDestructiveMigration()` 作兜底，但**不要**依赖它来"对付过去"——漏写迁移 = 用户数据被清空。新增字段时：写下一版 `MIGRATION_x_y` → `version` 递增 → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。**新建表**（区别于 `ALTER TABLE` 加列）：迁移 SQL 里不要写 `DEFAULT` 子句，除非对应 Entity 字段有 `@ColumnInfo(defaultValue = ...)`——两边对不上会在 Room 运行时 schema 校验时报错，`video_ai_analysis` 等 5 张新表的迁移已经踩过这条、按"新建表不写 DEFAULT"的规则改对，新增表照抄这个模式。
 - `hasLivePhoto`（v15）标记「实况图（动图）图集」（图集里至少一张带 mp4），下载时算出（`imageVideoUrls` 有非空项）写入，供下载页 / 管理页列表显示动图角标（左上角小播放图标，透明背景，与「已下载」/「已导出」徽标并排在同一水平容器里，谁 gone 谁不占位）。**下载页不读它**（内存里 `VideoItemUiModel.hasLivePhoto` 现算），只有管理页读。旧记录默认 false，不做历史回填。
 - `watched`（是否已看过）只由**管理页进入视频播放页**置位：`ManageVideoViewModel.openVideoPlayer` 把 `awemeIds` 随 `createListFileIntent` 传给播放页，播放页每加载一条就写库（含上下滑动切到的）。列表侧「未看过」标记的刷新分两条路：点开那条就地标掉，滑动看过的靠 `ManageVideoFragment.onResume` → `refreshWatchedFlags()` 回查——**别把其中一条删掉当冗余**，也别指望 ViewModel 的 `init` 或 StateFlow 自动收集能替代 `onResume` 那条（ViewModel 不随 `onResume` 重建）。
 - `mediaWidth` / `mediaHeight`（v14）存媒体的**呈现宽高**（已做旋转 / EXIF 修正），`0` = 未知。只服务于局域网导出的横屏/竖屏分包，方向由 `MediaOrientation.of` 现算、不落库。图集也会写（探首图），当前不用，为后续留数据。详见上方「导出管道」。
@@ -516,7 +581,9 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 - 打标签有**两组入口**，别混用：程序自动用 `VideoTagRepository.setTags` / `addTags` / `ensureCollectFolderTagLinked`（只写 `video_tags`）；**UI 上的用户编辑一律走 `setTagsAsUserEdit` / `addTagsAsUserEdit`**，它们额外给 `downloaded_videos.tagEditCount` 累加（一次编辑算一次，集合没变化不计）。新增标签编辑入口时用错会让「改过几次」的统计漏计或虚增。
 - 多选后「设置标签」弹窗还有个「仅次数 +1」（`bumpTagEditCountManually`）：只累加计数不动标签，用来补 v12 之前没记录的历史数据。它是无条件 `+1`、没有幂等标记，靠二次确认兜底。
 - **批量打标签弹窗自动预勾选**（`author_tag_frequency` 缓存表，v16）：`BatchTagDialogFragment` 打开时按选中记录涉及的各作者，从缓存表查"该作者出现次数达到阈值的标签"自动预勾选，减少手动选择。数据来源与刷新时机：`VideoTagRepository.recomputeAuthorTagFrequency()` 全量重算（`DELETE` 全表再一条 `INSERT...SELECT` 聚合写入）有**两个触发点**——设置页「重新分析标签数据」按钮手动触发，以及 `DownloadService.processJob` 每次批量下载写库成功后自动触发一次（`recordedIds` 非空才跑，目的是让接下来给新下载视频打标签时缓存已是最新，不用用户先手动点一次）。**仍然不是随每次打标签操作实时增量更新**——改一条视频的标签不会立刻反映到缓存，要等下一次下载或手动分析。两个触发点都会顺带更新 `AppSettings.setTagFrequencyLastAnalyzedAtMillis`，设置页「上次分析」摘要对下载触发的重算同样可见。高频阈值（`AppSettings.getHighFrequencyTagThreshold`，默认 2、范围 1-5，设置页可调）**只在读取时过滤 `count`**，改阈值不需要重新分析。跨作者多选时取**各作者高频标签的并集**（`ManageVideoViewModel.resolveHighFrequencyPreCheckedTags`），即使因此预勾出与部分选中视频无关的标签也接受这个取舍。空 `videoAuthorSecUserId`（老记录）不参与统计、也不参与预勾选。图片 Tab 不支持标签编辑，不涉及这条链路。同一份缓存表与阈值设置还服务于管理页「按作者筛选后展示高频标签」的快捷筛选块，见「管理页的筛选栈」一节。
-- **标签父子/包含关系**（`tags.parentTagName`，v17）：表达"细分标签属于某个大类标签"（如「甜妹」的上级是「颜值」），构成森林（每个标签至多一个上级）。**只是勾选界面的默认值来源与 AI 建议的上下文，绝不是写入约束**——`VideoTagRepository` 的所有打标签方法（`addTag`/`addTags`/`setTags` 及其 UserEdit 变体）完全不读这个字段，写入的标签集合永远与调用方给出的一致。这是刻意否决过的设计：最初想在写入时强制补全祖先标签，但"符合子标签、不符合父标签"的视频真实存在（比如内容符合某个细分特征但不适合归进对应大类），强制注入会让这种正确组合打不出来。落地形态是**可覆盖的默认值**：`TagCheckGrid` 的 `onToggle`——选中一个有上级的标签时顺手把上级也勾上（省一次点击），但取消动作永远只影响被点的那一个标签，不做任何联动/阻拦，用户能随时独立取消父标签且不影响子标签（`TagEditDialogFragment`/`BatchTagDialogFragment` 各自的 `onToggle` 里实现，逻辑一致）。层级关系的读写在 `VideoTagRepository`：`getParentMap`/`getAncestors`/`getDescendants`/`setParentTag`（内置环检测，不能把 A 设成自己后代的上级）/`clearParentTag`；`renameTag`/`deleteTag` 会同步维护子标签的上级引用（重命名同步改名字，删除清空回到顶层，不级联删除子标签本身）。标签管理页（`TagManageActivity`）在原有编辑/删除图标基础上新增"设置上级"入口（`AlertDialog.setSingleChoiceItems`，候选排除自身与其全部后代），标签名下方有上级时展示副标题；**不做可视化树形 UI**（用户认可的后续优化方向，这版先用选择器验证）。`ai-tag-suggestions`（若已实现）的 prompt 组装可选地引用这份层级信息帮模型选更精准的细分标签，同样不改变"不强制"这条原则。
+- **标签父子/包含关系**（`tags.parentTagName`，v17）：表达"细分标签属于某个大类标签"（如「甜妹」的上级是「颜值」），构成森林（每个标签至多一个上级）。**只是勾选界面的默认值来源与 AI 建议的上下文，绝不是写入约束**——`VideoTagRepository` 的所有打标签方法（`addTag`/`addTags`/`setTags` 及其 UserEdit 变体）完全不读这个字段，写入的标签集合永远与调用方给出的一致。这是刻意否决过的设计：最初想在写入时强制补全祖先标签，但"符合子标签、不符合父标签"的视频真实存在（比如内容符合某个细分特征但不适合归进对应大类），强制注入会让这种正确组合打不出来。落地形态是**可覆盖的默认值**：`TagCheckGrid` 的 `onToggle`——选中一个有上级的标签时顺手把上级也勾上（省一次点击），但取消动作永远只影响被点的那一个标签，不做任何联动/阻拦，用户能随时独立取消父标签且不影响子标签（`TagEditDialogFragment`/`BatchTagDialogFragment` 各自的 `onToggle` 里实现，逻辑一致）。层级关系的读写在 `VideoTagRepository`：`getParentMap`/`getAncestors`/`getDescendants`/`setParentTag`（内置环检测，不能把 A 设成自己后代的上级）/`clearParentTag`；`renameTag`/`deleteTag` 会同步维护子标签的上级引用（重命名同步改名字，删除清空回到顶层，不级联删除子标签本身）。标签管理页（`TagManageActivity`）在原有编辑/删除图标基础上新增"设置上级"入口（`AlertDialog.setSingleChoiceItems`，候选排除自身与其全部后代），标签名下方有上级时展示副标题；**不做可视化树形 UI**（用户认可的后续优化方向，这版先用选择器验证）。`ai-tag-suggestions` 的 prompt 组装（`llm/TagSuggestionRequestBuilder`，`includeParentHierarchy` 参数）可选地引用这份层级信息帮模型选更精准的细分标签，同样不改变"不强制"这条原则。
+- **`tags.id` / `tags.description`（v18）**：`id` 是非主键的稳定数值标识（`tagName` 改名不受影响），`description` 是人工填写的判断标准。两者都是为 `ai-tag-suggestions` 引入——AI 反馈/统计类新表按 `tagId` 关联标签，避免改名导致历史关联错配；`description` 随标签词表发给 AI 辅助理解语义。详见上方「AI 建议标签」一节。
+- **AI 学习资产五张新表**（`video_ai_analysis`/`video_visual_feature`/`video_tag_feedback`/`tag_preference`/`preference_profile`，v19）：结构化视觉证据、逐标签反馈、按标签准确率统计、个人偏好摘要，全部纯增量、与既有表无 Room 外键强约束。详见上方「AI 建议标签」一节。
 - `DefaultTags.list` 是预设标签的唯一来源，也是 v6→v7 / v7→v8 迁移插入的内容；改 `DefaultTags.kt` 的同时检查迁移逻辑是否还一致。
 - `downloadType` 合法值见 `DownloadSourceType`；`mediaType` 见 `DownloadMediaType`（`"video"` / `"image"`）。
 - 管理页排序走 `getPageByMediaTypeSorted(...)`（`@RawQuery` + `SimpleSQLiteQuery`），排序列名来自固定枚举 `ManageSortOrder`（`createdAtMillis`/`createTime`/`diggCount`），**非用户输入，不接受任意字符串**，别改成拼用户串。筛选/全选等非分页路径在内存里按同一 `ManageSortOrder` 重排。统计面板用 `getAuthorCountsAll()` 与 `VideoTagDao.getTagsWithCount()` 聚合，占用空间由 `dirSize` 遍历 `Download/bDouyin/{videos,images,covers}` 求和。

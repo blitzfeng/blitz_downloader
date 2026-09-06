@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.config.AppSettings
+import com.blitz.downloader.data.AiTagSuggestionRepository
 import com.blitz.downloader.data.DownloadedVideoRepository
 import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.data.db.DownloadedVideoEntity
@@ -52,6 +53,10 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
 
     protected val tagRepo: VideoTagRepository
         get() = (getApplication<Application>() as BlitzApp).videoTagRepository
+
+    /** 仅 [ManageVideoViewModel] 用于「AI 建议」结果的反馈写入，图片 Tab 不涉及这条链路。 */
+    protected val aiTagSuggestionRepo: AiTagSuggestionRepository
+        get() = (getApplication<Application>() as BlitzApp).aiTagSuggestionRepository
 
     private val _uiState = MutableStateFlow(ManageTabUiState())
     val uiState: StateFlow<ManageTabUiState> = _uiState.asStateFlow()
@@ -529,12 +534,22 @@ sealed interface ManageTabEvent {
     data object ClearInvalidNone : ManageTabEvent
     data object NoTagsAvailable : ManageTabEvent
 
-    /** 单条记录的标签编辑弹窗数据就绪。[parentMap] 是标签层级关系，见 `VideoTagRepository.getParentMap`。 */
+    /**
+     * 单条记录的标签编辑弹窗数据就绪。[parentMap] 是标签层级关系，见 `VideoTagRepository.getParentMap`。
+     *
+     * [secUserId]/[desc]/[coverPath]/[filePath] 是弹窗内「AI 建议」（`ai-tag-suggestions`）需要的
+     * 上下文，功能关闭时用不到，但取数已经在手上（同一条 [com.blitz.downloader.data.db.DownloadedVideoEntity]），
+     * 一起传下去比等用户点了「AI 建议」再回查一次划算。
+     */
     data class ShowTagEditor(
         val awemeId: String,
         val allTags: List<String>,
         val currentTags: Set<String>,
         val parentMap: Map<String, String> = emptyMap(),
+        val secUserId: String = "",
+        val desc: String = "",
+        val coverPath: String = "",
+        val filePath: String = "",
     ) : ManageTabEvent
 
     /**

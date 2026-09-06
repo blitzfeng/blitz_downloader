@@ -49,6 +49,18 @@
             android:visibility="gone"
             tools:text="上级：颜值" />
 
+        <TextView
+            android:id="@+id/tvTagDescription"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:textSize="12sp"
+            android:textColor="@color/text_color_secondary"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:visibility="gone"
+            tools:text="笑容甜美、气质清纯为主，不强调性感元素" />
+
     </LinearLayout>
 
     <!-- 编辑按钮 -->
@@ -82,6 +94,17 @@
         android:padding="10dp"
         android:scaleType="centerInside"
         android:src="@drawable/ic_tag_parent"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@null" />
+
+    <!-- 编辑描述按钮（辅助 ai-tag-suggestions 的 AI 建议理解标签判断标准） -->
+    <ImageView
+        android:id="@+id/btnEditTagDescription"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:padding="10dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_tag_description"
         android:background="?android:attr/selectableItemBackgroundBorderless"
         android:contentDescription="@null" />
 

@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v17**
+> **当前版本：v19**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -15,6 +15,11 @@
 | `video_tags` | `VideoTagEntity` | 视频-标签关联（多对多） |
 | `tags` | `TagEntity` | 独立标签名册（支持先建标签再打给视频） |
 | `author_tag_frequency` | `AuthorTagFrequencyEntity` | 作者-标签出现次数缓存，服务批量打标签弹窗自动预勾选 |
+| `video_ai_analysis` | `VideoAiAnalysisEntity` | 一次 AI 建议分析的元数据（`ai-tag-suggestions`，v19） |
+| `video_visual_feature` | `VideoVisualFeatureEntity` | 结构化视觉证据 VisualFeatureProfile（v19） |
+| `video_tag_feedback` | `VideoTagFeedbackEntity` | 按标签逐行的 AI 建议反馈（v19） |
+| `tag_preference` | `TagPreferenceEntity` | 按标签物化的建议准确率统计（v19） |
+| `preference_profile` | `PreferenceProfileEntity` | 压缩后的个人偏好自然语言摘要（v19） |
 
 ---
 
@@ -39,6 +44,8 @@
 | v15 | `downloaded_videos` 新增 `hasLivePhoto`（是否实况图/动图图集，用于下载页/管理页列表的动图角标） |
 | v16 | 新建 `author_tag_frequency` 缓存表（作者-标签出现次数，服务批量打标签弹窗自动预勾选） |
 | v17 | `tags` 新增 `parentTagName`（上级标签名，空字符串=无上级；勾选界面默认值/AI 上下文用，非写入约束） |
+| v18 | `tags` 新增 `id`（稳定数值标识，默认 0=未分配，非主键）与 `description`（人工标签判断标准，默认空字符串），服务 `ai-tag-suggestions` |
+| v19 | 新建 5 张表：`video_ai_analysis`、`video_visual_feature`、`video_tag_feedback`、`tag_preference`、`preference_profile`（`ai-tag-suggestions` 的"AI 学习资产"，见下方表五） |
 
 > **注意**：v4 的 `likeType` 与 `downloadType` 语义重叠，v5 通过重建表删除，**后续不要再加同类冗余字段**。
 
@@ -271,6 +278,8 @@ SELECT tagName, COUNT(*) AS count FROM video_tags GROUP BY tagName ORDER BY coun
 | `tagName` | TEXT PK | 标签名，主键唯一 |
 | `sortOrder` | INTEGER | 展示排列顺序，数值越小越靠前；用户在标签管理页拖拽后持久化（v8 新增） |
 | `parentTagName` | TEXT | 上级标签名，空字符串 = 无上级（顶层）；构成森林，每个标签至多一个上级（v17 新增）。**只是勾选界面的默认值来源与 AI 建议的上下文，不是写入约束**——打了子标签不强制要求同时有父标签，反之亦然，任何标签写入路径都不会因为这个字段自动补充别的标签 |
+| `id` | INTEGER | 稳定数值标识，`tagName` 改名不受影响，**非主键**（v18 新增）。`0` = 尚未分配——迁移前的历史标签与早期版本靠原始 SQL 预插入的默认标签迁移后都是 `0`，新建标签由 `VideoTagRepository.createTag` 自动分配（`MAX(id)+1`），历史数据靠设置页「补齐标签 ID」一次性回填（`VideoTagRepository.backfillTagIds`，幂等、只处理 `id=0` 的行）。唯一用途是给 `ai-tag-suggestions` 的反馈记录/准确率统计等新表做外键，避免改名导致历史关联错配 |
+| `description` | TEXT | 人工填写的标签判断标准，空字符串 = 未填写（v18 新增）。供 `ai-tag-suggestions` 发起 AI 建议请求时随标签词表一并提供，帮模型理解标签语义、避免按通用语义自行发挥 |
 
 ### 预设默认标签（v7 migration 预插入）
 
@@ -319,7 +328,66 @@ SELECT COUNT(*) FROM tags WHERE tagName = '美腿'
 空 `secUserId`（老记录无稳定作者 ID）在重算聚合的 `WHERE v.videoAuthorSecUserId != ''` 里被
 天然排除，不会被错误地聚合成"同一个作者"。
 
-**操作入口：** `VideoTagRepository`（`recomputeAuthorTagFrequency`、`getHighFrequencyTagsForAuthor`）
+**操作入口：** `VideoTagRepository`（`recomputeAuthorTagFrequency`、`getHighFrequencyTagsForAuthor`、
+`getAuthorProfileForAi`——后者附带占比 `ratio`，见下方「AI 学习资产」的 `TagPreference` 之后的说明）
+
+---
+
+## 表五：AI 学习资产（`ai-tag-suggestions`，v19 新建）
+
+### 设计思路
+
+从"只记录视频位置和标签"转向承载 AI 视觉理解结果与个人偏好学习资产。5 张表全部是纯增量新建，
+**与任何既有表无 Room 外键强约束**（应用层保证引用一致性，例如标签被删除后历史分析记录仍应
+保留用于回溯）。默认关闭、用户不开启 AI 建议标签功能则这几张表始终为空，不产生任何开销。
+
+| 表名 | 对应 Entity | 用途 |
+|------|-------------|------|
+| `video_ai_analysis` | `VideoAiAnalysisEntity` | 一次 AI 建议分析的元数据（供应商/模型/profile 版本/建议标签 id 列表/是否成功），是反馈写入的唯一数据源 |
+| `video_visual_feature` | `VideoVisualFeatureEntity` | 结构化视觉证据（VisualFeatureProfile，JSON 字符串），关联 `video_ai_analysis.id` |
+| `video_tag_feedback` | `VideoTagFeedbackEntity` | 按标签逐行记录反馈（接受/拒绝/漏判），支撑逐标签准确率统计 |
+| `tag_preference` | `TagPreferenceEntity` | 从 `video_tag_feedback` 聚合的按标签统计缓存（建议/接受/拒绝/漏判次数、接受率），模式对齐 `author_tag_frequency`（`DELETE`+`INSERT...SELECT` 重算） |
+| `preference_profile` | `PreferenceProfileEntity` | 压缩后的自然语言个人偏好摘要，只保留最新一条被读取，累计新反馈达到阈值才重新生成 |
+
+### `video_ai_analysis` 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | INTEGER PK AUTOINCREMENT | 自增主键，其他表以此关联 |
+| `awemeId` | TEXT | 对应视频 |
+| `provider` | TEXT | LLM 供应商标识，如 `"gemini"` |
+| `model` | TEXT | 具体模型版本号 |
+| `profileVersion` | INTEGER | VisualFeatureProfile 的 schema 版本 |
+| `suggestedTagIds` | TEXT | 本次返回的候选标签 id，`\|` 分隔 |
+| `succeeded` | INTEGER | 0/1，本次分析是否成功 |
+| `createdAtMillis` | INTEGER | 发起时间 |
+
+### `video_tag_feedback` 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | INTEGER PK AUTOINCREMENT | 自增主键 |
+| `awemeId` | TEXT | 对应视频（建索引） |
+| `analysisId` | INTEGER | 关联 `video_ai_analysis.id` |
+| `tagId` | INTEGER | 关联 `tags.id`（建索引） |
+| `kind` | TEXT | `"ACCEPTED"` / `"REJECTED"` / `"MISSED"`，见 `AiTagFeedbackKind` |
+| `confidence` | REAL，可空 | 模型返回的置信度，`MISSED` 场景为 `NULL` |
+| `createdAtMillis` | INTEGER | 写入时间 |
+
+### `tag_preference` 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `tagId` | INTEGER PK | 关联 `tags.id`，非自增 |
+| `suggestedCount` | INTEGER | `ACCEPTED`+`REJECTED` 计数 |
+| `acceptedCount` / `rejectedCount` / `missedCount` | INTEGER | 三类计数 |
+| `acceptanceRate` | REAL | `acceptedCount / suggestedCount`，除零时为 0 |
+| `recommendedThreshold` | REAL | V2 预留，V1 固定写 0.5 不使用 |
+| `updatedAtMillis` | INTEGER | 上次重算时间 |
+
+**操作入口：** `data/AiTagSuggestionRepository`（尚未实现，见 openspec `ai-tag-suggestions`）；
+`AuthorTagFrequencyDao.getHighFrequencyTagsWithRatio` 额外提供作者-标签占比（`ratio = count / 该作者已下载视频总数`），
+供组装 AuthorProfile 上下文使用，与本节 5 张新表配合但物理上仍是 `author_tag_frequency` 的读取方法。
 
 ---
 
@@ -359,4 +427,4 @@ tags(tagName)          video_tags(awemeId, tagName)
 - **管理页展示**：`userRelation` 按 `|` 拆分渲染 chip；`videoAuthorSecUserId` 用于按作者分组/过滤。
 - **下载写入时**：调用 `DownloadedVideoRepository.recordSuccessfulDownload()`，`like` 场景传 `buildUserRelationFromLike(aweme.collectStat)`，`collects` 场景传 `buildUserRelationFromCollection(aweme.userDigged, folderName)`。
 - **标签功能**：通过 `VideoTagRepository` 操作，视频删除时标签自动级联删除，无需手动清理。
-- **新增数据库字段**：当前版本为 **v15**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_15_16` 并将 version 改为 16。
+- **新增数据库字段**：当前版本为 **v19**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_19_20` 并将 version 改为 20。
