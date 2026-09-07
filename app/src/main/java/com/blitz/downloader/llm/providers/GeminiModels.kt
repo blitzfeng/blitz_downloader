@@ -10,6 +10,22 @@ import com.google.gson.annotations.SerializedName
 data class GeminiGenerateContentRequest(
     val contents: List<GeminiContent>,
     val generationConfig: GeminiGenerationConfig? = null,
+    /** 全部类别放开为 `BLOCK_NONE`，避免正常的标签/画面分析内容被安全过滤器误拦截。 */
+    val safetySettings: List<GeminiSafetySetting>? = GEMINI_SAFETY_SETTINGS_BLOCK_NONE,
+)
+
+/** `safetySettings` 单条条目，`category`/`threshold` 均为 Gemini 定义的大写枚举字符串。 */
+data class GeminiSafetySetting(
+    val category: String,
+    val threshold: String,
+)
+
+val GEMINI_SAFETY_SETTINGS_BLOCK_NONE: List<GeminiSafetySetting> = listOf(
+    GeminiSafetySetting("HARM_CATEGORY_HARASSMENT", "BLOCK_NONE"),
+    GeminiSafetySetting("HARM_CATEGORY_HATE_SPEECH", "BLOCK_NONE"),
+    GeminiSafetySetting("HARM_CATEGORY_SEXUALLY_EXPLICIT", "BLOCK_NONE"),
+    GeminiSafetySetting("HARM_CATEGORY_DANGEROUS_CONTENT", "BLOCK_NONE"),
+    GeminiSafetySetting("HARM_CATEGORY_CIVIC_INTEGRITY", "BLOCK_NONE"),
 )
 
 data class GeminiContent(
