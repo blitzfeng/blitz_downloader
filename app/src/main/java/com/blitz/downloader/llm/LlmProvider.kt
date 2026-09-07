@@ -18,4 +18,11 @@ interface LlmProvider {
 
     /** 生成一版个人偏好摘要（纯文本输入输出，不带图片）。 */
     suspend fun summarizePreference(request: PreferenceSummaryRequest): Result<String>
+
+    /**
+     * 轻量连通性测试：只验证「API Key 已配置 + 网络可达 + 模型 id 有效」，不带图片、不落库、
+     * 不计入建议/反馈闭环。成功时返回一句人可读的确认信息（含模型名），失败时 [Result.failure]
+     * 携带可展示给用户的错误信息（HTTP 状态码/异常消息）。
+     */
+    suspend fun testConnection(): Result<String>
 }

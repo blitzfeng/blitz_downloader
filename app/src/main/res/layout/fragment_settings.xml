@@ -481,6 +481,43 @@
                             android:textSize="13sp"
                             tools:text="@string/settings_gemini_api_key_not_set" />
                     </LinearLayout>
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginStart="16dp"
+                        android:layout_marginEnd="16dp"
+                        android:background="@color/color_divider" />
+
+                    <!-- 排查用：只验证 Key/网络/模型可用，不发起真正的建议请求，结果走 Toast -->
+                    <LinearLayout
+                        android:id="@+id/itemGeminiTestConnection"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:orientation="vertical"
+                        android:paddingStart="16dp"
+                        android:paddingEnd="16dp"
+                        android:paddingTop="14dp"
+                        android:paddingBottom="14dp">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_gemini_test_connection"
+                            android:textColor="@color/text_color_primary"
+                            android:textSize="16sp" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/settings_gemini_test_connection_summary"
+                            android:textColor="@color/text_color_secondary"
+                            android:textSize="13sp" />
+                    </LinearLayout>
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 

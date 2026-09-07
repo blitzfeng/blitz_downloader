@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response as OkResponse
+import okio.Buffer
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
@@ -54,6 +55,27 @@ class GeminiProvider(private val context: Context) : LlmProvider {
 
     private val service = retrofit.create(GeminiApiService::class.java)
 
+    /**
+     * [testConnection] 专用的短超时 client：正式建议请求要传多图 + 等结构化输出，超时故意放宽到
+     * 60s；连接测试只是一次纯文本探测，用同一套超时会让用户在网络差时空转到 90s 才看到失败。
+     * 复用同一个 [okHttpClient] 的连接池没有意义（不同 Retrofit client 各自独立连接池），
+     * 索性单独建一个更"没耐心"的 client，让排查问题时更快拿到结果。
+     */
+    private val testService: GeminiApiService by lazy {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
+            .addInterceptor(LoggingInterceptor())
+            .build()
+        Retrofit.Builder()
+            .baseUrl("https://generativelanguage.googleapis.com/")
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(GeminiApiService::class.java)
+    }
+
     override suspend fun generateTagSuggestion(request: TagSuggestionRequest): Result<TagSuggestionResponse> {
         val apiKey = AppSettings.getGeminiApiKey(context)
         if (apiKey.isBlank()) return Result.failure(IllegalStateException("Gemini API Key 未配置"))
@@ -61,7 +83,8 @@ class GeminiProvider(private val context: Context) : LlmProvider {
         val parts = buildList {
             add(GeminiPart(text = buildTagSuggestionPrompt(request)))
             add(GeminiPart(text = "图片 0（封面）"))
-            add(toGeminiPart(request.coverImage))
+            // 封面是唯一保证会被看到的图，也是"第一印象"，恒定用 MEDIUM，不参与按人脸降档
+            add(toGeminiPart(request.coverImage, resolution = MEDIA_RESOLUTION_MEDIUM))
             request.keyFrames.forEachIndexed { i, frame ->
                 val faceNote = if (frame.hasFace) {
                     "（本地初筛检测到人脸）"
@@ -69,7 +92,10 @@ class GeminiProvider(private val context: Context) : LlmProvider {
                     "（本地初筛未检测到人脸，不代表画面中一定没有人物，仅供参考，请以你自己观察到的为准）"
                 }
                 add(GeminiPart(text = "图片 ${i + 1} $faceNote"))
-                add(toGeminiPart(frame))
+                // 含人脸的帧留给 face/expression 判断，需要更清晰的细节，用 MEDIUM；
+                // 不含人脸的帧只用来佐证 bodyAndStyling/clothing/action，细节要求更低，降到 LOW 省 token。
+                val resolution = if (frame.hasFace) MEDIA_RESOLUTION_MEDIUM else MEDIA_RESOLUTION_LOW
+                add(toGeminiPart(frame, resolution = resolution))
             }
         }
         val body = GeminiGenerateContentRequest(
@@ -77,6 +103,7 @@ class GeminiProvider(private val context: Context) : LlmProvider {
             generationConfig = GeminiGenerationConfig(
                 responseMimeType = "application/json",
                 responseSchema = TAG_SUGGESTION_SCHEMA,
+                thinkingConfig = GeminiThinkingConfig(thinkingLevel = THINKING_LEVEL),
             ),
         )
         return runCatching {
@@ -96,12 +123,30 @@ class GeminiProvider(private val context: Context) : LlmProvider {
             contents = listOf(
                 GeminiContent(role = "user", parts = listOf(GeminiPart(text = buildPreferenceSummaryPrompt(request)))),
             ),
-            // 纯文本摘要不需要结构化输出，直接吃自然语言回复
-            generationConfig = null,
+            // 纯文本摘要不需要结构化输出（responseMimeType/responseSchema 留空），仍带 thinkingConfig
+            generationConfig = GeminiGenerationConfig(thinkingConfig = GeminiThinkingConfig(thinkingLevel = THINKING_LEVEL)),
         )
         return runCatching {
             val response = service.generateContent(MODEL, apiKey, body)
             extractText(response).trim()
+        }
+    }
+
+    override suspend fun testConnection(): Result<String> {
+        val apiKey = AppSettings.getGeminiApiKey(context)
+        if (apiKey.isBlank()) return Result.failure(IllegalStateException("Gemini API Key 未配置"))
+
+        val body = GeminiGenerateContentRequest(
+            contents = listOf(
+                GeminiContent(role = "user", parts = listOf(GeminiPart(text = "请只回复\"OK\"三个字符，用于测试连接。"))),
+            ),
+            // 不需要结构化输出，但带上 thinkingConfig 让连接测试也验证这个字段没被网关/模型拒绝
+            generationConfig = GeminiGenerationConfig(thinkingConfig = GeminiThinkingConfig(thinkingLevel = THINKING_LEVEL)),
+        )
+        return runCatching {
+            val response = testService.generateContent(MODEL, apiKey, body)
+            extractText(response)
+            "连接成功（模型 $MODEL）"
         }
     }
 
@@ -115,11 +160,12 @@ class GeminiProvider(private val context: Context) : LlmProvider {
             ?: error("Gemini 返回结果为空")
     }
 
-    private fun toGeminiPart(image: ImagePart): GeminiPart = GeminiPart(
+    private fun toGeminiPart(image: ImagePart, resolution: String): GeminiPart = GeminiPart(
         inlineData = GeminiInlineData(
             mimeType = "image/jpeg",
             data = Base64.encodeToString(image.jpegBytes, Base64.NO_WRAP),
         ),
+        mediaResolution = GeminiMediaResolutionConfig(level = resolution),
     )
 
     private fun buildTagSuggestionPrompt(request: TagSuggestionRequest): String = buildString {
@@ -187,14 +233,80 @@ class GeminiProvider(private val context: Context) : LlmProvider {
     private fun GeminiVisualDimensionPayload.toDomain(): VisualDimension =
         VisualDimension(visibility, observableTraits, evidenceFrames)
 
-    /** 只打印方法/URL/状态码，不打印请求体（含 base64 图片与 Key）与响应体。 */
+    /**
+     * 完整打印请求体与响应体，用于排查「HTTP 200 但结构化输出解析失败」这类问题。
+     * **Key 不在这里泄露**：鉴权走 `x-goog-api-key` 请求头（见类头 KDoc），这里从不打印请求头，
+     * 只打印 body。**图片 base64 用占位符代替**（[redactImageData]）——那串编码人看不懂，
+     * 还占大部分篇幅，之前"完整"打印反而把真正有用的 prompt/JSON 结构淹没在几百 KB 乱码里；
+     * 占位符带上原始字节数，方便和 `resolution` 调整前后对比传输体积。除图片外的一切
+     * （prompt 文本、tagVocabulary、`generationConfig`、响应 JSON 含 `usageMetadata`）仍然完整打印，
+     * 不是打了折扣的"完整"。剩余内容仍可能有几十 KB（多个标签/关键帧描述），Logcat 单行 ~4000 字符
+     * 会截断，所以按 [CHUNK_SIZE] 分行输出，量级问题请去 `adb logcat` 里搜 TAG。
+     */
     private class LoggingInterceptor : Interceptor {
         override fun intercept(chain: Interceptor.Chain): OkResponse {
             val request = chain.request()
             Log.d(TAG, "→ ${request.method} ${request.url.encodedPath}")
+            val requestBody = request.body?.let { body ->
+                val buffer = Buffer()
+                body.writeTo(buffer)
+                buffer.readUtf8()
+            }
+            logChunked("→ body", redactImageData(requestBody ?: "(empty)"))
+
             val response = chain.proceed(request)
             Log.d(TAG, "← ${response.code} ${request.url.encodedPath}")
+            // peekBody 只读一份拷贝，不消费原始响应体，Retrofit 之后仍能正常解析
+            val responseBody = response.peekBody(Long.MAX_VALUE).string()
+            logChunked("← body", redactImageData(responseBody))
             return response
+        }
+
+        /**
+         * 把 `"data":"<base64>"` 里的 base64 换成 `[图片内容，约 NKB]`。
+         *
+         * **改成手写扫描，不再用正则**：最初用一个大正则一次性匹配整段 base64，真机日志里
+         * 出现了大段 base64 漏网（原因没有确证，但单个图片的 base64 常有几万到十几万字符，
+         * 不排除是 `{200,}` 无上界贪婪匹配在超长输入上的正则引擎行为问题）。base64 字母表
+         * 本身不含 `"`，所以"找到 `"data":"` 之后，下一个 `"` 一定是闭合引号"这个结论是
+         * 严格成立的，不依赖字符集匹配、不存在潜在的正则性能坑，比之前的写法更可靠。
+         */
+        private fun redactImageData(json: String): String {
+            val marker = "\"data\":\""
+            val sb = StringBuilder(json.length)
+            var cursor = 0
+            while (true) {
+                val markerStart = json.indexOf(marker, cursor)
+                if (markerStart < 0) {
+                    sb.append(json, cursor, json.length)
+                    break
+                }
+                val valueStart = markerStart + marker.length
+                val valueEnd = json.indexOf('"', valueStart)
+                if (valueEnd < 0) {
+                    // 找不到闭合引号（理论不应发生，防御性兜底）：原样保留剩余内容，不冒险瞎替换
+                    sb.append(json, cursor, json.length)
+                    break
+                }
+                sb.append(json, cursor, valueStart)
+                sb.append("[图片内容，约 ${(valueEnd - valueStart) / 1024}KB]")
+                cursor = valueEnd
+            }
+            return sb.toString()
+        }
+
+        private fun logChunked(label: String, content: String) {
+            var index = 0
+            while (index < content.length) {
+                val end = minOf(index + CHUNK_SIZE, content.length)
+                Log.d(TAG, "$label [$index-$end): ${content.substring(index, end)}")
+                index = end
+            }
+            if (content.isEmpty()) Log.d(TAG, "$label: (empty)")
+        }
+
+        companion object {
+            private const val CHUNK_SIZE = 3000
         }
     }
 
@@ -205,7 +317,43 @@ class GeminiProvider(private val context: Context) : LlmProvider {
          * 具体模型版本号留到实现阶段按当时可用的模型直接定，不影响本类的行为契约——
          * 之后要换型号只改这一个常量。选用 flash 档位控制成本。
          */
-        private const val MODEL = "gemini-2.5-flash"
+        private const val MODEL = "gemini-3.8-flash"
+
+        /**
+         * Gemini 3.x 系列新增的 `thinkingLevel`（`LOW`/`MEDIUM`/`HIGH`，省略时后端按 `MEDIUM` 处理）。
+         * **枚举值大写**——proto3 JSON 映射惯例是"字段名 lowerCamelCase、枚举值原样
+         * SCREAMING_SNAKE_CASE"；最初实现误写成小写 `"low"`，值不匹配时后端大概率静默按未知值
+         * 处理退回默认档位（不是报错，所以之前的真机验证不会暴露这个问题）。**这个字段本身
+         * 真机验证过是被接受的**——第一次因为 `resolution` 字段名写错触发的 400 响应把请求里
+         * 所有未知字段都枚举了一遍（同一响应对 11 个不同 part 分别报错），却没有连带报
+         * `thinkingConfig`/`thinkingLevel`，说明这两个字段名是对的，不用怀疑。
+         *
+         * 三处调用（建议标签/偏好摘要/连接测试）统一取这一个值，没有按用途拆开——先用 `LOW`
+         * 压成本延迟，与"选用 flash 档位控制成本"是同一个取向；建议标签这条路径本身有
+         * `responseSchema` 强约束结构、且已经把视觉证据拆成五个维度分别要求出处，对深度推理的
+         * 依赖没有自由问答那么重。**如果真机走查发现建议质量明显下降，把这个值调到 `MEDIUM`
+         * 就够了**，不需要改别的地方。
+         */
+        private const val THINKING_LEVEL = "LOW"
+
+        /**
+         * Gemini 3.x 新增的 per-part 混合分辨率（[GeminiPart.mediaResolution]），按图片重要性分别
+         * 定档省 token（用户提供的参考单价：MEDIUM ≈560 token/图，LOW ≈280 token/图）。踩过两次坑，
+         * 都是用户拿真实请求/更新过的文档校正回来的：
+         * 1. **字段名**一度写错成 `resolution`（与 `inlineData` 同级的扁平字段），真机请求被 Gemini
+         *    判 400（`Unknown name "resolution" at 'contents[0].parts[N]': Cannot find field.`，
+         *    11 个 part 各报一次），改成 `mediaResolution` 才对。
+         * 2. **值的形状与大小写**一度写成扁平小写字符串 `"medium"`/`"low"`（依据的是过期文档），
+         *    实际是嵌套对象 `{"level": "MEDIA_RESOLUTION_MEDIUM"}`，`level` 取值大写
+         *    `SCREAMING_SNAKE_CASE`——见 [GeminiMediaResolutionConfig]。
+         *
+         * 只用 MEDIUM/LOW 这两档——没有再引入 HIGH，当前证据链（封面 + 关键帧）没有需要它的场景。
+         * **这仍然是从二手示例拼出来的，没有逐字核对官方一手 changelog**，务必在真机上点一次
+         * 「AI 建议」，对照 `GeminiProvider.LoggingInterceptor` 打的完整请求/响应日志确认这次没有
+         * 400、且响应 `usageMetadata.promptTokenCount` 相比不带这个字段时确实下降了。
+         */
+        private const val MEDIA_RESOLUTION_MEDIUM = "MEDIA_RESOLUTION_MEDIUM"
+        private const val MEDIA_RESOLUTION_LOW = "MEDIA_RESOLUTION_LOW"
 
         private val DIMENSION_SCHEMA = GeminiSchema(
             type = "OBJECT",

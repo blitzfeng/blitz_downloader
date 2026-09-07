@@ -103,6 +103,7 @@ class SettingsFragment : Fragment() {
             GeminiApiKeyDialogFragment.show(this, AppSettings.getGeminiApiKey(requireContext()))
         }
         refreshGeminiApiKeySummary()
+        binding.itemGeminiTestConnection.setOnClickListener { viewModel.testGeminiConnection() }
         childFragmentManager.setFragmentResultListener(
             GeminiApiKeyDialogFragment.REQUEST_KEY,
             viewLifecycleOwner,
@@ -153,6 +154,7 @@ class SettingsFragment : Fragment() {
                         SettingsViewModel.BusyKind.RESTORE -> R.string.manage_restore_doing
                         SettingsViewModel.BusyKind.TAG_ANALYSIS -> R.string.manage_tag_analysis_doing
                         SettingsViewModel.BusyKind.TAG_ID_BACKFILL -> R.string.settings_backfill_tag_ids_doing
+                        SettingsViewModel.BusyKind.GEMINI_TEST -> R.string.settings_gemini_test_doing
                     },
                 ),
             )
@@ -197,6 +199,10 @@ class SettingsFragment : Fragment() {
                 toast(getString(R.string.settings_backfill_tag_ids_done))
             is SettingsEvent.TagIdBackfillFailed ->
                 toast(getString(R.string.settings_backfill_tag_ids_failed, event.message))
+            is SettingsEvent.GeminiTestSucceeded ->
+                toast(event.message)
+            is SettingsEvent.GeminiTestFailed ->
+                toast(getString(R.string.settings_gemini_test_failed, event.message))
         }
     }
 

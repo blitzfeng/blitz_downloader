@@ -1,6 +1,7 @@
 package com.blitz.downloader.util
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.util.Log
 import com.blitz.downloader.llm.ImagePart
@@ -37,8 +38,15 @@ object VideoFrameExtractor {
     /** 最终上传张数上限（不含封面，封面由调用方单独提供，两者相加对齐文档"8~12 张含封面"的建议）。 */
     private const val MAX_FINAL_FRAMES = 10
 
-    /** 上传前统一缩放到的最长边，控制请求体大小与费用。 */
-    private const val MAX_DIMENSION = 512
+    /**
+     * 上传前统一缩放到的最长边。**真机验证过：这个值对 token 消耗没有影响**——
+     * `GeminiPart.mediaResolution` 的 token 成本按档位固定分配（MEDIUM≈580 token/图，与图片实际
+     * 像素尺寸无关，512→384 前后 `usageMetadata.promptTokenCount` 不变），所以别指望靠继续调小
+     * 这个值省 token，它只影响上传体积/网络耗时。**真正影响 token 总量的是张数（[MAX_FINAL_FRAMES]）
+     * 和每张图的档位比例**（`GeminiProvider.generateTagSuggestion` 里 MEDIUM/LOW 的分配逻辑）。
+     * 保留在 384 是因为缩图本身仍有省流量的价值，不是因为它省了 token。
+     */
+    private const val MAX_DIMENSION = 384
 
     private const val JPEG_QUALITY = 80
 
@@ -90,6 +98,22 @@ object VideoFrameExtractor {
             runCatching { retriever.release() }
         }
     }
+
+    /**
+     * 压缩封面图，供 AI 建议标签请求使用——实验性：封面此前是原始下载文件（接口返回的完整尺寸
+     * JPEG/WEBP）未经任何压缩直接上传，走 [BitmapFactory] 解码后复用与关键帧同一套
+     * [MAX_DIMENSION]/[JPEG_QUALITY] 参数，验证能否进一步压 token。**调用方需要在这个和
+     * "直接读原始字节"之间做取舍——本函数只提供能力，不改变调用方原有行为。**
+     * 解码失败（文件损坏/格式不支持/OOM）返回 `null`，调用方应退回读原始字节而非让整次请求失败。
+     */
+    fun compressCoverImage(file: File): ByteArray? = runCatching {
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return@runCatching null
+        val resized = resizeToMaxDimension(bitmap, MAX_DIMENSION)
+        val bytes = compressJpeg(resized)
+        if (resized !== bitmap) resized.recycle()
+        bitmap.recycle()
+        bytes
+    }.getOrNull()
 
     /** 在 `[0, total)` 范围内选 [count] 个尽量均匀分布的下标（不足 [count] 个候选时全选）。 */
     private fun evenlySpacedIndices(total: Int, count: Int): List<Int> {

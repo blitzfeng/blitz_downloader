@@ -20,6 +20,21 @@ data class GeminiContent(
 data class GeminiPart(
     val text: String? = null,
     val inlineData: GeminiInlineData? = null,
+    /**
+     * 该图片的 token 预算档位，与 `inlineData` 同级。**字段名是 `mediaResolution`，不是
+     * `resolution`**——第一次实现用错字段名（`resolution`），真机请求被 Gemini 判为 400 未知字段
+     * （`Unknown name "resolution" ... Cannot find field.`），见 `GeminiProvider.THINKING_LEVEL`
+     * companion object 里的踩坑记录。**值是嵌套对象 `{"level": "MEDIA_RESOLUTION_MEDIUM"}`，
+     * 不是扁平字符串**——中途还错误地把 `level` 值改成过小写 `"medium"`（依据的是过期文档），
+     * 已按用户核实的最新文档改回大写 `SCREAMING_SNAKE_CASE`。省略整个字段时按模型默认档位处理，
+     * 只对带 [inlineData] 的图片 part 有意义，纯文本 part 留空。
+     */
+    val mediaResolution: GeminiMediaResolutionConfig? = null,
+)
+
+/** [GeminiPart.mediaResolution] 的嵌套值，`level` 取 `MEDIA_RESOLUTION_LOW`/`_MEDIUM`/`_HIGH`。 */
+data class GeminiMediaResolutionConfig(
+    val level: String,
 )
 
 data class GeminiInlineData(
@@ -29,8 +44,18 @@ data class GeminiInlineData(
 )
 
 data class GeminiGenerationConfig(
-    val responseMimeType: String,
+    val responseMimeType: String? = null,
     val responseSchema: GeminiSchema? = null,
+    val thinkingConfig: GeminiThinkingConfig? = null,
+)
+
+/**
+ * Gemini 3.x 系列新增：用 `thinkingLevel`（`"low"`/`"medium"`/`"high"`）替代旧版 `thinking_budget`，
+ * 两者不能同时出现在同一请求里。省略整个 `thinkingConfig` 时后端按 `"medium"` 处理，
+ * 行为与本类之前（gemini-2.5-flash 时代）不设该字段完全一致——这不是破坏性变更，只是新增旋钮。
+ */
+data class GeminiThinkingConfig(
+    val thinkingLevel: String,
 )
 
 /**

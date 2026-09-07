@@ -589,6 +589,18 @@ class VideoPlayerActivity : AppCompatActivity() {
             .putExtra(EXTRA_TITLE, title)
             .putExtra(EXTRA_SUBTITLE, subtitle)
 
+        /**
+         * 单视频本地文件预览（与 [createNetworkIntent] 对称）。不传 [EXTRA_LIST_AWEME_IDS]，
+         * 所以不会触发「已看过」标记——`watched` 的权威入口是 `ManageVideoViewModel.openVideoPlayer`
+         * 走的列表模式，这里是弹窗里的临时预览，不应该影响那个状态。
+         */
+        fun createFileIntent(
+            context: Context, filePath: String, title: String = "", subtitle: String = "",
+        ): Intent = Intent(context, VideoPlayerActivity::class.java)
+            .putExtra(EXTRA_FILE_PATH, filePath)
+            .putExtra(EXTRA_TITLE, title)
+            .putExtra(EXTRA_SUBTITLE, subtitle)
+
         /** 从网络 URL 列表打开预览，支持上下滑动切换。 */
         fun createListNetworkIntent(
             context: Context,

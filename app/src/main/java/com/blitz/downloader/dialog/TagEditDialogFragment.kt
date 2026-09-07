@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import com.blitz.downloader.R
+import com.blitz.downloader.activity.VideoPlayerActivity
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.ui.theme.BlitzTheme
 import com.blitz.downloader.viewmodel.TagEditDialogViewModel
@@ -85,9 +86,11 @@ class TagEditDialogFragment : ComposeDialogFragment() {
             parentMap = parentMap,
             aiSuggestionEnabled = AppSettings.isAiSuggestionEnabled(requireContext()),
             aiState = aiState,
+            hasVideoFile = videoFilePath.isNotBlank(),
             onRequestAiSuggestion = {
                 viewModel.requestSuggestion(awemeId, secUserId, desc, coverPath, videoFilePath)
             },
+            onPreviewVideo = { startActivity(VideoPlayerActivity.createFileIntent(requireContext(), videoFilePath)) },
             onConfirm = { tags, aiAnalysisId -> finishWith(tags, aiAnalysisId) },
             onCancel = { dismiss() },
         )
@@ -171,7 +174,9 @@ private fun TagEditDialogContent(
     parentMap: Map<String, String>,
     aiSuggestionEnabled: Boolean,
     aiState: TagEditDialogViewModel.AiSuggestionState,
+    hasVideoFile: Boolean,
     onRequestAiSuggestion: () -> Unit,
+    onPreviewVideo: () -> Unit,
     onConfirm: (tags: List<String>, aiAnalysisId: Long?) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -189,22 +194,30 @@ private fun TagEditDialogContent(
 
     DialogHeadline(stringResource(R.string.manage_edit_tags_title))
     Spacer(Modifier.height(16.dp))
-    if (aiSuggestionEnabled) {
+    if (aiSuggestionEnabled || hasVideoFile) {
         Row(
             modifier = Modifier.padding(horizontal = 24.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(
-                onClick = onRequestAiSuggestion,
-                enabled = aiState !is TagEditDialogViewModel.AiSuggestionState.Loading,
-            ) {
-                Text(stringResource(R.string.tag_edit_ai_suggest_button))
+            if (aiSuggestionEnabled) {
+                TextButton(
+                    onClick = onRequestAiSuggestion,
+                    enabled = aiState !is TagEditDialogViewModel.AiSuggestionState.Loading,
+                ) {
+                    Text(stringResource(R.string.tag_edit_ai_suggest_button))
+                }
+                if (aiState is TagEditDialogViewModel.AiSuggestionState.Loading) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                }
             }
-            if (aiState is TagEditDialogViewModel.AiSuggestionState.Loading) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp))
+            // 判断 AI 建议/手动打标是否准确经常需要回看画面，与 AI 建议开关无关，独立展示
+            if (hasVideoFile) {
+                TextButton(onClick = onPreviewVideo) {
+                    Text(stringResource(R.string.tag_edit_preview_video_button))
+                }
             }
         }
-        if (aiState is TagEditDialogViewModel.AiSuggestionState.Failed) {
+        if (aiSuggestionEnabled && aiState is TagEditDialogViewModel.AiSuggestionState.Failed) {
             Text(
                 text = stringResource(R.string.tag_edit_ai_suggest_failed, aiState.message),
                 color = MaterialTheme.colorScheme.error,
@@ -250,7 +263,9 @@ private fun TagEditDialogPreview() {
                 parentMap = emptyMap(),
                 aiSuggestionEnabled = true,
                 aiState = TagEditDialogViewModel.AiSuggestionState.Idle,
+                hasVideoFile = true,
                 onRequestAiSuggestion = {},
+                onPreviewVideo = {},
                 onConfirm = { _, _ -> },
                 onCancel = {},
             )

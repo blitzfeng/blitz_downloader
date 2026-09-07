@@ -40,6 +40,9 @@ class AiTagSuggestionRepository(context: Context) {
     private val llmProvider: LlmProvider = GeminiProvider(appContext)
     private val gson = Gson()
 
+    /** 设置页「测试连接」按钮用：只验证 Key/网络/模型可用，不组装标签词表、不落库。 */
+    suspend fun testConnection(): Result<String> = llmProvider.testConnection()
+
     /** 一次成功建议的结果：分析记录 id（反馈写入的唯一凭证）+ 结构化视觉证据 + 过滤后的候选标签 id。 */
     data class SuggestionOutcome(
         val analysisId: Long,

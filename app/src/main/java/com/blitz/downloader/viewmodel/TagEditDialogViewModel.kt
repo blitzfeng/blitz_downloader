@@ -5,6 +5,7 @@ import android.os.Environment
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.blitz.downloader.BlitzApp
+import com.blitz.downloader.util.VideoFrameExtractor
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,7 +47,11 @@ class TagEditDialogViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val outcome = withContext(Dispatchers.IO) {
                 val storageRoot = Environment.getExternalStorageDirectory()
-                val coverBytes = runCatching { File(storageRoot, coverPath).readBytes() }.getOrNull()
+                val coverFile = File(storageRoot, coverPath)
+                // 实验性：先试压缩到 VideoFrameExtractor 同一套尺寸/质量参数，失败再退回原始字节
+                // （原始封面文件此前未经任何压缩直接上传，体积可能明显更大）
+                val coverBytes = VideoFrameExtractor.compressCoverImage(coverFile)
+                    ?: runCatching { coverFile.readBytes() }.getOrNull()
                 if (coverBytes == null) {
                     Result.failure(IllegalStateException("封面图片不存在"))
                 } else {

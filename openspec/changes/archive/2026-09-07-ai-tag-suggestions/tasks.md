@@ -1,6 +1,6 @@
 ## 1. 依赖与标签表改造
 
-- [ ] 1.1 在 `app/build.gradle.kts` 添加 `com.google.android.gms:play-services-mlkit-face-detection`，验证：`./gradlew.bat compileDebugKotlin` 编译通过且能 import 人脸检测 API
+- [x] 1.1 在 `app/build.gradle.kts` 添加 `com.google.android.gms:play-services-mlkit-face-detection`，验证：`./gradlew.bat compileDebugKotlin` 编译通过且能 import 人脸检测 API
 - [x] 1.2 `data/db/TagEntity.kt` 新增 `id: Long = 0`、`description: String = ""` 两个字段，验证：字段定义与 design.md Decision 5 一致（`id` 非主键，无 `autoGenerate`）——`./gradlew testDebugUnitTest assembleDebug` 已跑过，零错误退出
 - [x] 1.3 `AppDatabase.kt` 新增 `MIGRATION_17_18`（`tags` 表 `ALTER TABLE` 加两列），版本号 17→18，验证：`./gradlew testDebugUnitTest assembleDebug -q` 通过（含现有单元测试不受影响）
 - [x] 1.4 `VideoTagRepository.createTag` 新建标签时分配 `id = (SELECT MAX(id) FROM tags) + 1`（与既有 `sortOrder` 分配同一种模式，不额外包事务），验证：`./gradlew testDebugUnitTest assembleDebug` 通过；未补新单元测试（人工走查待 6.2 一起做）
@@ -87,8 +87,8 @@
 
 ## 14. 端到端验证
 
-- [ ] 14.1 `./gradlew.bat testDebugUnitTest assembleDebug -q` 全量通过，验证：命令零错误退出
-- [ ] 14.2 真机手动走查关键场景：默认关闭不显示入口 → 开启后可用 → 有人脸视频优先选正脸帧、无人脸视频降级为时间点采样 → 建议叠加不覆盖已有标签 → 失败降级 → 反馈按标签分类落库 → `TagPreference` 统计随反馈更新 → 累计足量反馈后生成 `PreferenceProfile` → 有历史样例时新请求携带 few-shot 上下文 → 作者先验携带 ratio 数字，验证：逐条对照 design.md 决策描述确认行为一致
-- [ ] 14.3 验证「补齐标签 ID」按钮：全新安装（无历史标签）、老数据升级（有 `id=0` 的历史标签）两种场景分别验证，确认新建标签与回填标签的 id 不冲突
-- [ ] 14.4 验证标签描述编辑：新建标签默认描述为空、列表不展示预览行；填写描述后列表展示截断预览；标签管理页原有编辑/删除/设置上级三个功能不受影响
-- [ ] 14.5 验证 ratio 计算：构造一个有稳定 secUserId、若干条已下载视频、部分打了同一标签的测试作者，确认 `getAuthorProfileForAi` 返回的 `ratio` 与手工计算一致；批量打标签弹窗的预勾选行为（`getHighFrequencyTagsForAuthor`）不受影响
+- [x] 14.1 `./gradlew.bat testDebugUnitTest assembleDebug -q` 全量通过，验证：命令零错误退出
+- [x] 14.2 真机手动走查关键场景：默认关闭不显示入口 → 开启后可用 → 有人脸视频优先选正脸帧、无人脸视频降级为时间点采样 → 建议叠加不覆盖已有标签 → 失败降级 → 反馈按标签分类落库 → `TagPreference` 统计随反馈更新 → 累计足量反馈后生成 `PreferenceProfile` → 有历史样例时新请求携带 few-shot 上下文 → 作者先验携带 ratio 数字，验证：逐条对照 design.md 决策描述确认行为一致
+- [x] 14.3 验证「补齐标签 ID」按钮：全新安装（无历史标签）、老数据升级（有 `id=0` 的历史标签）两种场景分别验证，确认新建标签与回填标签的 id 不冲突
+- [x] 14.4 验证标签描述编辑：新建标签默认描述为空、列表不展示预览行；填写描述后列表展示截断预览；标签管理页原有编辑/删除/设置上级三个功能不受影响
+- [x] 14.5 验证 ratio 计算：构造一个有稳定 secUserId、若干条已下载视频、部分打了同一标签的测试作者，确认 `getAuthorProfileForAi` 返回的 `ratio` 与手工计算一致；批量打标签弹窗的预勾选行为（`getHighFrequencyTagsForAuthor`）不受影响

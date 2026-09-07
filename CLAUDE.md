@@ -557,6 +557,16 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
   那个，宿主的 `setFragmentResultListener` 永远收不到回调，且不会有任何报错，只会表现成
   "保存了但什么都没发生"。新增 Compose 弹窗时对照宿主类型选对方法，不要照抄别的弹窗的写法。
 
+**「预览视频」按钮**（`TagEditDialogFragment`，AI 建议按钮旁）：判断 AI 建议/手动打标准不准经常需要
+回看画面，`videoFilePath` 非空时展示，点击 `VideoPlayerActivity.createFileIntent(...)` 单视频本地文件
+预览（不传 `EXTRA_LIST_AWEME_IDS`，**不触发「已看过」标记**——`watched` 的权威入口是
+`ManageVideoViewModel.openVideoPlayer` 走的列表模式，这里只是弹窗内的临时预览）。**不依赖 AI 建议开关**
+（`aiSuggestionEnabled` 关闭时也展示，只要有本地视频文件），因为判断手动打标是否准确同样需要回看画面。
+返回时弹窗仍在——**不需要任何特殊代码**：`ComposeDialogFragment` 走系统 `Dialog`，其窗口挂在宿主 Activity
+的 window token 下，`startActivity` 只是让宿主 Activity 短暂 stop，Dialog 从未被 `dismiss()`，系统会在
+宿主 Activity 恢复时自动把它的窗口带回来（同一进程存活的前提下）。**不要**为了这条需求去额外持久化/
+重建弹窗状态，那是在解决一个不存在的问题。
+
 **其他约束**：
 
 - API Key**明文存储**在 `AppSettings`（`getGeminiApiKey`/`setGeminiApiKey`），用户决策，不引入
@@ -566,6 +576,80 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 - 标签管理页（`TagManageActivity`）新增「编辑描述」入口（第四个图标，`TagDescriptionDialogFragment`，
   Compose），描述文本随标签词表一并发给 AI，帮模型理解判断标准；这是标签名册本身的元数据编辑，
   **不计入** `tagEditCount`。
+- **设置页「测试连接」按钮**（Gemini API Key 行下方，`itemGeminiTestConnection`）：`LlmProvider` 接口新增
+  `testConnection()`，`GeminiProvider` 实现发一次极简纯文本请求（`generationConfig = null`，不带图片、
+  不组装标签词表、不落库），只用来验证「Key 已配置 + 网络可达 + 当前 `MODEL` 常量对应的模型确实存在」。
+  经 `AiTagSuggestionRepository.testConnection()` 透传，`SettingsViewModel.testGeminiConnection()` 沿用
+  既有 `BusyKind`/`SettingsEvent` 模式（新增 `GEMINI_TEST`/`GeminiTestSucceeded`/`GeminiTestFailed`），
+  结果用 Toast 展示——按钮不判断「AI 建议标签」开关状态，开关关闭时也能点，方便在正式启用前先排查
+  Key/网络/模型问题。**这不等于「AI 建议」全链路已跑通**：`TagSuggestionRequestBuilder` 组装的真实请求
+  带图片、走 `responseSchema` 结构化输出，连接测试成功不代表结构化输出解析、`AwemeMapper` 之外的
+  下游流程没有问题，只是排除了最基础的一层。**超时单独配了一套更短的**（`GeminiProvider.testService`，
+  独立 OkHttpClient：连接 10s / 读写 15s）：正式建议请求要传多图 + 等结构化输出，`okHttpClient` 的超时
+  故意放宽到连接 30s / 读写 60s，连接测试如果复用同一个 client，网络差时空转到 90s 才报失败，体验很差；
+  两个 client 互不影响，改一处超时不用担心波及另一条路径。
+- **模型已切到 `gemini-3.8-flash`**（`GeminiProvider.MODEL`），同时补了 Gemini 3.x 系列新增的
+  `generationConfig.thinkingConfig.thinkingLevel`（`GeminiModels.kt` 新增 `GeminiThinkingConfig`）
+  与 per-part 混合分辨率 `GeminiPart.mediaResolution`——都是省 token 的旋钮，前者砍后台"思考"
+  token，后者砍图片输入 token。
+  - **`thinkingConfig` 三处调用统一取 `GeminiProvider.THINKING_LEVEL` 常量**（建议标签/偏好摘要/
+    连接测试），当前是 `"LOW"`（压成本延迟；建议标签这条路径已有 `responseSchema` 强约束 + 视觉证据
+    按维度拆分要求出处，对深度推理依赖没那么重）。**这个值是可调的判断题，不是确定结论**——如果真机
+    走查发现建议质量下降，改这一个常量到 `"MEDIUM"` 就够了，不需要动别处。
+  - **`mediaResolution` 踩过两次坑，都是用户拿真实请求/更新过的文档校正回来的，别再重复**：
+    1. **字段名**一度写错成 `resolution`（与 `inlineData` 同级的扁平字段），真机发起真实请求后
+       Gemini 返回 **400**：`Invalid JSON payload received. Unknown name "resolution" at
+       'contents[0].parts[N]': Cannot find field.`（11 个 image part 各报一次）——**这是"先做真实
+       请求验证再当作定论"的一个正面案例**：靠这次 400 响应才发现字段名错了，而不是继续裸猜。
+    2. **值的形状与大小写**一度写成扁平小写字符串 `"medium"`/`"low"`（依据的是过期文档），
+       实际是嵌套对象 `{"level": "MEDIA_RESOLUTION_MEDIUM"}`（`GeminiModels.kt` 新增
+       `GeminiMediaResolutionConfig`），`level` 取值大写 `SCREAMING_SNAKE_CASE`，这点与
+       `thinkingLevel` 的大小写惯例一致（两者都是 proto3 枚举，只是 `mediaResolution` 本身是
+       嵌套 message 而 `thinkingConfig.thinkingLevel` 是扁平字段，形状不同、大小写惯例相同）。
+    **同一次 400 响应只报 `resolution` 未知，没有连带报 `thinkingConfig`/`thinkingLevel`/
+    `inlineData`/`mimeType`**，说明这几个字段名都是对的，不用怀疑；这也是没有把 `inlineData`/
+    `mimeType` 跟着某些下划线命名（`inline_data`/`mime_type`）的二手示例改成 snake_case 的原因——
+    那类示例大概率是别的 API 面（如 Vertex AI 的 curl 示例）的产物，混进来会破坏已验证正确的驼峰
+    命名。
+  - 按"是否含人脸"分档（`generateTagSuggestion` 里）：封面恒定 `MEDIUM`（唯一保证被看到的
+    "第一印象"图，不参与降档）；关键帧里 `hasFace=true` 的用 `MEDIUM`（留给 face/expression 判断
+    需要更清晰细节），`hasFace=false` 的降到 `LOW`（只用来佐证 bodyAndStyling/clothing/action，
+    细节要求更低）——复用了 `FaceFrameSelector` 已经算出来的 `ImagePart.hasFace` 信号，不是新增
+    一套图像分类。
+  - **已真机验证生效**：`mediaResolution` 混合分辨率上线后，真实请求的 `usageMetadata.promptTokenCount`
+    对比未加这个字段时**每次请求下降约 1K token**——不再是"字段名没报错"这种间接证据，是直接对比
+    了 token 数字。`responseMimeType`/`responseSchema` 结构化输出的字段名和用法本次研究显示未变，
+    未做改动；`temperature`/`topP`/`topK` 项目里从未设置过，所以"文档建议移除这些参数"对本仓库
+    不适用，不需要处理。
+  - **重要发现（真机验证）：每张图的 token 成本按 `mediaResolution` 档位固定分配，与图片实际像素
+    尺寸无关**——MEDIUM 档实测约 580 token/图，`VideoFrameExtractor.MAX_DIMENSION` 从 512 降到 384
+    后 `promptTokenCount` 没有变化（一次 10 张含人脸帧全走 MEDIUM 的请求，token 消耗稳定在
+    ~5800+，与两个尺寸下测的结果一致）。**结论：继续调小上传图片的尺寸/压缩质量不是有效的省 token
+    手段**，`MAX_DIMENSION` 保留在 384 只是因为缩图仍有省上传流量/耗时的价值，不是因为省 token。
+    真正影响 token 总量的是两个变量：**张数**（`VideoFrameExtractor.MAX_FINAL_FRAMES`，当前 10 张
+    关键帧 + 1 张封面）和**每张图的档位比例**（当前按 `hasFace` 二选一 MEDIUM/LOW，人脸密集的视频
+    大部分帧会落在 MEDIUM，降 token 空间有限）。这两个方向都还没有动，是后续如果要继续压 token
+    该看的地方。
+  - **Context Caching（用户提出、暂未实现）**：把标签词表这类每次请求都重复不变的大块文本单独缓存，
+    按更低费率计费。没做是因为它是一整套新基建（显式 `CachedContent` 生命周期管理，或者依赖隐式缓存
+    要求"稳定不变的内容在请求最前面组成公共前缀"——当前 prompt 里 `desc`（逐视频变化）夹在指令和
+    标签词表之间，破坏了前缀一致性，要做隐式缓存至少得先把 prompt 顺序改成"固定指令+标签词表在前，
+    逐视频内容（`desc`/作者先验/图片）在后"），值不值得做取决于标签词表本身有多大、调用量有多大，
+    这是需要用户决定是否投入的一项，不是"顺手做了"量级的改动。
+- **`GeminiProvider.LoggingInterceptor` 完整打印请求体与响应体**（`Log.d`，TAG `GeminiProvider`），
+  用于排查"HTTP 200 但结构化输出解析失败"这类问题——之前只打印方法/URL/状态码，不够定位这类问题。
+  **Key 不会泄露**：鉴权走请求头 `x-goog-api-key`，拦截器从不打印请求头，只打印 body，与 CLAUDE.md
+  别处"日志不打印 Cookie/msToken/Key"的约定不冲突。**图片 base64 用 `[图片内容，约 NKB]` 占位符代替**
+  （`redactImageData`）——那串编码人眼看不懂、还占大部分篇幅，之前"完整"打印反而把真正有用的
+  prompt/`tagVocabulary`/`generationConfig`/响应 `usageMetadata` 淹没在几百 KB 乱码里；占位符带
+  原始字节数，方便肉眼核对传输体积。除图片外的一切仍然完整打印，不是打折的"完整"——正是靠这份
+  完整日志才第一时间抓到 `resolution` 字段被 Gemini 判为 400 未知字段（见上一条）。
+  **`redactImageData` 是手写扫描，不是正则**：最初用一个正则一次性匹配 base64 段，真机日志里出现
+  大段 base64 漏网未被替换（原因没有确证，但单个图片的 base64 常有几万到十几万字符，不排除是无
+  上界贪婪量词在超长输入上的正则引擎行为问题）；base64 字母表本身不含 `"`，所以"找到 `"data":"`
+  之后下一个 `"` 一定是闭合引号"这个结论严格成立，改成这个手写扫描后不再依赖字符集匹配，也没有
+  正则性能坑。剩余内容仍可能有几十 KB，Logcat 单行 ~4000 字符会截断，所以按 3000 字符分行输出，
+  排查时去 `adb logcat` 搜 TAG 而不是看单条日志。
 
 ### 持久化（Room）
 

@@ -201,13 +201,32 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ── AI 建议标签（Gemini 连接测试） ─────────────────────────────────────────
+
+    /**
+     * 只验证「Key 已配置 + 网络可达 + 模型 id 有效」，不组装标签词表、不落库，
+     * 用于目前 AI 建议功能尚未跑通时定位问题——结果走 Toast，不影响其余设置项状态。
+     */
+    fun testGeminiConnection() {
+        if (_busy.value != null) return
+        _busy.value = BusyKind.GEMINI_TEST
+        viewModelScope.launch {
+            val result = BlitzApp.instance.aiTagSuggestionRepository.testConnection()
+            _busy.value = null
+            result.fold(
+                onSuccess = { emit(SettingsEvent.GeminiTestSucceeded(it)) },
+                onFailure = { emit(SettingsEvent.GeminiTestFailed(it.readableMessage())) },
+            )
+        }
+    }
+
     private fun emit(event: SettingsEvent) {
         _events.tryEmit(event)
     }
 
     private fun Throwable.readableMessage(): String = message ?: javaClass.simpleName
 
-    enum class BusyKind { BACKUP, RESTORE, TAG_ANALYSIS, TAG_ID_BACKFILL }
+    enum class BusyKind { BACKUP, RESTORE, TAG_ANALYSIS, TAG_ID_BACKFILL, GEMINI_TEST }
 }
 
 sealed interface SettingsEvent {
@@ -236,4 +255,8 @@ sealed interface SettingsEvent {
     /** 标签 id 一次性回填完成（幂等，可能"本来就没有需要补的"）。 */
     data object TagIdBackfillDone : SettingsEvent
     data class TagIdBackfillFailed(val message: String) : SettingsEvent
+
+    /** Gemini 连接测试结果，Fragment 用 Toast 展示。 */
+    data class GeminiTestSucceeded(val message: String) : SettingsEvent
+    data class GeminiTestFailed(val message: String) : SettingsEvent
 }

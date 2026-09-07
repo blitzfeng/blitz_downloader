@@ -121,6 +121,10 @@
     <string name="settings_gemini_api_key_dialog_hint">明文保存在本机，不会上传到任何服务器；仅用于直接调用 Gemini API</string>
     <string name="settings_gemini_api_key_dialog_placeholder">粘贴你的 Gemini API Key</string>
     <string name="settings_gemini_api_key_saved">已保存</string>
+    <string name="settings_gemini_test_connection">测试连接</string>
+    <string name="settings_gemini_test_connection_summary">只验证 Key/网络/模型是否可用，不组装真实标签建议请求</string>
+    <string name="settings_gemini_test_doing">测试连接中…</string>
+    <string name="settings_gemini_test_failed">连接失败：%1$s</string>
     <!-- 相册可见性：往目录里加/删 .nomedia，封面目录无开关、由权限自动维护 -->
     <string name="settings_group_gallery">相册可见性</string>
     <string name="settings_hide_videos">视频文件夹</string>
@@ -213,6 +217,8 @@
     <!-- 单条标签编辑弹窗内的「AI 建议」入口（ai-tag-suggestions），功能关闭时不展示 -->
     <string name="tag_edit_ai_suggest_button">AI 建议</string>
     <string name="tag_edit_ai_suggest_failed">获取建议失败：%1$s</string>
+    <!-- 标签编辑弹窗内「预览视频」入口：跳播放页判断 AI 建议/手动打标是否准确，返回时弹窗仍在 -->
+    <string name="tag_edit_preview_video_button">预览视频</string>
     <!-- 标签描述编辑弹窗（辅助 ai-tag-suggestions 的 AI 建议理解标签判断标准） -->
     <string name="tag_description_dialog_title">编辑「%1$s」的描述</string>
     <string name="tag_description_dialog_placeholder">帮助 AI 理解这个标签的判断标准</string>
