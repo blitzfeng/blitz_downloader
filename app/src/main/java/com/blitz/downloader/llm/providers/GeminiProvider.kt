@@ -264,6 +264,10 @@ class GeminiProvider(private val context: Context) : LlmProvider {
 
             val response = chain.proceed(request)
             Log.d(TAG, "← ${response.code} ${request.url.encodedPath}")
+            val headersText = response.headers.toString().trimEnd()
+            if (headersText.isNotEmpty()) {
+                Log.d(TAG, "← headers:\n$headersText")
+            }
             // peekBody 只读一份拷贝，不消费原始响应体，Retrofit 之后仍能正常解析
             val responseBody = response.peekBody(Long.MAX_VALUE).string()
             logChunked("← body", redactImageData(responseBody))

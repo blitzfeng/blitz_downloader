@@ -178,6 +178,33 @@ class DownloadedVideoRepository(context: Context) {
         dao.updateMediaSize(awemeId, width, height)
     }
 
+    /**
+     * 更新作品的关系标签（[DownloadedVideoEntity.userRelation]）。
+     * 只更新此列，不覆盖其他字段。
+     */
+    suspend fun updateUserRelation(awemeId: String, userRelation: String) {
+        dao.updateUserRelation(awemeId, userRelation)
+    }
+
+    /**
+     * 为已下载视频补齐「点赞/喜欢」关系（若尚未标记）。
+     * 例如在作者作品列表中发现已下载视频处于已点赞状态时调用。
+     */
+    suspend fun ensureLikeRelationForAwemeIds(awemeIds: Collection<String>) {
+        if (awemeIds.isEmpty()) return
+        val entities = dao.getByAwemeIds(awemeIds.toList())
+        for (entity in entities) {
+            if (!hasLikeRelation(entity.userRelation)) {
+                val newRelation = if (entity.userRelation.isBlank()) {
+                    DownloadSourceType.LIKE
+                } else {
+                    "${DownloadSourceType.LIKE}|${entity.userRelation}"
+                }
+                dao.updateUserRelation(entity.awemeId, newRelation)
+            }
+        }
+    }
+
     companion object {
         /**
          * 从喜欢列表下载时，根据 `collect_stat` 构建 [DownloadedVideoEntity.userRelation]。
@@ -195,6 +222,19 @@ class DownloadedVideoRepository(context: Context) {
          */
         fun buildUserRelationFromCollection(userDigged: Int, folderName: String): String =
             if (userDigged == 1) "like|$folderName" else folderName
+
+        /**
+         * 从作者主页作品列表（或合集）下载时，根据 `user_digged` 和 `collect_stat` 构建 [DownloadedVideoEntity.userRelation]。
+         *
+         * @param userDigged 接口返回的 `user_digged` 字段：0=未点赞，1=已点赞。
+         * @param collectStat 接口返回的 `collect_stat` 字段：0=未收藏，1=已收藏。
+         */
+        fun buildUserRelationFromPost(userDigged: Int, collectStat: Int = 0): String = when {
+            userDigged == 1 && collectStat == 1 -> "like|collect"
+            userDigged == 1 -> "like"
+            collectStat == 1 -> "collect"
+            else -> ""
+        }
 
         /**
          * [DownloadedVideoEntity.userRelation] 是否含「我点赞过」。

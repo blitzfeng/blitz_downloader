@@ -70,14 +70,14 @@ data class DownloadedVideoEntity(
      */
     val sourceOwnerSecUserId: String = "",
     /**
-     * 视频与账户所有者的关系标签，仅对「我的账户」下载有效（[downloadType] 为
-     * `"like"`/`"collects"` 时填写，`"post"` 场景留空）。
+     * 视频与账户所有者的关系标签。
      *
      * 编码规则（分隔符为 `|`）：
      * - 从喜欢列表下载，未收藏（`collect_stat=0`）→ `"like"`
      * - 从喜欢列表下载，已收藏（`collect_stat=1`）→ `"like|collect"`
      * - 从收藏夹下载，未点赞（`user_digged=0`）→ `"<收藏夹名称>"`（如 `"舞蹈"`）
      * - 从收藏夹下载，已点赞（`user_digged=1`）→ `"like|<收藏夹名称>"`（如 `"like|舞蹈"`）
+     * - 从作者作品/合集列表下载，已点赞（`user_digged=1`）→ `"like"`（若同时已收藏则为 `"like|collect"`）
      *
      * 管理页可直接展示此字段，或按 `|` 拆分后渲染为多个标签。
      * 旧记录默认为空字符串。

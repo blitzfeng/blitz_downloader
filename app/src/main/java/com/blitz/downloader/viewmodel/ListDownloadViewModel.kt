@@ -585,6 +585,12 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
         val downloaded = withContext(Dispatchers.IO) {
             downloadedRepo.getDownloadedAwemeIdSet(ids)
         }
+        val likedDownloadedIds = items.filter { it.id in downloaded && it.userDigged == 1 }.map { it.id }
+        if (likedDownloadedIds.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                downloadedRepo.ensureLikeRelationForAwemeIds(likedDownloadedIds)
+            }
+        }
         for (i in items.indices) {
             val v = items[i]
             val isDl = v.id in downloaded
@@ -667,6 +673,8 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
                     DownloadedVideoRepository.buildUserRelationFromCollection(item.userDigged, "collect")
                 ListApiMode.CollectsVideo ->
                     DownloadedVideoRepository.buildUserRelationFromCollection(item.userDigged, folderName)
+                ListApiMode.UserPost, ListApiMode.MixAweme ->
+                    DownloadedVideoRepository.buildUserRelationFromPost(item.userDigged, item.collectStat)
                 else -> ""
             }
             item.id to DownloadRecordMeta(

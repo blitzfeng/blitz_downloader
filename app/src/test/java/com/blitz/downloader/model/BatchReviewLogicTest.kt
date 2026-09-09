@@ -514,4 +514,57 @@ class BatchReviewLogicTest {
         // taggedAwemeIds 精确只包含实际打上「颜值」标签的 3 个视频
         assertEquals(setOf("v1", "v2", "v3"), yanzhiGroup.taggedAwemeIds)
     }
+
+    @Test
+    fun buildTagGroups_sortsSubAndNormalTags_beforeParentTags_beforeProcessed() {
+        val videos = (1..6).map { createFakeVideo("v$it") }
+        val pendingRows = listOf(
+            // 父标签「颜值」：包含 5 个视频（数量最多）
+            AiTagSuggestionPendingEntity("v1", 101L, "颜值|纯欲", 1000L),
+            AiTagSuggestionPendingEntity("v2", 102L, "颜值|可爱", 1000L),
+            AiTagSuggestionPendingEntity("v3", 103L, "颜值|纯欲", 1000L),
+            AiTagSuggestionPendingEntity("v4", 104L, "颜值", 1000L),
+            AiTagSuggestionPendingEntity("v5", 105L, "颜值", 1000L),
+            // 普通独立标签「美食」（无父无子）：1 个视频
+            AiTagSuggestionPendingEntity("v6", 106L, "美食", 1000L),
+        )
+
+        // 父标签集合：仅「颜值」是父标签（旗下有子标签「纯欲」与「可爱」）
+        val parentTagNames = setOf("颜值")
+
+        // 场景 1：全部未处理
+        // 期望排序：
+        // Tier 0（子标签 & 普通标签）：纯欲(2条) > 可爱(1条) == 美食(1条, 字母序在后)
+        // Tier 1（父标签）：颜值(5条) —— 虽视频数最多但必须排在子标签与普通标签之后
+        val groups = BatchReviewLogic.buildTagGroups(
+            pendingRows = pendingRows,
+            videos = videos,
+            processedGroupNames = emptySet(),
+            groupSelections = emptyMap(),
+            parentTagNames = parentTagNames,
+        )
+
+        assertEquals(4, groups.size)
+        assertEquals(listOf("纯欲", "可爱", "美食", "颜值"), groups.map { it.tagName })
+
+        // 场景 2：部分已处理（如「纯欲」已处理）
+        // 期望排序：
+        // 未处理子标签/普通：可爱 > 美食
+        // 未处理父标签：颜值
+        // 已处理标签：纯欲（排在最后）
+        val groupsWithProcessed = BatchReviewLogic.buildTagGroups(
+            pendingRows = pendingRows,
+            videos = videos,
+            processedGroupNames = setOf("纯欲"),
+            groupSelections = emptyMap(),
+            parentTagNames = parentTagNames,
+        )
+
+        assertEquals(listOf("可爱", "美食", "颜值", "纯欲"), groupsWithProcessed.map { it.tagName })
+        assertFalse(groupsWithProcessed[0].isProcessed)
+        assertFalse(groupsWithProcessed[1].isProcessed)
+        assertFalse(groupsWithProcessed[2].isProcessed)
+        assertTrue(groupsWithProcessed[3].isProcessed)
+    }
 }
+

@@ -49,7 +49,9 @@ object BatchReviewLogic {
     }
 
     /**
-     * 按建议标签构建分组，按组内视频数降序排列（数量相同按标签名升序），已处理的分组排在后面。
+     * 按建议标签构建分组：
+     * 排序规则：未处理子标签（无父标签的普通标签）> 未处理父标签 > 已处理标签；
+     * 同优先级内按组内视频数降序排列（数量相同按标签名升序）。
      * 支持差集扣减模式（方案一）：未处理的标签组动态扣除已持有该标签的视频（如已被子标签级联打标的视频）。
      * 防御性去重：确保单组内同一条视频至多出现一次，避免模型重复建议或管道脏数据引起视图膨胀。
      */
@@ -60,6 +62,7 @@ object BatchReviewLogic {
         groupSelections: Map<String, Set<String>>,
         existingTagsByVideo: Map<String, Set<String>> = emptyMap(),
         manuallyUndoneGroupNames: Set<String> = emptySet(),
+        parentTagNames: Set<String> = emptySet(),
     ): List<TagReviewGroup> {
         val videoMap = videos.associateBy { it.awemeId }
         val tagToVideos = mutableMapOf<String, MutableList<DownloadedVideoEntity>>()
@@ -109,7 +112,14 @@ object BatchReviewLogic {
                 taggedAwemeIds = taggedIds,
             )
         }.sortedWith(
-            compareBy<TagReviewGroup> { it.isProcessed }
+            compareBy<TagReviewGroup> { group ->
+                when {
+                    !group.isProcessed && group.tagName !in parentTagNames -> 0
+                    !group.isProcessed && group.tagName in parentTagNames -> 1
+                    group.isProcessed && group.tagName !in parentTagNames -> 2
+                    else -> 3
+                }
+            }
                 .thenByDescending { it.videos.size }
                 .thenBy { it.tagName },
         )

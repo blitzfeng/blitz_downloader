@@ -152,6 +152,14 @@ interface DownloadedVideoDao {
     suspend fun updateMediaSize(awemeId: String, width: Int, height: Int)
 
     /**
+     * 更新作品的关系标签（[DownloadedVideoEntity.userRelation]）。
+     * 只更新此列，不覆盖其他字段。
+     */
+    @Query("UPDATE downloaded_videos SET userRelation = :userRelation WHERE awemeId = :awemeId")
+    suspend fun updateUserRelation(awemeId: String, userRelation: String): Int
+
+
+    /**
      * 作者聚合投影：显示昵称（最新）+ 作品数 + 稳定 ID。
      * [secUserId] 为空表示该组无稳定 ID（老记录），此时上层按 [name] 匹配。
      */

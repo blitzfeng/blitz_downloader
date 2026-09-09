@@ -46,6 +46,10 @@ data class BatchTagReviewUiState(
     val analysisProgress: AiBatchProgress = AiBatchProgress(),
     val excludedAwemeIds: Set<String> = emptySet(),
     val isReviewCompleted: Boolean = false,
+    val allTags: List<String> = emptyList(),
+    val parentMap: Map<String, String> = emptyMap(),
+    val videoExistingTags: Map<String, Set<String>> = emptyMap(),
+    val videoSuggestedTags: Map<String, Set<String>> = emptyMap(),
 )
 
 sealed interface BatchTagReviewEvent {
@@ -227,14 +231,19 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                     groups = emptyList(),
                     allVideos = allVideos,
                 )
+                val (allTags, parentMap) = withContext(Dispatchers.IO) {
+                    Pair(tagRepo.getAvailableTags(), tagRepo.getParentMap())
+                }
                 _uiState.value = _uiState.value.copy(
                     groups = emptyList(),
+                    allTags = allTags,
+                    parentMap = parentMap,
                     isReviewCompleted = isCompleted,
                 )
                 return@launch
             }
 
-            val groups = withContext(Dispatchers.IO) {
+            val (groups, allTags, parentMap, existingTagsByVideo, suggestedTagsByVideo) = withContext(Dispatchers.IO) {
                 val awemeIds = activeVideos.map { it.awemeId }
                 val dbPendingRows = pendingDao.getByAwemeIds(awemeIds)
                 for (row in dbPendingRows) {
@@ -268,14 +277,24 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
-                com.blitz.downloader.model.BatchReviewLogic.buildTagGroups(
+                val parentMap = tagRepo.getParentMap()
+                val parentTagNames = parentMap.values.filter { it.isNotBlank() }.toSet()
+                val allTags = tagRepo.getAvailableTags()
+                val suggestedTagsByVideo = pendingRows.associate {
+                    it.awemeId to it.suggestedTags.split('|').filter { t -> t.isNotBlank() }.toSet()
+                }
+
+                val tagGroups = com.blitz.downloader.model.BatchReviewLogic.buildTagGroups(
                     pendingRows = pendingRows,
                     videos = filteredVideos,
                     processedGroupNames = processedGroupNames,
                     groupSelections = groupSelections,
                     existingTagsByVideo = existingTagsByVideo,
                     manuallyUndoneGroupNames = manuallyUndoneGroupNames,
+                    parentTagNames = parentTagNames,
                 )
+
+                Quintup(tagGroups, allTags, parentMap, existingTagsByVideo, suggestedTagsByVideo)
             }
 
             val isCompleted = com.blitz.downloader.model.BatchReviewLogic.isReviewCompleted(
@@ -285,6 +304,10 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
 
             _uiState.value = _uiState.value.copy(
                 groups = groups,
+                allTags = allTags,
+                parentMap = parentMap,
+                videoExistingTags = existingTagsByVideo,
+                videoSuggestedTags = suggestedTagsByVideo,
                 isReviewCompleted = isCompleted,
             )
         }
@@ -508,5 +531,40 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 单个视频更改标签：覆盖写入该视频的标签，并使修改次数计数，沉淀 AI 纠偏反馈，并同步更新建议与分组。
+     */
+    fun saveSingleVideoTags(awemeId: String, newTags: List<String>) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val normalizedTags = newTags.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+                tagRepo.setTagsAsUserEdit(awemeId, normalizedTags)
+
+                val pendingRow = sessionPendingRows[awemeId] ?: pendingDao.getByAwemeId(awemeId)
+                if (pendingRow != null) {
+                    val allTagEntities = tagRepo.getAvailableTagEntities()
+                    val tagNameToId = allTagEntities.associate { it.tagName to it.id }
+                    val confirmedTagIds = normalizedTags.mapNotNull { tagNameToId[it] }.toSet()
+                    aiRepo.recordFeedback(pendingRow.analysisId, confirmedTagIds)
+                    pendingDao.deleteByAwemeId(awemeId)
+
+                    // 同步更新内存 sessionPendingRows，使得重算分组时自动反映该视频的最新分类归属
+                    sessionPendingRows[awemeId] = pendingRow.copy(suggestedTags = normalizedTags.joinToString("|"))
+                }
+
+                // 清理不在新标签列表中的已选手势
+                for ((tagName, set) in groupSelections) {
+                    if (tagName !in normalizedTags) {
+                        set.remove(awemeId)
+                    }
+                }
+            }
+            val tagText = newTags.joinToString("、").ifBlank { "已清空标签" }
+            _events.tryEmit(BatchTagReviewEvent.ShowToast("已更新标签：$tagText"))
+            refreshVideosAndGroups()
+        }
+    }
+
     private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
+    private data class Quintup<A, B, C, D, E>(val first: A, val second: B, val third: C, val fourth: D, val fifth: E)
 }

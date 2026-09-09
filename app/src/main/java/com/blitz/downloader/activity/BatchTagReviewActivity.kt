@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,6 +16,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,6 +34,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog as ComposeAlertDialog
@@ -60,6 +64,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,8 +72,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -80,6 +87,9 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.blitz.downloader.R
 import com.blitz.downloader.data.db.DownloadedVideoEntity
+import com.blitz.downloader.dialog.TagCheckGrid
+import com.blitz.downloader.dialog.rememberCheckedTags
+import com.blitz.downloader.model.TagHierarchy
 import com.blitz.downloader.ui.theme.BlitzTheme
 import com.blitz.downloader.viewmodel.BatchTagReviewEvent
 import com.blitz.downloader.viewmodel.BatchTagReviewUiState
@@ -147,6 +157,7 @@ fun BatchTagReviewScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var showPreviewSheet by rememberSaveable { mutableStateOf(false) }
+    var editingVideo by remember { mutableStateOf<DownloadedVideoEntity?>(null) }
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { event ->
@@ -173,6 +184,39 @@ fun BatchTagReviewScreen(
             onToggleExclusion = { awemeId -> viewModel.toggleVideoExclusion(awemeId) },
             onRestoreAll = { viewModel.restoreAllExcludedVideos() },
             onDismiss = { showPreviewSheet = false },
+        )
+    }
+
+    if (editingVideo != null) {
+        val targetVideo = editingVideo!!
+        SingleVideoTagEditSheet(
+            video = targetVideo,
+            allTags = uiState.allTags,
+            currentTags = uiState.videoExistingTags[targetVideo.awemeId].orEmpty(),
+            suggestedTags = uiState.videoSuggestedTags[targetVideo.awemeId].orEmpty(),
+            parentMap = uiState.parentMap,
+            onSave = { awemeId, newTags ->
+                viewModel.saveSingleVideoTags(awemeId, newTags)
+                editingVideo = null
+            },
+            onDismiss = { editingVideo = null },
+            onPlayVideo = {
+                val storageRoot = Environment.getExternalStorageDirectory()
+                @Suppress("DEPRECATION")
+                val file = File(storageRoot, targetVideo.filePath)
+                if (!file.exists()) {
+                    Toast.makeText(context, R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
+                } else {
+                    viewModel.markVideoWatched(targetVideo.awemeId)
+                    val intent = VideoPlayerActivity.createFileIntent(
+                        context = context,
+                        filePath = targetVideo.filePath,
+                        title = targetVideo.desc.trim().ifBlank { targetVideo.userName.ifBlank { targetVideo.awemeId } },
+                        subtitle = targetVideo.userName,
+                    )
+                    context.startActivity(intent)
+                }
+            },
         )
     }
 
@@ -272,6 +316,7 @@ fun BatchTagReviewScreen(
                     onSkipGroup = { viewModel.skipGroup(it) },
                     onUndoGroup = { viewModel.undoGroup(it) },
                     onPlayVideo = onPlayVideo,
+                    onEditVideo = { editingVideo = it },
                 )
             }
         }
@@ -407,6 +452,13 @@ private fun BatchHeaderSection(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "💡 提示：长按任意视频卡片可单条修改标签（支持同类细分标签快捷切换）",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+            )
         }
     }
 }
@@ -420,8 +472,11 @@ private fun GroupsListSection(
     onSkipGroup: (String) -> Unit,
     onUndoGroup: (String) -> Unit,
     onPlayVideo: (TagReviewGroup, DownloadedVideoEntity) -> Unit,
+    onEditVideo: (DownloadedVideoEntity) -> Unit,
 ) {
     var groupToUndo by remember { mutableStateOf<String?>(null) }
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
 
     if (groupToUndo != null) {
         val tagName = groupToUndo!!
@@ -466,6 +521,7 @@ private fun GroupsListSection(
         }
     } else {
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 horizontal = 16.dp,
@@ -473,15 +529,30 @@ private fun GroupsListSection(
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(uiState.groups, key = { it.tagName }) { group ->
+            // 采用 isProcessed 区分 key，避免卡片确认移至末尾时 Compose 自动将视口跟踪滚向已处理区域
+            items(
+                items = uiState.groups,
+                key = { if (it.isProcessed) "processed_${it.tagName}" else "unprocessed_${it.tagName}" },
+            ) { group ->
                 TagGroupCard(
                     group = group,
                     onToggleVideo = { awemeId -> onToggleVideo(group.tagName, awemeId) },
                     onInvertSelection = { onInvertSelection(group.tagName) },
-                    onConfirm = { onConfirmGroup(group.tagName) },
-                    onSkip = { onSkipGroup(group.tagName) },
+                    onConfirm = {
+                        onConfirmGroup(group.tagName)
+                        coroutineScope.launch {
+                            listState.scrollToItem(0, 0)
+                        }
+                    },
+                    onSkip = {
+                        onSkipGroup(group.tagName)
+                        coroutineScope.launch {
+                            listState.scrollToItem(0, 0)
+                        }
+                    },
                     onUndo = { groupToUndo = group.tagName },
                     onPlayVideo = { video -> onPlayVideo(group, video) },
+                    onEditVideo = onEditVideo,
                 )
             }
         }
@@ -498,6 +569,7 @@ private fun TagGroupCard(
     onSkip: () -> Unit,
     onUndo: () -> Unit,
     onPlayVideo: (DownloadedVideoEntity) -> Unit,
+    onEditVideo: (DownloadedVideoEntity) -> Unit,
 ) {
     Card(
         modifier = Modifier
@@ -622,6 +694,7 @@ private fun TagGroupCard(
                                     isTagged = isTagged,
                                     onToggle = { onToggleVideo(video.awemeId) },
                                     onPlay = { onPlayVideo(video) },
+                                    onEdit = { onEditVideo(video) },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }
@@ -636,6 +709,7 @@ private fun TagGroupCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun VideoItemThumbnail(
     video: DownloadedVideoEntity,
@@ -644,9 +718,11 @@ private fun VideoItemThumbnail(
     isTagged: Boolean = false,
     onToggle: () -> Unit,
     onPlay: () -> Unit,
+    onEdit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val storageRoot = Environment.getExternalStorageDirectory()
     @Suppress("DEPRECATION")
     val coverFile = File(storageRoot, video.coverPath)
@@ -666,12 +742,16 @@ private fun VideoItemThumbnail(
                 color = borderColor,
                 shape = RoundedCornerShape(8.dp),
             )
-            .then(
-                if (!isProcessed) {
-                    Modifier.clickable { onToggle() }
-                } else {
-                    Modifier
-                }
+            .combinedClickable(
+                onClick = {
+                    if (!isProcessed) {
+                        onToggle()
+                    }
+                },
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onEdit()
+                },
             ),
     ) {
         Column {
@@ -1049,6 +1129,291 @@ private fun CandidateCoverGridItem(
                     )
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun SingleVideoTagEditSheet(
+    video: DownloadedVideoEntity,
+    allTags: List<String>,
+    currentTags: Set<String>,
+    suggestedTags: Set<String>,
+    parentMap: Map<String, String>,
+    onSave: (awemeId: String, newTags: List<String>) -> Unit,
+    onDismiss: () -> Unit,
+    onPlayVideo: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
+
+    // 初始勾选集合：若该视频在数据库中已有标签以数据库为准；若尚未打标则优先预勾 AI 建议及对应祖先标签
+    val initialTags = remember(currentTags, suggestedTags, parentMap) {
+        if (currentTags.isNotEmpty()) {
+            currentTags
+        } else {
+            suggestedTags.flatMap { listOf(it) + TagHierarchy.ancestorsOf(it, parentMap) }.toSet()
+        }
+    }
+    val checked = rememberCheckedTags(initialTags)
+
+    // 找出与当前视频相关的父标签集合（如当前勾选或 AI 建议了「可爱」，其父标签「颜值」即为相关父标签）
+    val relevantParents = remember(suggestedTags, checked, parentMap) {
+        val parents = mutableSetOf<String>()
+        for (tag in (suggestedTags + checked)) {
+            val p = parentMap[tag]
+            if (!p.isNullOrBlank()) {
+                parents.add(p)
+            }
+            if (tag in parentMap.values) {
+                parents.add(tag)
+            }
+        }
+        parents.toList()
+    }
+
+    // 与相关父标签无关的独立建议标签（如无父无子的独立标签）
+    val independentSuggested = remember(suggestedTags, parentMap) {
+        suggestedTags.filter { it !in parentMap.keys && it !in parentMap.values }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 24.dp),
+        ) {
+            // 顶栏：视频缩略图、文案、作者及操作按钮
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val storageRoot = Environment.getExternalStorageDirectory()
+                @Suppress("DEPRECATION")
+                val coverFile = File(storageRoot, video.coverPath)
+
+                Box(
+                    modifier = Modifier
+                        .size(width = 44.dp, height = 58.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(onClick = onPlayVideo),
+                ) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(coverFile)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .size(24.dp)
+                            .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_play_arrow),
+                            contentDescription = "播放",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = video.desc.trim().ifBlank { video.userName },
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "@${video.userName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (video.tagEditCount > 0) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "已人工修改 ${video.tagEditCount} 次",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+                Button(
+                    onClick = {
+                        onSave(video.awemeId, checked.toList())
+                    },
+                ) {
+                    Text("保存")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 快捷推荐区（同级兄弟细分标签与 AI 独立建议）
+            if (relevantParents.isNotEmpty() || independentSuggested.isNotEmpty()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                    ),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        for (parentName in relevantParents) {
+                            val children = allTags.filter { parentMap[it] == parentName }
+                            if (children.isNotEmpty()) {
+                                Text(
+                                    text = "「$parentName」细分快捷切换：",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    children.forEach { childTag ->
+                                        val isChildChecked = childTag in checked
+                                        FilterChip(
+                                            selected = isChildChecked,
+                                            onClick = {
+                                                if (isChildChecked) {
+                                                    checked.remove(childTag)
+                                                } else {
+                                                    checked.add(childTag)
+                                                    val ancestors = TagHierarchy.ancestorsOf(childTag, parentMap)
+                                                    checked.addAll(ancestors)
+                                                }
+                                            },
+                                            label = { Text(childTag, style = MaterialTheme.typography.labelMedium) },
+                                            leadingIcon = if (isChildChecked) {
+                                                {
+                                                    Icon(
+                                                        painter = painterResource(R.drawable.ic_check),
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(12.dp),
+                                                    )
+                                                }
+                                            } else {
+                                                {
+                                                    Icon(
+                                                        painter = painterResource(R.drawable.ic_add_white),
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(12.dp),
+                                                    )
+                                                }
+                                            },
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+                        }
+
+                        if (independentSuggested.isNotEmpty()) {
+                            Text(
+                                text = "AI 独立建议标签：",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.secondary,
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                independentSuggested.forEach { tag ->
+                                    val isChecked = tag in checked
+                                    FilterChip(
+                                        selected = isChecked,
+                                        onClick = {
+                                            if (isChecked) checked.remove(tag) else checked.add(tag)
+                                        },
+                                        label = { Text(tag, style = MaterialTheme.typography.labelMedium) },
+                                        leadingIcon = if (isChecked) {
+                                            {
+                                                Icon(
+                                                    painter = painterResource(R.drawable.ic_check),
+                                                    contentDescription = null,
+                                                    modifier = Modifier.size(12.dp),
+                                                )
+                                            }
+                                        } else null,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
+            // 全部系统标签栅格
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "全部标签 (${allTags.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "已选 ${checked.size} 项",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            TagCheckGrid(
+                allTags = allTags,
+                checked = checked,
+                onToggle = { tag ->
+                    if (tag in checked) {
+                        checked.remove(tag)
+                    } else {
+                        checked.add(tag)
+                        val ancestors = TagHierarchy.ancestorsOf(tag, parentMap)
+                        checked.addAll(ancestors)
+                    }
+                },
+                maxHeight = 260.dp,
+            )
         }
     }
 }

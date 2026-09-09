@@ -398,17 +398,30 @@ class VideoTagRepository(context: Context) {
      * [secUserId] 为空或没有达到 [threshold] 的标签时返回 `null`——`TagSuggestionRequestBuilder`
      * 按 `null` 处理为"不携带作者先验"。
      *
+     * 数量与层级控制（`ai-author-tag-pruning`）：
+     * - 至多选取 4 个高频标签（[TagHierarchy.pruneAuthorHighFreqTags]）；
+     * - 若前 4 个中包含父子/祖先标签（如「颜值」与「纯欲」），自动剔除父标签并顺延增选，
+     *   保证提供给大模型的先验聚焦于具体细分特征，避免因作者视频多导致标签泛滥全量倾倒。
+     *
      * **不影响** [getHighFrequencyTagsForAuthor]：两者各自独立读同一张 `author_tag_frequency`
-     * 缓存表，批量打标签弹窗的预勾选行为不受这个新方法影响。
+     * 缓存表，批量打标签弹窗的预勾选行为不受这个方法影响。
      */
     suspend fun getAuthorProfileForAi(secUserId: String, threshold: Int): AuthorProfile? {
         if (secUserId.isBlank()) return null
         val rows = authorTagFrequencyDao.getHighFrequencyTagsWithRatio(secUserId, threshold)
         if (rows.isEmpty()) return null
+        val parents = getParentMap()
+        val prunedRows = TagHierarchy.pruneAuthorHighFreqTags(
+            candidates = rows,
+            getTagName = { it.tagName },
+            parents = parents,
+            maxCount = 4,
+        )
+        if (prunedRows.isEmpty()) return null
         return AuthorProfile(
             secUserId = secUserId,
             sampleCount = rows.first().sampleCount,
-            topTags = rows.map { AuthorTagRatio(it.tagId, it.tagName, it.count, it.ratio) },
+            topTags = prunedRows.map { AuthorTagRatio(it.tagId, it.tagName, it.count, it.ratio) },
         )
     }
 }
