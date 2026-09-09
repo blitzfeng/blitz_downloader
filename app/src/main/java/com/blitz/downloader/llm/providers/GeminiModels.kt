@@ -121,7 +121,8 @@ data class GeminiVisualDimensionPayload(
 )
 
 data class GeminiTagCandidatePayload(
-    val tagId: Long,
-    val confidence: Float,
+    val tagName: String = "",
+    val tagId: Long = 0L,
+    val confidence: Float = 1.0f,
     val evidenceFrames: List<Int> = emptyList(),
 )

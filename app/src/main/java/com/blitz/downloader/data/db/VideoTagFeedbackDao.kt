@@ -19,6 +19,12 @@ interface VideoTagFeedbackDao {
     suspend fun countByAwemeId(awemeId: String): Int
 
     /**
+     * 删除指定视频的反馈记录（在撤销整组处理恢复待整理状态时使用）。
+     */
+    @Query("DELETE FROM video_tag_feedback WHERE awemeId IN (:awemeIds)")
+    suspend fun deleteByAwemeIds(awemeIds: Collection<String>): Int
+
+    /**
      * 某作者最近 [limit] 条反馈样例，按时间倒序——few-shot 采样"同作者优先"。
      * 需要联查 `downloaded_videos` 取 `videoAuthorSecUserId`（本表不冗余该字段）。
      */

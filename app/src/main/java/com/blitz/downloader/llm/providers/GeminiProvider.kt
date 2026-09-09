@@ -175,8 +175,9 @@ class GeminiProvider(private val context: Context) : LlmProvider {
         appendLine("   分别说明该维度在图片中是否可见（visibility: high/medium/low/none）、观察到的具体特征、以及依据的图片序号")
         appendLine("   （图片序号从 0 开始，0 是封面，之后依次是关键帧）。某个维度在图片里完全看不出来时，visibility 填 \"none\"，")
         appendLine("   不要编造证据。")
-        appendLine("2. 从下面给出的标签词表中选择候选标签，仅返回词表中已有的 tagId，不要创造新标签或返回词表之外的名字。")
-        appendLine("   每个候选标签给出 confidence（0~1）与它依据的图片序号 evidenceFrames。")
+        appendLine("2. 从下面给出的标签词表中选择候选标签，必须返回词表中已有标签的 tagName（标签名称，如 \"颜值\"）与对应的 tagId，不要创造新标签或返回词表之外的名字。")
+        appendLine("   每个候选标签给出 confidence（0~1）与支撑该标签的图片序号 evidenceFrames。")
+        appendLine("   注意：evidenceFrames 只需填写观察到相关特征的少数关键图片序号，不要无脑填入全部图片序号。")
         appendLine("   如果某个标签依赖的视觉维度在图片中缺乏清晰证据（尤其是颜值类标签依赖清晰人脸），必须降低该标签的置信度")
         appendLine("   或直接不返回这个候选，不能仅凭文案或猜测给出高置信度。")
         appendLine()
@@ -184,7 +185,7 @@ class GeminiProvider(private val context: Context) : LlmProvider {
             appendLine("视频文案：${request.desc}")
             appendLine()
         }
-        appendLine("可选标签词表（JSON，字段：tagId/name/description/parentTagId，description 是人工定义的判断标准，")
+        appendLine("可选标签词表（JSON，字段：name 是标签名称 tagName、tagId 是标签标识、description 是人工定义的判断标准，")
         appendLine("parentTagId 非空表示存在上级大类，仅供参考不代表必须同时选中）：")
         appendLine(gson.toJson(request.tagVocabulary))
         appendLine()
@@ -227,7 +228,14 @@ class GeminiProvider(private val context: Context) : LlmProvider {
             clothing = visualFeatureProfile.clothing.toDomain(),
             action = visualFeatureProfile.action.toDomain(),
         ),
-        candidates = candidates.map { TagCandidate(it.tagId, it.confidence, it.evidenceFrames) },
+        candidates = candidates.map {
+            TagCandidate(
+                tagId = it.tagId,
+                confidence = it.confidence,
+                evidenceFrames = it.evidenceFrames,
+                tagName = it.tagName,
+            )
+        },
     )
 
     private fun GeminiVisualDimensionPayload.toDomain(): VisualDimension =
@@ -384,11 +392,12 @@ class GeminiProvider(private val context: Context) : LlmProvider {
                     items = GeminiSchema(
                         type = "OBJECT",
                         properties = mapOf(
+                            "tagName" to GeminiSchema(type = "STRING"),
                             "tagId" to GeminiSchema(type = "INTEGER"),
                             "confidence" to GeminiSchema(type = "NUMBER"),
                             "evidenceFrames" to GeminiSchema(type = "ARRAY", items = GeminiSchema(type = "INTEGER")),
                         ),
-                        required = listOf("tagId", "confidence"),
+                        required = listOf("tagName", "confidence"),
                     ),
                 ),
             ),

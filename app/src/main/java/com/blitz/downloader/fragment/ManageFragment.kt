@@ -16,6 +16,7 @@ import android.view.ViewGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.SearchView
 import androidx.core.view.GravityCompat
@@ -33,6 +34,8 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.blitz.downloader.R
+import com.blitz.downloader.activity.BatchTagReviewActivity
+import com.blitz.downloader.activity.BatchTagReviewResultState
 import com.blitz.downloader.activity.TagManageActivity
 import com.blitz.downloader.adapter.AuthorFilterAdapter
 import com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount
@@ -77,6 +80,15 @@ class ManageFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val viewModel: ManageViewModel by viewModels()
+
+    /** 批量标签整理页面返回时的回调：触发视频列表与标签栏刷新一次 */
+    private val batchTagReviewLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        if (BatchTagReviewResultState.consumeNeedsRefresh()) {
+            viewModel.requestReload(ManageViewModel.TAB_VIDEO)
+        }
+    }
 
     /** 记录当前菜单中的 SearchView，便于切 Tab / 切走本页时折叠、清空。 */
     private var searchMenuItem: MenuItem? = null
@@ -187,6 +199,13 @@ class ManageFragment : Fragment() {
         updateBackCallback()
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (BatchTagReviewResultState.consumeNeedsRefresh()) {
+            viewModel.requestReload(ManageViewModel.TAB_VIDEO)
+        }
+    }
+
     private fun observeViewModel() {
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -216,6 +235,7 @@ class ManageFragment : Fragment() {
                 launch { viewModel.lanState.collect { renderLanState(it) } }
                 launch { viewModel.lanError.collect { onLanStartFailed(it) } }
                 launch { viewModel.lanPreparing.collect { renderLanPreparing(it) } }
+                launch { viewModel.hasBatch.collect { refreshMenu() } }
             }
         }
     }
@@ -526,6 +546,7 @@ class ManageFragment : Fragment() {
         val setTagsSelected = menu.findItem(R.id.action_set_tags_selected)
         val selectAll = menu.findItem(R.id.action_select_all)
         val manageTags = menu.findItem(R.id.action_manage_tags)
+        val batchTagReview = menu.findItem(R.id.action_batch_tag_review)
 
         val filterAuthor = menu.findItem(R.id.action_filter_author)
         val filterRelation = menu.findItem(R.id.action_filter_relation)
@@ -546,6 +567,7 @@ class ManageFragment : Fragment() {
             search?.isVisible = false
             clearInvalid?.isVisible = false
             manageTags?.isVisible = false
+            batchTagReview?.isVisible = false
             filterAuthor?.isVisible = false
             filterRelation?.isVisible = false
             filterTagCount?.isVisible = false
@@ -573,6 +595,7 @@ class ManageFragment : Fragment() {
             // 「清除已失效」仅在视频 Tab 下显示
             clearInvalid?.isVisible = onVideoTab
             manageTags?.isVisible = true
+            batchTagReview?.isVisible = viewModel.hasBatch.value
             filterAuthor?.isVisible = true
             filterRelation?.isVisible = true
             filterRelation?.title = relationMenuTitle()
@@ -661,6 +684,10 @@ class ManageFragment : Fragment() {
             }
             R.id.action_manage_tags -> {
                 startActivity(Intent(requireContext(), TagManageActivity::class.java))
+                true
+            }
+            R.id.action_batch_tag_review -> {
+                batchTagReviewLauncher.launch(Intent(requireContext(), BatchTagReviewActivity::class.java))
                 true
             }
             R.id.action_filter_author -> {

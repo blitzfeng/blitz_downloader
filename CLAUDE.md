@@ -31,7 +31,7 @@ JVM 单元测试目前只有 5 个，都是纯 JVM、不读外部 fixture：`Awe
 
 ```
 activity (MainActivity, DouyinWebBrowserActivity, ManageActivity, TagManageActivity,
-          SettingsActivity, VideoPlayerActivity, ImageViewerActivity)
+          SettingsActivity, VideoPlayerActivity, ImageViewerActivity, BatchTagReviewActivity)
 fragment (DownloadFragment → ListDownloadFragment / SingleDownloadFragment（列表下载在前）,
           ManageFragment → ManageVideoFragment / ManageImageFragment, SettingsFragment)
 adapter  (VideoGridAdapter, ManageGridAdapter, TagManageAdapter, TagFilterAdapter, AuthorFilterAdapter)
@@ -40,13 +40,14 @@ dialog   (PhotoSelectionBottomSheet)
    ▼  │
 viewmodel (ListDownloadViewModel, ManageViewModel — Activity 级,
            ManageTabViewModel → ManageVideoViewModel / ManageImageViewModel,
-           SettingsViewModel, TagManageViewModel,
+           SettingsViewModel, TagManageViewModel, BatchTagReviewViewModel,
            ShellNavViewModel — Activity 级跨 tab 导航中转)
    │       业务层：网络请求、数据库读写、分页与筛选、状态持有
    ▼
 download (BatchDownloadCoordinator, DouyinVideoHttp, MediaExportManager,
           DownloadService — 前台下载服务, DownloadJob/DownloadRecordMeta,
           DownloadEvents — 进程内下载完成事件总线)
+service  (AiBatchAnalysisService — 前台批量 AI 分析服务, AiBatchAnalysisEvents)
    │
    ├─▶ net (LanFileServer — 「发送到电脑」局域网导出)
    ▼
@@ -67,11 +68,12 @@ llm (LlmProvider — 可插拔接口, llm/providers/GeminiProvider — 唯一实
 
 data + data/db (Room: AppDatabase, DownloadedVideoEntity/Dao, TagEntity/Dao, VideoTagEntity/Dao,
                 VideoAiAnalysisEntity/Dao, VideoVisualFeatureEntity/Dao, VideoTagFeedbackEntity/Dao,
-                TagPreferenceEntity/Dao, PreferenceProfileEntity/Dao
+                TagPreferenceEntity/Dao, PreferenceProfileEntity/Dao, DownloadBatchEntity/Dao,
+                AiTagSuggestionPendingEntity/Dao
                 + DownloadedVideoRepository, VideoTagRepository, AiTagSuggestionRepository,
                 DatabaseBackupManager)
 
-model (VideoItemUiModel, ManageGridItem, MediaOrientation)
+model (VideoItemUiModel, ManageGridItem, MediaOrientation, BatchReviewLogic)
 model/filter (ManageFilterState, ManageRelationFilter, ManageSortOrder,
               ManageTagCountFilter, ManageTagEditCountFilter)
 
@@ -94,8 +96,9 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
 | `ui/theme/` | Compose 主题（`BlitzTheme`、配色） | 具体页面 / 弹窗的 Composable |
 | `ui/` | 跨页面复用的 Composable 组件（如 `LivePhotoPlayer`，浏览页与下载页预览共用） | 单处使用的私有 Composable（留在其宿主文件） |
 | `viewmodel/` | ViewModel 及其 UiState / Event / Command 类型 | Android View 引用、`R.string` 拼接 |
-| `model/` | 跨层数据模型 | 只有一个 Adapter 用的私有类型 |
+| `model/` | 跨层数据模型与通用纯业务逻辑 | 只有一个 Adapter 用的私有类型 |
 | `model/filter/` | 筛选与排序的枚举、筛选状态 | 筛选的执行逻辑（在 ViewModel 里） |
+| `service/` | 前台服务（如 `AiBatchAnalysisService`）与进程内服务事件总线 | UI 渲染与 Activity 交互 |
 | `util/` | 无状态工具与样式常量 | 有生命周期的对象 |
 | `llm/` | LLM 调用层：Provider 接口、各厂商实现（`llm/providers/`）、请求/响应模型、prompt 组装（`ai-tag-suggestions`） | 抖音相关的一切（那是 `api/` 的地盘）、Room 实体 |
 | `api/` `download/` `data/` `net/` `config/` | 见上方架构图 | UI 相关的一切 |
@@ -651,12 +654,47 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
   正则性能坑。剩余内容仍可能有几十 KB，Logcat 单行 ~4000 字符会截断，所以按 3000 字符分行输出，
   排查时去 `adb logcat` 搜 TAG 而不是看单条日志。
 
+### 批量下载后标签整理（batch-ai-tag-review）
+
+批量下载完成后，系统支持批量异步进行 AI 标签分析，并在统一的 Compose 页面集中审核并按标签聚类确认，解决批量下载后逐条打标签效率低的问题。完整设计见 `openspec/changes/batch-ai-tag-review/`。
+
+**数据流与生命周期**：
+
+1. **批次写入（`DownloadService.processJob`）**：单次批量下载成功入库数量大于 2 条（`recordedIds.size > 2`）时，写入一条 `download_batch` 记录（`awemeIds` 用 `|` 分隔有序保存）。若下载条数 ≤ 2，不生成批次。
+2. **管理页入口**：管理页（`ManageFragment`）右上角菜单动态展示「最近下载-设置标签」（`action_batch_tag_review`）。仅在 `download_batch` 表中存在至少一条记录时可见，无批次时自动隐藏，避免冗余呈现。
+3. **页面数据加载与待分析封面预览（`BatchTagReviewViewModel` + `BatchTagReviewActivity`）**：
+   - 加载最新批次（`download_batch` 倒序首条）的全部视频；
+   - 联合加载上一批次中标签未编辑过（`tagEditCount == 0`）的视频（已编辑过的视频不加载）；
+   - 提供按标签编辑次数（全部 / 0次 / 1-2次 / 3+次）即时过滤展示的 UI。
+   - **待分析封面预览**：提供顶部 Toolbar 与头部操作区「封面预览」入口，通过 `ModalBottomSheet` 以纯封面网格（3列无冗余文本）展示候选视频；支持在预览中点击移除图标 `×` 或卡片排除特定视频，使其**不参与后续 LLM 分析**（节约 token 与耗时），并提供恢复全部与分标签过滤（全部/待分析/已排除）；排除状态实时联动主界面统计与分析按钮。
+4. **后台批量分析（`AiBatchAnalysisService`）**：
+   - 采用前台服务（`foregroundServiceType=dataSync`），在通知栏展示实时处理进度（如 `正在分析 (3/10)...`），通知点击可返回批量整理页面。
+   - 启动前检查 AI 开关与 Gemini API Key；未开启或未配 Key 时不发请求，直接弹窗/引导用户前往设置页配置。
+   - 仅将用户未排除的活跃视频 `awemeIds` 提交给服务进行串行分析，单条失败记录日志并跳过，不阻断整体流程。
+   - 分析成功后将 `analysisId` 与候选标签名序列化 upsert 进 `ai_tag_suggestion_pending` 暂存表，发出全局通知并广播事件（`AiBatchAnalysisEvents`）。离开页面或切后台不会中断分析。
+5. **按标签分组审核与确认（`BatchReviewLogic` + `BatchTagReviewActivity`）**：
+   - 纯 Compose + Material 3 实现。
+   - 读取涉及视频在 `ai_tag_suggestion_pending` 中的待处理记录，按建议标签聚类分组（`BatchTagGroup`），并按**组内视频数量降序排列**。
+   - 每个分组卡片内展示命中该标签的视频缩略图网格（默认全选），支持用户在组内取消勾选特定视频。
+   - **操作按钮**：「反选」、「跳过」、「确认」（紧凑尺寸）。
+   - **收藏夹同名标签自动预处理**：从收藏夹下载的视频自带收藏夹同名标签；若 AI 分析也给出了该标签，直接在初始化时自动标记为已处理，无需人工重复确认。
+   - **父子标签级联联动与差集扣减**：确认子标签时，若其父标签包含的视频完全在子标签中，父标签自动标记为已处理；若父标签视频多于子标签视频，父标签以差集模式扣除已打标视频后继续保留等待用户确认。
+   - **已处理状态与长按撤销**：已处理的分组移至列表展示；对已确认打标的视频右上角显示圆底对号角标（`ic_check`），标题动态显示打标进度（如 `已打标 3/5 (长按撤销)`）；支持长按已处理分组撤销打标并恢复为待处理状态。
+   - **视频播放与已看标记**：支持在审核网格中点击视频封面跳转播放器预览，返回后自动标记为已看。
+   - **防重与重置**：分组按 `tagName` 聚合去重；点击「开启 LLM 分析」时自动清空历史暂存记录与内存列表，防止多次分析数据堆叠冲突。
+   - **确认操作**：点击「确认」将该标签通过 `VideoTagRepository.addTagsAsUserEdit` 写入当前组内勾选的视频（`tagEditCount + 1`）。若同一视频命中多个建议标签且在多个组都被确认，最终应用的标签为所有确认分组的**并集**。
+   - **跳过操作**：点击「跳过」标记该组已处理，组内视频不打该标签。组内取消勾选的视频在反馈分类上等同于跳过。
+6. **反馈闭环与暂存清理**：
+   - 跟踪每条视频所有相关建议标签组的处理状态。仅当某条视频在**所有涉及的分组都被确认或跳过**（待决分组数为 0）时，才触发该视频的反馈结算。
+   - 读取该视频最新的 `analysisId` 与实际确认标签，分类写入 `video_tag_feedback`（`ACCEPTED` / `REJECTED` / `MISSED`），触发 `TagPreferenceDao.recomputeAll()` 重算统计，并从 `ai_tag_suggestion_pending` 中删除该条暂存记录。
+   - 若用户中途退出页面，未完成全部分组处理的视频仍保留在暂存表中，下次进入页面可继续审核。
+
 ### 持久化（Room）
 
 **数据库结构的权威文档是 `.cursor/rules/db-schema.md`，改 `data/db/` 之前先读它。** 要点：
 
-- `AppDatabase` 当前 **version = 19**（v19 新建 `ai-tag-suggestions` 的 5 张 AI 学习资产表；v18 新增 `tags.id`/`tags.description`；v17 新增 `tags.parentTagName`；v16 新建 `author_tag_frequency` 缓存表；v15 新增 `hasLivePhoto`；v14 新增 `mediaWidth` / `mediaHeight`）。九张表：`downloaded_videos`、`video_tags`、`tags`、`author_tag_frequency`、`video_ai_analysis`、`video_visual_feature`、`video_tag_feedback`、`tag_preference`、`preference_profile`。
-- 所有迁移 `MIGRATION_1_2 .. MIGRATION_18_19` 都在 `AppDatabase` 里显式列出。builder 上虽然还挂着 `fallbackToDestructiveMigration()` 作兜底，但**不要**依赖它来"对付过去"——漏写迁移 = 用户数据被清空。新增字段时：写下一版 `MIGRATION_x_y` → `version` 递增 → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。**新建表**（区别于 `ALTER TABLE` 加列）：迁移 SQL 里不要写 `DEFAULT` 子句，除非对应 Entity 字段有 `@ColumnInfo(defaultValue = ...)`——两边对不上会在 Room 运行时 schema 校验时报错，`video_ai_analysis` 等 5 张新表的迁移已经踩过这条、按"新建表不写 DEFAULT"的规则改对，新增表照抄这个模式。
+- `AppDatabase` 当前 **version = 20**（v20 新建批量打标签关联表 `download_batch` 与待确认暂存表 `ai_tag_suggestion_pending`；v19 新建 `ai-tag-suggestions` 的 5 张 AI 学习资产表；v18 新增 `tags.id`/`tags.description`；v17 新增 `tags.parentTagName`；v16 新建 `author_tag_frequency` 缓存表；v15 新增 `hasLivePhoto`；v14 新增 `mediaWidth` / `mediaHeight`）。十一张表：`downloaded_videos`、`video_tags`、`tags`、`author_tag_frequency`、`video_ai_analysis`、`video_visual_feature`、`video_tag_feedback`、`tag_preference`、`preference_profile`、`download_batch`、`ai_tag_suggestion_pending`。
+- 所有迁移 `MIGRATION_1_2 .. MIGRATION_19_20` 都在 `AppDatabase` 里显式列出。builder 上虽然还挂着 `fallbackToDestructiveMigration()` 作兜底，但**不要**依赖它来"对付过去"——漏写迁移 = 用户数据被清空。新增字段时：写下一版 `MIGRATION_x_y` → `version` 递增 → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。**新建表**（区别于 `ALTER TABLE` 加列）：迁移 SQL 里不要写 `DEFAULT` 子句，除非对应 Entity 字段有 `@ColumnInfo(defaultValue = ...)`——两边对不上会在 Room 运行时 schema 校验时报错，`video_ai_analysis` 等 5 张新表与 `download_batch` 等新表的迁移已经踩过这条、按"新建表不写 DEFAULT"的规则改对，新增表照抄这个模式。
 - `hasLivePhoto`（v15）标记「实况图（动图）图集」（图集里至少一张带 mp4），下载时算出（`imageVideoUrls` 有非空项）写入，供下载页 / 管理页列表显示动图角标（左上角小播放图标，透明背景，与「已下载」/「已导出」徽标并排在同一水平容器里，谁 gone 谁不占位）。**下载页不读它**（内存里 `VideoItemUiModel.hasLivePhoto` 现算），只有管理页读。旧记录默认 false，不做历史回填。
 - `watched`（是否已看过）只由**管理页进入视频播放页**置位：`ManageVideoViewModel.openVideoPlayer` 把 `awemeIds` 随 `createListFileIntent` 传给播放页，播放页每加载一条就写库（含上下滑动切到的）。列表侧「未看过」标记的刷新分两条路：点开那条就地标掉，滑动看过的靠 `ManageVideoFragment.onResume` → `refreshWatchedFlags()` 回查——**别把其中一条删掉当冗余**，也别指望 ViewModel 的 `init` 或 StateFlow 自动收集能替代 `onResume` 那条（ViewModel 不随 `onResume` 重建）。
 - `mediaWidth` / `mediaHeight`（v14）存媒体的**呈现宽高**（已做旋转 / EXIF 修正），`0` = 未知。只服务于局域网导出的横屏/竖屏分包，方向由 `MediaOrientation.of` 现算、不落库。图集也会写（探首图），当前不用，为后续留数据。详见上方「导出管道」。

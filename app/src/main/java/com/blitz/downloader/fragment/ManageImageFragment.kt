@@ -138,6 +138,7 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image) {
         is ManageCommand.DeleteSelected -> viewModel.deleteSelected(command.ids)
         is ManageCommand.LoadFullScopeThenSelectAll -> viewModel.loadFullScope()
         is ManageCommand.MarkExported -> viewModel.markExported(command.awemeIds)
+        is ManageCommand.Reload -> viewModel.pullToRefresh()
         // 图片 Tab 不支持标签与清除失效
         is ManageCommand.SetTagsSelected, is ManageCommand.ClearInvalid -> Unit
     }

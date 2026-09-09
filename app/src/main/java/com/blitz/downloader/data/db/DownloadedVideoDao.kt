@@ -47,6 +47,13 @@ interface DownloadedVideoDao {
     suspend fun incrementTagEditCount(awemeIds: List<String>): Int
 
     /**
+     * 标签修改次数 -1，最低归 0（撤销写入标签时回滚）。
+     * [awemeIds] 由调用方分批传入（SQLite 变量上限）。
+     */
+    @Query("UPDATE downloaded_videos SET tagEditCount = MAX(0, tagEditCount - 1) WHERE awemeId IN (:awemeIds)")
+    suspend fun decrementTagEditCount(awemeIds: List<String>): Int
+
+    /**
      * 标记为已看过（管理页进入视频播放页时触发）。只置位、不回退，重复调用无副作用。
      * [awemeIds] 由 Repository 分批传入（SQLite 变量上限）。
      */
@@ -74,6 +81,9 @@ interface DownloadedVideoDao {
 
     @Query("SELECT awemeId FROM downloaded_videos WHERE awemeId IN (:ids)")
     suspend fun getAwemeIdsContainedIn(ids: List<String>): List<String>
+
+    @Query("SELECT * FROM downloaded_videos WHERE awemeId IN (:awemeIds)")
+    suspend fun getByAwemeIds(awemeIds: List<String>): List<DownloadedVideoEntity>
 
     @Query("SELECT COUNT(*) FROM downloaded_videos WHERE mediaType = :mediaType")
     suspend fun countByMediaType(mediaType: String): Int

@@ -1,6 +1,7 @@
 package com.blitz.downloader.data
 
 import android.content.Context
+import android.util.Log
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.db.AppDatabase
 import com.blitz.downloader.data.db.ConfirmedFeedbackRow
@@ -43,11 +44,11 @@ class AiTagSuggestionRepository(context: Context) {
     /** 设置页「测试连接」按钮用：只验证 Key/网络/模型可用，不组装标签词表、不落库。 */
     suspend fun testConnection(): Result<String> = llmProvider.testConnection()
 
-    /** 一次成功建议的结果：分析记录 id（反馈写入的唯一凭证）+ 结构化视觉证据 + 过滤后的候选标签 id。 */
     data class SuggestionOutcome(
         val analysisId: Long,
         val visualFeatureProfile: VisualFeatureProfile,
         val candidateTagIds: List<Long>,
+        val candidateTagNames: List<String> = emptyList(),
     )
 
     /**
@@ -64,9 +65,12 @@ class AiTagSuggestionRepository(context: Context) {
         coverBytes: ByteArray,
         videoFile: File?,
     ): Result<SuggestionOutcome> {
+        // 自动补齐尚未分配数值标识（id == 0）的历史标签，确保所有标签都有唯一 id
+        videoTagRepository.backfillTagIds()
         val tags = videoTagRepository.getAvailableTagEntities()
         if (tags.isEmpty()) return Result.failure(IllegalStateException("没有可用标签，无法发起 AI 建议"))
-        val validTagIds = tags.mapTo(HashSet()) { it.id }
+        val tagByName = tags.associateBy { it.tagName }
+        val tagById = tags.filter { it.id > 0 }.associateBy { it.id }
 
         val keyFrames = videoFile?.let { VideoFrameExtractor.extract(it) }.orEmpty()
         val coverImage = ImagePart(jpegBytes = coverBytes, hasFace = false)
@@ -88,8 +92,29 @@ class AiTagSuggestionRepository(context: Context) {
 
         val response = llmProvider.generateTagSuggestion(request).getOrElse { return Result.failure(it) }
 
-        // spec"建议结果仅限于系统现有标签词表"：按 tagId 精确匹配过滤，词表外的项直接丢弃
-        val filteredCandidates = response.candidates.filter { it.tagId in validTagIds }
+        // spec"建议结果仅限于系统现有标签词表"：优先按直观的 tagName 匹配，备选按 tagId 匹配，词表外的项直接丢弃
+        val resolvedCandidates = response.candidates.mapNotNull { candidate ->
+            val entity = (if (candidate.tagName.isNotBlank()) tagByName[candidate.tagName] else null)
+                ?: tagById[candidate.tagId]
+                ?: return@mapNotNull null
+            candidate.copy(tagId = entity.id, tagName = entity.tagName)
+        }
+
+        // 去重：同一标签若被模型针对多帧重复输出，合并 evidenceFrames 并取最高置信度
+        val deduplicatedCandidates = resolvedCandidates
+            .groupBy { it.tagName }
+            .map { (tagName, items) ->
+                val best = items.maxByOrNull { it.confidence } ?: items.first()
+                val mergedFrames = items.flatMap { it.evidenceFrames }.distinct().sorted()
+                com.blitz.downloader.llm.TagCandidate(
+                    tagId = best.tagId,
+                    confidence = best.confidence,
+                    evidenceFrames = mergedFrames,
+                    tagName = tagName,
+                )
+            }
+
+        Log.i(TAG, "[$awemeId] AI 建议标签结果: ${deduplicatedCandidates.map { "${it.tagName}(${it.confidence})" }}")
 
         val now = System.currentTimeMillis()
         val analysisId = videoAiAnalysisDao.insert(
@@ -98,7 +123,7 @@ class AiTagSuggestionRepository(context: Context) {
                 provider = llmProvider.providerId,
                 model = llmProvider.modelId,
                 profileVersion = PROFILE_SCHEMA_VERSION,
-                suggestedTagIds = SuggestedTagCodec.encode(filteredCandidates),
+                suggestedTagIds = SuggestedTagCodec.encode(deduplicatedCandidates),
                 succeeded = true,
                 createdAtMillis = now,
             ),
@@ -116,7 +141,8 @@ class AiTagSuggestionRepository(context: Context) {
             SuggestionOutcome(
                 analysisId = analysisId,
                 visualFeatureProfile = response.visualFeatureProfile,
-                candidateTagIds = filteredCandidates.map { it.tagId },
+                candidateTagIds = deduplicatedCandidates.map { it.tagId },
+                candidateTagNames = deduplicatedCandidates.map { it.tagName },
             ),
         )
     }
@@ -228,6 +254,8 @@ class AiTagSuggestionRepository(context: Context) {
         videoTagRepository.getAvailableTagEntities().associate { it.id to it.tagName }
 
     companion object {
+        private const val TAG = "AiTagSuggestionRepo"
+
         /** [VisualFeatureProfile] 的 schema 版本，模型升级改变结构时递增。 */
         private const val PROFILE_SCHEMA_VERSION = 1
 

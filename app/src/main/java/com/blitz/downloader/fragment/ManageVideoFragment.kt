@@ -207,6 +207,10 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
         is ManageCommand.ClearInvalid -> viewModel.clearInvalid()
         is ManageCommand.LoadFullScopeThenSelectAll -> viewModel.loadFullScope()
         is ManageCommand.MarkExported -> viewModel.markExported(command.awemeIds)
+        is ManageCommand.Reload -> {
+            viewModel.loadTagFilterBar()
+            viewModel.pullToRefresh()
+        }
     }
 
     // -----------------------------------------------------------------------

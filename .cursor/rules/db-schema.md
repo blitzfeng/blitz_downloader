@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v19**
+> **当前版本：v20**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -20,6 +20,8 @@
 | `video_tag_feedback` | `VideoTagFeedbackEntity` | 按标签逐行的 AI 建议反馈（v19） |
 | `tag_preference` | `TagPreferenceEntity` | 按标签物化的建议准确率统计（v19） |
 | `preference_profile` | `PreferenceProfileEntity` | 压缩后的个人偏好自然语言摘要（v19） |
+| `download_batch` | `DownloadBatchEntity` | 批量下载批次记录（`batch-ai-tag-review`，v20） |
+| `ai_tag_suggestion_pending` | `AiTagSuggestionPendingEntity` | 待处理 AI 建议暂存表（`batch-ai-tag-review`，v20） |
 
 ---
 
@@ -46,6 +48,7 @@
 | v17 | `tags` 新增 `parentTagName`（上级标签名，空字符串=无上级；勾选界面默认值/AI 上下文用，非写入约束） |
 | v18 | `tags` 新增 `id`（稳定数值标识，默认 0=未分配，非主键）与 `description`（人工标签判断标准，默认空字符串），服务 `ai-tag-suggestions` |
 | v19 | 新建 5 张表：`video_ai_analysis`、`video_visual_feature`、`video_tag_feedback`、`tag_preference`、`preference_profile`（`ai-tag-suggestions` 的"AI 学习资产"，见下方表五） |
+| v20 | 新建 2 张表：`download_batch`（批量下载批次记录）、`ai_tag_suggestion_pending`（待处理 AI 建议暂存表），服务于 `batch-ai-tag-review`（见下方表六） |
 
 > **注意**：v4 的 `likeType` 与 `downloadType` 语义重叠，v5 通过重建表删除，**后续不要再加同类冗余字段**。
 
@@ -391,6 +394,46 @@ SELECT COUNT(*) FROM tags WHERE tagName = '美腿'
 
 ---
 
+## 表六：批量下载与标签整理（`batch-ai-tag-review`，v20 新建）
+
+### 设计思路
+
+服务于批量下载后的 AI 建议标签整理。用户批量下载完一批新视频后，自动记录一条下载批次；
+在批量标签整理页面发起 LLM 分析后，待处理建议暂存在独立表中供分组确认，全部处理完成后计入既有反馈表并删除暂存。
+
+| 表名 | 对应 Entity | 用途 |
+|------|-------------|------|
+| `download_batch` | `DownloadBatchEntity` | 批量下载批次记录（仅记录入库数 > 2 的批次） |
+| `ai_tag_suggestion_pending` | `AiTagSuggestionPendingEntity` | 待处理 AI 建议暂存表（分析完成写入，全部确认/跳过后删除） |
+
+### `download_batch` 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | INTEGER PK AUTOINCREMENT | 自增主键 |
+| `createdAtMillis` | INTEGER | 批次生成时间戳（毫秒） |
+| `awemeIds` | TEXT | 本批次包含的视频 awemeId 列表，`\|` 分隔（对齐 `userRelation` 约定） |
+
+**写入规则**：`DownloadService.processJob` 在单次批量下载成功入库后，判断 `recordedIds.size > 2`，是则写入一条记录；≤ 2 条不记录。
+**读取规则**：`DownloadBatchDao.getRecentBatches(2)` 取出最近两条批次。批量标签整理页加载「最近批次全部视频」并合并「上一批次中 `tagEditCount == 0` 的未打标视频」。
+
+### `ai_tag_suggestion_pending` 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `awemeId` | TEXT PK | 视频 ID，主键唯一（单视频至多一条待处理建议） |
+| `analysisId` | INTEGER | 关联 `video_ai_analysis.id`，反馈写入的必需凭证 |
+| `suggestedTags` | TEXT | 本次建议标签名列表，`\|` 分隔，供分组 UI 聚合展示 |
+| `generatedAtMillis` | INTEGER | 建议生成时间戳（毫秒） |
+
+**生命周期**：
+1. `AiBatchAnalysisService` 分析完单条视频后 upsert 一行；
+2. 批量标签整理页内存中按标签分组展示；
+3. 用户完成该视频涉及的所有分组操作（确认/跳过）后，调用 `AiTagSuggestionRepository.recordFeedback` 写入 `video_tag_feedback`，并从本表中删除该行；
+4. 用户中途退出页面未完成的视频保留在此表中，下次进入页面仍可继续处理。
+
+---
+
 ## 标签双表关系总结
 
 ```
@@ -427,4 +470,4 @@ tags(tagName)          video_tags(awemeId, tagName)
 - **管理页展示**：`userRelation` 按 `|` 拆分渲染 chip；`videoAuthorSecUserId` 用于按作者分组/过滤。
 - **下载写入时**：调用 `DownloadedVideoRepository.recordSuccessfulDownload()`，`like` 场景传 `buildUserRelationFromLike(aweme.collectStat)`，`collects` 场景传 `buildUserRelationFromCollection(aweme.userDigged, folderName)`。
 - **标签功能**：通过 `VideoTagRepository` 操作，视频删除时标签自动级联删除，无需手动清理。
-- **新增数据库字段**：当前版本为 **v19**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_19_20` 并将 version 改为 20。
+- **新增数据库字段**：当前版本为 **v20**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_20_21` 并将 version 改为 21。

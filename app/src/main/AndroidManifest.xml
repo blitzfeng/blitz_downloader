@@ -80,9 +80,18 @@
             android:exported="false"
             android:label="@string/image_viewer_title"
             android:parentActivityName=".activity.MainActivity" />
+        <activity
+            android:name=".activity.BatchTagReviewActivity"
+            android:exported="false"
+            android:label="@string/batch_tag_review_title"
+            android:parentActivityName=".activity.MainActivity" />
 
         <service
             android:name=".download.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <service
+            android:name=".service.AiBatchAnalysisService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
     </application>

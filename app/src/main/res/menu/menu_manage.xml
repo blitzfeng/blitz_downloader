@@ -65,6 +65,13 @@
         android:title="@string/manage_menu_tags"
         app:showAsAction="never" />
 
+    <!-- 普通模式下可见：最近下载-设置标签（仅在存在至少一条批次记录时显示） -->
+    <item
+        android:id="@+id/action_batch_tag_review"
+        android:title="@string/manage_menu_batch_tag_review"
+        app:showAsAction="never"
+        android:visible="false" />
+
     <!-- 备份 / 恢复数据库已移到「设置」页（MainActivity Toolbar 入口）。 -->
 
     <!-- 多选模式下可见：全选 / 取消全选（文字形式常驻 Toolbar，标题动态切换） -->

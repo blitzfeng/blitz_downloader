@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.data.DownloadMediaType
+import com.blitz.downloader.data.db.AppDatabase
 import com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.download.BatchDownloadCoordinator
@@ -52,6 +53,17 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo get() = (getApplication<Application>() as BlitzApp).downloadedVideoRepository
     private val tagRepo get() = (getApplication<Application>() as BlitzApp).videoTagRepository
+
+    private val _hasBatch = MutableStateFlow(false)
+    val hasBatch: StateFlow<Boolean> = _hasBatch.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            AppDatabase.getInstance(getApplication()).downloadBatchDao()
+                .observeBatchCount()
+                .collect { count -> _hasBatch.value = count > 0 }
+        }
+    }
 
     // -----------------------------------------------------------------------
     // 筛选条件（按 Tab 独立）
@@ -236,6 +248,8 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
 
     fun requestMarkExported(tab: Int, awemeIds: Set<String>) =
         emitCommand(ManageCommand.MarkExported(tab, awemeIds))
+
+    fun requestReload(tab: Int) = emitCommand(ManageCommand.Reload(tab))
 
     // -----------------------------------------------------------------------
     // 作者抽屉
@@ -580,6 +594,7 @@ sealed interface ManageCommand {
     data class ClearInvalid(override val tab: Int) : ManageCommand
     data class LoadFullScopeThenSelectAll(override val tab: Int) : ManageCommand
     data class MarkExported(override val tab: Int, val awemeIds: Set<String>) : ManageCommand
+    data class Reload(override val tab: Int) : ManageCommand
 }
 
 /** 统计面板的原始数据；文案拼接留在视图层。 */

@@ -19,6 +19,8 @@ import com.blitz.downloader.R
 import com.blitz.downloader.activity.MainActivity
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.VideoTagRepository
+import com.blitz.downloader.data.db.AppDatabase
+import com.blitz.downloader.data.db.DownloadBatchEntity
 import com.blitz.downloader.model.VideoItemUiModel
 import com.blitz.downloader.util.MediaOrientationProbe
 import java.io.File
@@ -162,6 +164,17 @@ class DownloadService : Service() {
             if (recordedIds.isNotEmpty()) {
                 tagRepo.recomputeAuthorTagFrequency()
                 AppSettings.setTagFrequencyLastAnalyzedAtMillis(applicationContext, System.currentTimeMillis())
+            }
+
+            // 批量下载成功入库数 > 2 时，记录一条下载批次，供批量标签整理页面加载；≤ 2 条不记录
+            if (recordedIds.size > 2) {
+                val db = AppDatabase.getInstance(applicationContext)
+                db.downloadBatchDao().insert(
+                    DownloadBatchEntity(
+                        createdAtMillis = System.currentTimeMillis(),
+                        awemeIds = recordedIds.joinToString("|"),
+                    ),
+                )
             }
         }
 

@@ -20,6 +20,10 @@ interface VideoTagDao {
     @Query("DELETE FROM video_tags WHERE awemeId = :awemeId AND tagName = :tagName")
     suspend fun delete(awemeId: String, tagName: String)
 
+    /** 批量删除一组视频的某个标签。 */
+    @Query("DELETE FROM video_tags WHERE tagName = :tagName AND awemeId IN (:awemeIds)")
+    suspend fun deleteTagFromVideos(awemeIds: Collection<String>, tagName: String): Int
+
     /** 删除某视频的所有标签。 */
     @Query("DELETE FROM video_tags WHERE awemeId = :awemeId")
     suspend fun deleteAllForVideo(awemeId: String)

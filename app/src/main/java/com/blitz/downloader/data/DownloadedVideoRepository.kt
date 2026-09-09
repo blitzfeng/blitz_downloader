@@ -41,6 +41,20 @@ class DownloadedVideoRepository(context: Context) {
     suspend fun getByMediaTypeAndAuthorSecUserId(mediaType: String, secUserId: String): List<DownloadedVideoEntity> =
         dao.getByMediaTypeAndAuthorSecUserId(mediaType, secUserId)
 
+    /** 按作品 ID 列表批量查询作品实体（分批避免 SQLite 变量超限）。 */
+    suspend fun getByAwemeIds(awemeIds: Collection<String>): List<DownloadedVideoEntity> {
+        if (awemeIds.isEmpty()) return emptyList()
+        val asList = awemeIds.distinct()
+        val result = mutableListOf<DownloadedVideoEntity>()
+        var i = 0
+        while (i < asList.size) {
+            val part = asList.subList(i, (i + 500).coerceAtMost(asList.size))
+            result += dao.getByAwemeIds(part)
+            i += 500
+        }
+        return result
+    }
+
     /** 按作者昵称聚合作品数，按作品数倒序返回（管理页作者抽屉使用）。 */
     suspend fun getAuthorCounts(mediaType: String): List<com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount> =
         dao.getAuthorCountsByMediaType(mediaType)

@@ -55,11 +55,12 @@ data class VisualFeatureProfile(
     val action: VisualDimension? = null,
 )
 
-/** 一个候选标签：仅认标签 id（不接受模型自造名称），[evidenceFrames] 指向 [TagSuggestionRequest] 里第几张图。 */
+/** 一个候选标签：携带标签 id 与名称，[evidenceFrames] 指向 [TagSuggestionRequest] 里第几张图。 */
 data class TagCandidate(
     val tagId: Long,
     val confidence: Float,
     val evidenceFrames: List<Int> = emptyList(),
+    val tagName: String = "",
 )
 
 /** 一次 AI 建议标签请求的完整输出。 */
