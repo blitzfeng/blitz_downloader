@@ -1,9 +1,12 @@
 package com.blitz.downloader.activity
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.os.Bundle
 import android.text.InputFilter
 import android.text.InputType
+import android.view.Menu
 import android.view.MenuItem
 import android.widget.EditText
 import android.widget.Toast
@@ -21,8 +24,10 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
 import com.blitz.downloader.adapter.TagManageAdapter
+import com.blitz.downloader.data.VideoTagRepository
 import com.blitz.downloader.databinding.ActivityTagManageBinding
 import com.blitz.downloader.dialog.TagDescriptionDialogFragment
+import com.blitz.downloader.util.applyStatusBarPadding
 import com.blitz.downloader.viewmodel.TagManageEvent
 import com.blitz.downloader.viewmodel.TagManageViewModel
 import kotlinx.coroutines.launch
@@ -61,7 +66,7 @@ class TagManageActivity : AppCompatActivity() {
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             v.setPadding(navBars.left, 0, navBars.right, 0)
-            binding.toolbarTagManage.setPadding(0, statusBars.top, 0, 0)
+            binding.toolbarTagManage.applyStatusBarPadding(statusBars.top)
             // RecyclerView 底部 padding 保留原有 80dp + 导航栏高度，确保最后一项不被 FAB 遮挡
             binding.rvTagManage.updatePadding(bottom = (80 * resources.displayMetrics.density).toInt() + navBars.bottom)
             // FAB 额外加上导航栏高度，防止被底部导航栏遮挡
@@ -100,43 +105,82 @@ class TagManageActivity : AppCompatActivity() {
         viewModel.persistOrder(adapter.getTagList())
     }
 
-    private fun handleEvent(event: TagManageEvent) = when (event) {
-        is TagManageEvent.TagsLoaded -> adapter.submitList(event.tags, event.parentMap, event.descriptionMap)
-        is TagManageEvent.TagCreated -> {
-            adapter.addItem(event.name)
-            binding.rvTagManage.scrollToPosition(adapter.itemCount - 1)
-            orderDirty = true
+    private fun handleEvent(event: TagManageEvent) {
+        when (event) {
+            is TagManageEvent.TagsLoaded ->
+                adapter.submitList(event.tags, event.parentMap, event.descriptionMap, event.collectFolderMap)
+            is TagManageEvent.TagCreated -> {
+                adapter.addItem(event.name)
+                binding.rvTagManage.scrollToPosition(adapter.itemCount - 1)
+                orderDirty = true
+            }
+            is TagManageEvent.TagRenamed -> {
+                adapter.renameAt(event.position, event.newName)
+                adapter.renameParentReferences(event.oldName, event.newName)
+                adapter.renameDescriptionReference(event.oldName, event.newName)
+                adapter.renameFolderReferences(event.oldName, event.newName)
+            }
+            is TagManageEvent.TagDeleted -> {
+                adapter.removeAt(event.position)
+                adapter.clearParentReferences(event.name)
+                adapter.clearDescriptionReference(event.name)
+                adapter.clearFolderReferences(event.name)
+                orderDirty = true
+                toast("已删除「${event.name}」")
+            }
+            is TagManageEvent.TagAlreadyExists -> toast("标签「${event.name}」已存在")
+            is TagManageEvent.ShowParentPicker -> showParentPickerDialog(event)
+            is TagManageEvent.TagParentSet ->
+                adapter.updateParent(event.position, event.tagName, event.parentTagName)
+            is TagManageEvent.TagDescriptionSet ->
+                adapter.updateDescription(event.tagName, event.description)
+            is TagManageEvent.TagFoldersSet -> {
+                adapter.updateCollectFolders(event.position, event.tagName, event.collectFolderNames)
+                val msg = if (event.collectFolderNames.isNotBlank()) {
+                    getString(R.string.tag_manage_map_folder_saved, event.tagName)
+                } else {
+                    getString(R.string.tag_manage_map_folder_cleared, event.tagName)
+                }
+                toast(msg)
+            }
+            is TagManageEvent.TagsExported -> {
+                if (event.count == 0) {
+                    toast(getString(R.string.tag_manage_empty_export))
+                    return
+                }
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("Tags JSON", event.json)
+                clipboard.setPrimaryClip(clip)
+                toast(getString(R.string.tag_manage_copied_to_clipboard, event.count))
+            }
         }
-        is TagManageEvent.TagRenamed -> {
-            adapter.renameAt(event.position, event.newName)
-            adapter.renameParentReferences(event.oldName, event.newName)
-            adapter.renameDescriptionReference(event.oldName, event.newName)
-        }
-        is TagManageEvent.TagDeleted -> {
-            adapter.removeAt(event.position)
-            adapter.clearParentReferences(event.name)
-            adapter.clearDescriptionReference(event.name)
-            orderDirty = true
-            toast("已删除「${event.name}」")
-        }
-        is TagManageEvent.TagAlreadyExists -> toast("标签「${event.name}」已存在")
-        is TagManageEvent.ShowParentPicker -> showParentPickerDialog(event)
-        is TagManageEvent.TagParentSet ->
-            adapter.updateParent(event.position, event.tagName, event.parentTagName)
-        is TagManageEvent.TagDescriptionSet ->
-            adapter.updateDescription(event.tagName, event.description)
     }
 
     private fun toast(text: CharSequence) {
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
     }
 
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.menu_tag_manage, menu)
+        return true
+    }
+
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == android.R.id.home) {
-            finish()
-            return true
+        return when (item.itemId) {
+            android.R.id.home -> {
+                finish()
+                true
+            }
+            R.id.action_export_tags_json -> {
+                if (orderDirty) {
+                    orderDirty = false
+                    viewModel.persistOrder(adapter.getTagList())
+                }
+                viewModel.exportTagsJson(adapter.getTagList())
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
         }
-        return super.onOptionsItemSelected(item)
     }
 
     // ── 列表初始化 ────────────────────────────────────────────────────────────
@@ -149,6 +193,7 @@ class TagManageActivity : AppCompatActivity() {
             onEditDescription = { _, name ->
                 TagDescriptionDialogFragment.show(this, name, adapter.getDescription(name))
             },
+            onMapFolder = { pos, name -> showMapFolderDialog(pos, name) },
         )
 
         val touchCallback = object : ItemTouchHelper.SimpleCallback(
@@ -260,6 +305,41 @@ class TagManageActivity : AppCompatActivity() {
             }
             .setNegativeButton("取消", null)
             .show()
+    }
+
+    // ── 对话框：映射抖音收藏夹 ────────────────────────────────────────────────
+
+    private fun showMapFolderDialog(position: Int, tagName: String) {
+        val currentFolders = adapter.getCollectFolders(tagName)
+        val formattedPrefill = VideoTagRepository.parseFolderNames(currentFolders).joinToString("\n")
+        val density = resources.displayMetrics.density
+        val hPad = (20 * density).toInt()
+        val vPad = (12 * density).toInt()
+
+        val et = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            isSingleLine = false
+            minLines = 3
+            maxLines = 6
+            hint = getString(R.string.tag_manage_map_folder_hint)
+            setPadding(hPad, vPad, hPad, vPad)
+            if (formattedPrefill.isNotEmpty()) {
+                setText(formattedPrefill)
+                setSelection(formattedPrefill.length)
+            }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.tag_manage_map_folder_title))
+            .setMessage(getString(R.string.tag_manage_map_folder_dialog_msg, tagName))
+            .setView(et)
+            .setPositiveButton("确定") { _, _ ->
+                val text = et.text.toString()
+                viewModel.setTagCollectFolders(position, tagName, text)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+        et.requestFocus()
     }
 
     // ── 工具方法 ──────────────────────────────────────────────────────────────

@@ -391,4 +391,17 @@
     <string name="photo_pick_deselect_all">全不选</string>
     <string name="photo_pick_done">完成</string>
     <string name="photo_pick_none_selected">一张都没选，已取消勾选该图集</string>
+
+    <!-- 标签管理页导出 JSON -->
+    <string name="tag_manage_menu_export_json">导出标签JSON</string>
+    <string name="tag_manage_copied_to_clipboard">已将 %1$d 个标签的 JSON 数据复制到剪切板</string>
+    <string name="tag_manage_empty_export">当前暂无标签数据</string>
+
+    <!-- 标签管理页收藏夹映射 -->
+    <string name="tag_manage_map_folder_title">映射抖音收藏夹</string>
+    <string name="tag_manage_map_folder_dialog_msg">从以下收藏夹批量下载视频时，将自动打上「%1$s」标签，而不再以收藏夹原名创建标签。</string>
+    <string name="tag_manage_map_folder_hint">多个收藏夹名称用换行或逗号分隔\n留空保存可清除映射</string>
+    <string name="tag_manage_map_folder_saved">已保存「%1$s」的收藏夹映射</string>
+    <string name="tag_manage_map_folder_cleared">已清除「%1$s」的收藏夹映射</string>
+    <string name="tag_manage_mapped_folders_prefix">映射收藏夹：%1$s</string>
 </resources>

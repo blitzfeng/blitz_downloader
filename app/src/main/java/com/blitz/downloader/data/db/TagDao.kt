@@ -78,4 +78,25 @@ interface TagDao {
     /** 更新单个标签的描述文本，辅助 `ai-tag-suggestions` 的 AI 建议理解标签判断标准。 */
     @Query("UPDATE tags SET description = :description WHERE tagName = :tagName")
     suspend fun updateDescription(tagName: String, description: String)
+
+    /** 更新单个标签映射的抖音收藏夹名称列表（以分号分隔）。 */
+    @Query("UPDATE tags SET collectFolderNames = :collectFolderNames WHERE tagName = :tagName")
+    suspend fun updateCollectFolderNames(tagName: String, collectFolderNames: String)
+
+    /** 单个标签当前映射的收藏夹名称列表；不存在时返回 null。 */
+    @Query("SELECT collectFolderNames FROM tags WHERE tagName = :tagName")
+    suspend fun getCollectFolderNames(tagName: String): String?
+
+    /** 查询所有配置了收藏夹映射的标签及映射关系。 */
+    @Query("SELECT tagName, collectFolderNames FROM tags WHERE collectFolderNames != ''")
+    suspend fun getAllCollectFolderMappings(): List<TagCollectFolderMappingRow>
 }
+
+/**
+ * 标签与收藏夹映射的数据行，仅包含标签名和收藏夹名称列表（分号分隔）。
+ */
+data class TagCollectFolderMappingRow(
+    val tagName: String,
+    val collectFolderNames: String,
+)
+

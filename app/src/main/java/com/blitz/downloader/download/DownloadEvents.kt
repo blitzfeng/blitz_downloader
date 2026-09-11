@@ -24,8 +24,23 @@ object DownloadEvents {
     /** 已成功下载并写入数据库的作品 id 集合。 */
     val recorded: SharedFlow<Set<String>> = _recorded
 
+    data class BatchResult(val success: Int, val failed: Int)
+
+    private val _completed = MutableSharedFlow<BatchResult>(
+        replay = 0,
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** 批量下载任务执行完毕（无论成败）的事件通知。 */
+    val completed: SharedFlow<BatchResult> = _completed
+
     fun notifyRecorded(awemeIds: Set<String>) {
         if (awemeIds.isEmpty()) return
         _recorded.tryEmit(awemeIds)
+    }
+
+    fun notifyCompleted(success: Int, failed: Int) {
+        _completed.tryEmit(BatchResult(success, failed))
     }
 }

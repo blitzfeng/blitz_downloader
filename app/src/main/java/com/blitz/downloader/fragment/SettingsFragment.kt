@@ -22,6 +22,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.blitz.downloader.R
+import com.blitz.downloader.util.applyStatusBarPadding
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.config.VideoQualityPreference
 import com.blitz.downloader.data.db.DatabaseBackupManager
@@ -79,7 +80,7 @@ class SettingsFragment : Fragment() {
         // status bar 高度 → Toolbar 顶部 padding；底部导航的 inset 由外壳处理。
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            binding.toolbarSettings.updatePadding(top = statusBars.top)
+            binding.toolbarSettings.applyStatusBarPadding(statusBars.top)
             insets
         }
 

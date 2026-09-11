@@ -68,14 +68,31 @@ class VideoTagRepository(context: Context) {
 
     /**
      * **收藏夹批量下载**：用收藏夹名对齐 `tags` 名册与 `video_tags`。
-     * - 若 [folderName] 已在 `tags` 表中：仅为该视频写入 `video_tags` 关联。
-     * - 若不存在：先 [createTag] 再 [addTag]（两者均为幂等）。
-     *
-     * 与工程内数据库文档中 `collects`、`collectionType` 及标签双表约定一致。
+     * - 若当前收藏夹名称命中已配置的本地标签映射（[TagEntity.collectFolderNames]）：
+     *   为该视频直接打上所映射的本地标签，**不创建**、也**不添加**收藏夹原名标签。
+     * - 若未命中任何映射（兜底既有逻辑）：
+     *   若 [folderName] 已在 `tags` 表中：仅为该视频写入 `video_tags` 关联；
+     *   若不存在：先 [createTag] 再 [addTag]（两者均为幂等）。
      */
     suspend fun ensureCollectFolderTagLinked(awemeId: String, folderName: String) {
         val name = folderName.trim()
         if (name.isEmpty()) return
+
+        // 1. 查找是否存在映射到当前收藏夹名称的本地标签
+        val mappings = tagDao.getAllCollectFolderMappings()
+        val matchedTags = mappings.filter { mapping ->
+            parseFolderNames(mapping.collectFolderNames).any { it.equals(name, ignoreCase = true) }
+        }.map { it.tagName }
+
+        if (matchedTags.isNotEmpty()) {
+            // 命中映射：自动打上对应的本地标签，不使用收藏夹名称做标签
+            matchedTags.forEach { mappedTag ->
+                addTag(awemeId, mappedTag)
+            }
+            return
+        }
+
+        // 2. 未命中映射：兜底原有逻辑（以收藏夹名称建签并打签）
         createTag(name)
         addTag(awemeId, name)
     }
@@ -199,6 +216,28 @@ class VideoTagRepository(context: Context) {
      */
     suspend fun setTagDescription(tagName: String, description: String) {
         tagDao.updateDescription(tagName, description.trim())
+    }
+
+    // ──────────────────── 标签与抖音收藏夹映射（collectFolderNames 字段） ────────────────────
+    //
+    // 用户配置本地标签与抖音收藏夹的对应关系。从映射的收藏夹批量下载视频时，
+    // 自动为视频打上对应的本地标签，不再将收藏夹原名创建为标签。
+
+    /**
+     * 全量"标签名 → 映射的收藏夹名称列表（分号分隔）"映射，只含有已配置映射（非空）的条目。
+     */
+    suspend fun getCollectFolderMap(): Map<String, String> =
+        tagDao.getAllEntities()
+            .filter { it.collectFolderNames.isNotBlank() }
+            .associate { it.tagName to it.collectFolderNames }
+
+    /**
+     * 设置或清除（传空字符串）单个标签映射的收藏夹名称。
+     * 支持传入中英文逗号、分号或换行分隔的多个名称，内部统一清洗为分号分隔存储。
+     */
+    suspend fun setTagCollectFolders(tagName: String, folderNames: String) {
+        val normalized = parseFolderNames(folderNames).joinToString(";")
+        tagDao.updateCollectFolderNames(tagName, normalized)
     }
 
     // ──────────────────── 视频打标签（video_tags 表） ────────────────────
@@ -423,6 +462,19 @@ class VideoTagRepository(context: Context) {
             sampleCount = rows.first().sampleCount,
             topTags = prunedRows.map { AuthorTagRatio(it.tagId, it.tagName, it.count, it.ratio) },
         )
+    }
+
+    companion object {
+        /**
+         * 解析以分号、逗号（中英文）或换行分隔的多个收藏夹名称，去重并过滤空项。
+         */
+        fun parseFolderNames(raw: String): List<String> {
+            if (raw.isBlank()) return emptyList()
+            return raw.split(';', '；', ',', '，', '\n', '\r')
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+        }
     }
 }
 

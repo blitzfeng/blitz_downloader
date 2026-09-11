@@ -14,6 +14,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import com.blitz.downloader.databinding.FragmentDownloadBinding
+import com.blitz.downloader.util.applyStatusBarPadding
 import com.blitz.downloader.viewmodel.ShellNavViewModel
 import com.google.android.material.tabs.TabLayoutMediator
 import kotlinx.coroutines.launch
@@ -47,7 +48,7 @@ class DownloadFragment : Fragment() {
         // 底部导航栏的 inset 由外壳处理，这里只管顶部。
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            binding.toolbarDownload.updatePadding(top = statusBars.top)
+            binding.toolbarDownload.applyStatusBarPadding(statusBars.top)
             insets
         }
 

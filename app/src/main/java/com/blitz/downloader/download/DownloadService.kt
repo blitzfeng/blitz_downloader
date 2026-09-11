@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.IBinder
 import android.util.Log
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
@@ -180,8 +181,17 @@ class DownloadService : Service() {
 
         // 通知仍停留在批量下载页的界面：这些项已入库，可就地打「已下载」角标并取消勾选。
         DownloadEvents.notifyRecorded(recordedIds)
+        DownloadEvents.notifyCompleted(result.success, result.failed)
 
         notifyComplete(result.success, result.failed)
+
+        withContext(Dispatchers.Main) {
+            Toast.makeText(
+                applicationContext,
+                getString(R.string.batch_download_done, result.success, result.failed),
+                Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
     // ── 通知 ───────────────────────────────────────────────────────────────────

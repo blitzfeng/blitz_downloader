@@ -21,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DownloadBatchEntity::class,
         AiTagSuggestionPendingEntity::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -443,6 +443,15 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v20 → v21：新增 `tags.collectFolderNames`（映射的抖音收藏夹名称，分号分隔，默认空字符串）。
+         */
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tags ADD COLUMN collectFolderNames TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -459,6 +468,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
                         MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
+                        MIGRATION_20_21,
                     )
                     .fallbackToDestructiveMigration()
                     .build()

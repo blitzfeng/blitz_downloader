@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.blitz.downloader.BlitzApp
+import com.blitz.downloader.data.VideoTagRepository
+import com.google.gson.GsonBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -27,10 +29,15 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadTags() {
         viewModelScope.launch {
-            val (tags, parentMap, descriptionMap) = withContext(Dispatchers.IO) {
-                Triple(repo.getAvailableTags(), repo.getParentMap(), repo.getDescriptionMap())
+            val (tags, parentMap, descriptionMap, folderMap) = withContext(Dispatchers.IO) {
+                TagsLoadResult(
+                    tags = repo.getAvailableTags(),
+                    parentMap = repo.getParentMap(),
+                    descriptionMap = repo.getDescriptionMap(),
+                    folderMap = repo.getCollectFolderMap(),
+                )
             }
-            emit(TagManageEvent.TagsLoaded(tags, parentMap, descriptionMap))
+            emit(TagManageEvent.TagsLoaded(tags, parentMap, descriptionMap, folderMap))
         }
     }
 
@@ -106,6 +113,19 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ── 标签与抖音收藏夹映射 ───────────────────────────────────────────────
+
+    /** 保存标签映射的收藏夹名称（[folderNames] 传空即清空）。 */
+    fun setTagCollectFolders(position: Int, tagName: String, folderNames: String) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { repo.setTagCollectFolders(tagName, folderNames) }
+            val normalized = withContext(Dispatchers.IO) {
+                repo.getCollectFolderMap()[tagName].orEmpty()
+            }
+            emit(TagManageEvent.TagFoldersSet(position, tagName, normalized))
+        }
+    }
+
     /**
      * 持久化标签顺序。
      *
@@ -119,16 +139,72 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 将所有标签、标签 ID、父子关系、描述、映射收藏夹整合成格式化 JSON 并发出事件。
+     * [orderedTags] 可传入当前界面展示顺序；若为 null 则按数据库现有顺序。
+     */
+    fun exportTagsJson(orderedTags: List<String>? = null) {
+        viewModelScope.launch {
+            val (json, count) = withContext(Dispatchers.IO) {
+                // 确保所有标签均已分配稳定数值 ID
+                repo.backfillTagIds()
+                val entities = repo.getAvailableTagEntities()
+                if (entities.isEmpty()) {
+                    return@withContext "[]" to 0
+                }
+                val entityMap = entities.associateBy { it.tagName }
+                val sortedEntities = if (!orderedTags.isNullOrEmpty()) {
+                    orderedTags.mapNotNull { entityMap[it] } + entities.filter { it.tagName !in orderedTags }
+                } else {
+                    entities
+                }
+                val idMap = sortedEntities.associateBy({ it.tagName }, { it.id })
+                val childrenMap = mutableMapOf<String, MutableList<String>>()
+                sortedEntities.forEach { e ->
+                    if (e.parentTagName.isNotBlank()) {
+                        childrenMap.getOrPut(e.parentTagName) { mutableListOf() }.add(e.tagName)
+                    }
+                }
+
+                val exportList = sortedEntities.mapIndexed { index, e ->
+                    val parentName = e.parentTagName.takeIf { it.isNotBlank() }
+                    val parentId = parentName?.let { idMap[it] }
+                    val folders = VideoTagRepository.parseFolderNames(e.collectFolderNames)
+                    TagExportItem(
+                        id = e.id,
+                        name = e.tagName,
+                        parent = parentName,
+                        parentId = parentId,
+                        children = childrenMap[e.tagName] ?: emptyList(),
+                        description = e.description,
+                        collectFolders = folders,
+                        sortOrder = index,
+                    )
+                }
+                GsonBuilder().setPrettyPrinting().serializeNulls().create().toJson(exportList) to exportList.size
+            }
+            emit(TagManageEvent.TagsExported(json, count))
+        }
+    }
+
     private fun emit(event: TagManageEvent) {
         _events.tryEmit(event)
     }
 }
+
+private data class TagsLoadResult(
+    val tags: List<String>,
+    val parentMap: Map<String, String>,
+    val descriptionMap: Map<String, String>,
+    val folderMap: Map<String, String>,
+)
 
 sealed interface TagManageEvent {
     data class TagsLoaded(
         val tags: List<String>,
         val parentMap: Map<String, String>,
         val descriptionMap: Map<String, String>,
+        val collectFolderMap: Map<String, String> = emptyMap(),
     ) : TagManageEvent
     data class TagCreated(val name: String) : TagManageEvent
     data class TagRenamed(val position: Int, val oldName: String, val newName: String) : TagManageEvent
@@ -148,4 +224,25 @@ sealed interface TagManageEvent {
 
     /** 描述保存成功；[description] 空表示清空。 */
     data class TagDescriptionSet(val tagName: String, val description: String) : TagManageEvent
+
+    /** 收藏夹映射保存成功；[collectFolderNames] 空表示清空。 */
+    data class TagFoldersSet(val position: Int, val tagName: String, val collectFolderNames: String) : TagManageEvent
+
+    /** 标签 JSON 数据导出完成，准备复制到剪切板。 */
+    data class TagsExported(val json: String, val count: Int) : TagManageEvent
 }
+
+/**
+ * 标签导出 JSON 结构。
+ */
+data class TagExportItem(
+    val id: Long,
+    val name: String,
+    val parent: String?,
+    val parentId: Long?,
+    val children: List<String>,
+    val description: String,
+    val collectFolders: List<String> = emptyList(),
+    val sortOrder: Int,
+)
+

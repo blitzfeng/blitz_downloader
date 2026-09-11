@@ -9,6 +9,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
+import com.blitz.downloader.data.VideoTagRepository
 import java.util.Collections
 
 /**
@@ -17,6 +18,7 @@ import java.util.Collections
  * - 点击编辑按钮触发重命名回调
  * - 点击删除按钮触发删除回调
  * - 点击"设置上级"按钮触发层级设置回调，副标题展示当前上级（若有）
+ * - 点击"映射收藏夹"按钮触发收藏夹映射编辑，副标题展示已映射收藏夹（若有）
  *
  * 拖拽结束后调用方应调用 [getTagList] 取当前顺序并持久化。
  *
@@ -29,6 +31,7 @@ class TagManageAdapter(
     private val onDelete: (position: Int, tagName: String) -> Unit,
     private val onSetParent: (position: Int, tagName: String) -> Unit,
     private val onEditDescription: (position: Int, tagName: String) -> Unit,
+    private val onMapFolder: (position: Int, tagName: String) -> Unit,
 ) : RecyclerView.Adapter<TagManageAdapter.ViewHolder>() {
 
     private val tags = mutableListOf<String>()
@@ -39,12 +42,21 @@ class TagManageAdapter(
     /** 标签名 → 描述，只含有已填写描述的条目，语义与 `VideoTagRepository.getDescriptionMap()` 一致。 */
     private var descriptionMap: Map<String, String> = emptyMap()
 
+    /** 标签名 → 映射的收藏夹名称，语义与 `VideoTagRepository.getCollectFolderMap()` 一致。 */
+    private var collectFolderMap: Map<String, String> = emptyMap()
+
     /** 由 Activity 在初始化和刷新时调用。 */
-    fun submitList(list: List<String>, parents: Map<String, String> = emptyMap(), descriptions: Map<String, String> = emptyMap()) {
+    fun submitList(
+        list: List<String>,
+        parents: Map<String, String> = emptyMap(),
+        descriptions: Map<String, String> = emptyMap(),
+        collectFolders: Map<String, String> = emptyMap(),
+    ) {
         tags.clear()
         tags.addAll(list)
         parentMap = parents
         descriptionMap = descriptions
+        collectFolderMap = collectFolders
         notifyDataSetChanged()
     }
 
@@ -109,6 +121,30 @@ class TagManageAdapter(
         descriptionMap = descriptionMap - deletedName
     }
 
+    /** 当前缓存的收藏夹映射文本，供弹窗预填；未设置返回空字符串。 */
+    fun getCollectFolders(tagName: String): String = collectFolderMap[tagName].orEmpty()
+
+    /** 单个标签的收藏夹映射保存成功后调用，只刷新这一行。 */
+    fun updateCollectFolders(position: Int, tagName: String, folders: String) {
+        collectFolderMap = if (folders.isBlank()) {
+            collectFolderMap - tagName
+        } else {
+            collectFolderMap + (tagName to folders)
+        }
+        if (position in tags.indices) notifyItemChanged(position)
+    }
+
+    /** 标签重命名后同步收藏夹映射条目的 key。 */
+    fun renameFolderReferences(oldName: String, newName: String) {
+        val folders = collectFolderMap[oldName] ?: return
+        collectFolderMap = (collectFolderMap - oldName) + (newName to folders)
+    }
+
+    /** 标签删除后移除其收藏夹映射条目。 */
+    fun clearFolderReferences(deletedName: String) {
+        collectFolderMap = collectFolderMap - deletedName
+    }
+
     /** 返回当前排列顺序（用于拖拽结束后持久化）。 */
     fun getTagList(): List<String> = tags.toList()
 
@@ -161,7 +197,7 @@ class TagManageAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val tagName = tags[position]
-        holder.bind(tagName, parentMap[tagName], descriptionMap[tagName])
+        holder.bind(tagName, parentMap[tagName], descriptionMap[tagName], collectFolderMap[tagName])
     }
 
     override fun getItemCount(): Int = tags.size
@@ -173,12 +209,14 @@ class TagManageAdapter(
         private val tvTagName: TextView = itemView.findViewById(R.id.tvTagName)
         private val tvTagParent: TextView = itemView.findViewById(R.id.tvTagParent)
         private val tvTagDescription: TextView = itemView.findViewById(R.id.tvTagDescription)
+        private val tvTagCollectFolders: TextView = itemView.findViewById(R.id.tvTagCollectFolders)
         private val btnEdit: ImageView = itemView.findViewById(R.id.btnEditTag)
         private val btnDelete: ImageView = itemView.findViewById(R.id.btnDeleteTag)
         private val btnSetParent: ImageView = itemView.findViewById(R.id.btnSetParentTag)
         private val btnEditDescription: ImageView = itemView.findViewById(R.id.btnEditTagDescription)
+        private val btnMapFolder: ImageView = itemView.findViewById(R.id.btnMapFolder)
 
-        fun bind(tagName: String, parentTagName: String?, description: String?) {
+        fun bind(tagName: String, parentTagName: String?, description: String?, collectFolders: String?) {
             tvTagName.text = tagName
             if (parentTagName.isNullOrBlank()) {
                 tvTagParent.visibility = View.GONE
@@ -191,6 +229,16 @@ class TagManageAdapter(
             } else {
                 tvTagDescription.text = description
                 tvTagDescription.visibility = View.VISIBLE
+            }
+            val folderList = VideoTagRepository.parseFolderNames(collectFolders.orEmpty())
+            if (folderList.isEmpty()) {
+                tvTagCollectFolders.visibility = View.GONE
+            } else {
+                tvTagCollectFolders.text = itemView.context.getString(
+                    R.string.tag_manage_mapped_folders_prefix,
+                    folderList.joinToString("、")
+                )
+                tvTagCollectFolders.visibility = View.VISIBLE
             }
 
             btnEdit.setOnClickListener {
@@ -208,6 +256,10 @@ class TagManageAdapter(
             btnEditDescription.setOnClickListener {
                 val pos = bindingAdapterPosition
                 if (pos != RecyclerView.NO_ID.toInt()) onEditDescription(pos, tags[pos])
+            }
+            btnMapFolder.setOnClickListener {
+                val pos = bindingAdapterPosition
+                if (pos != RecyclerView.NO_ID.toInt()) onMapFolder(pos, tags[pos])
             }
 
             // 触摸拖拽把手时立即启动拖拽

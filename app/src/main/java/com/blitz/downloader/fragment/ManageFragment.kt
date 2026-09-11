@@ -43,6 +43,7 @@ import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.databinding.FragmentManageBinding
 import com.blitz.downloader.dialog.TagQueryDialog
 import com.blitz.downloader.download.MediaExportManager
+import com.blitz.downloader.util.applyStatusBarPadding
 import com.blitz.downloader.model.filter.ManageRelationFilter
 import com.blitz.downloader.model.filter.ManageSortOrder
 import com.blitz.downloader.model.filter.ManageTagCountFilter
@@ -135,7 +136,7 @@ class ManageFragment : Fragment() {
         // 抽屉底部不再补 navBars：系统导航栏那块现在被底部导航占着，再补一次会多出一段空白。
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
-            binding.toolbarManage.updatePadding(top = statusBars.top)
+            binding.toolbarManage.applyStatusBarPadding(statusBars.top)
             binding.authorDrawer.updatePadding(top = statusBars.top, bottom = 0)
             insets
         }

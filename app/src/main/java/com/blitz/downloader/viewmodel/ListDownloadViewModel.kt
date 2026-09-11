@@ -131,6 +131,14 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             DownloadEvents.recorded.collect { ids -> markItemsDownloaded(ids) }
         }
+        viewModelScope.launch {
+            DownloadEvents.completed.collect {
+                if (status is ListStatus.Enqueued) {
+                    status = if (listApiMode != ListApiMode.None) loadedStatus() else ListStatus.Idle
+                    publish()
+                }
+            }
+        }
         refreshCookieStatus()
     }
 

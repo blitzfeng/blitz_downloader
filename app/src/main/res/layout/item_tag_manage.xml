@@ -61,14 +61,26 @@
             android:visibility="gone"
             tools:text="笑容甜美、气质清纯为主，不强调性感元素" />
 
+        <TextView
+            android:id="@+id/tvTagCollectFolders"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:textSize="12sp"
+            android:textColor="@color/text_color_secondary"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:visibility="gone"
+            tools:text="映射收藏夹：科技、数码" />
+
     </LinearLayout>
 
     <!-- 编辑按钮 -->
     <ImageView
         android:id="@+id/btnEditTag"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:padding="10dp"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:padding="8dp"
         android:scaleType="centerInside"
         android:src="@drawable/ic_edit_tag"
         android:background="?android:attr/selectableItemBackgroundBorderless"
@@ -77,21 +89,20 @@
     <!-- 删除按钮 -->
     <ImageView
         android:id="@+id/btnDeleteTag"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:padding="10dp"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:padding="8dp"
         android:scaleType="centerInside"
         android:src="@drawable/ic_delete_manage"
         android:background="?android:attr/selectableItemBackgroundBorderless"
-        android:contentDescription="@null"
-         />
+        android:contentDescription="@null" />
 
     <!-- 设置上级标签按钮 -->
     <ImageView
         android:id="@+id/btnSetParentTag"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:padding="10dp"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:padding="8dp"
         android:scaleType="centerInside"
         android:src="@drawable/ic_tag_parent"
         android:background="?android:attr/selectableItemBackgroundBorderless"
@@ -100,11 +111,22 @@
     <!-- 编辑描述按钮（辅助 ai-tag-suggestions 的 AI 建议理解标签判断标准） -->
     <ImageView
         android:id="@+id/btnEditTagDescription"
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:padding="10dp"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:padding="8dp"
         android:scaleType="centerInside"
         android:src="@drawable/ic_tag_description"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@null" />
+
+    <!-- 映射抖音收藏夹按钮 -->
+    <ImageView
+        android:id="@+id/btnMapFolder"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
+        android:padding="8dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/ic_tag_folder"
         android:background="?android:attr/selectableItemBackgroundBorderless"
         android:contentDescription="@null" />
 
