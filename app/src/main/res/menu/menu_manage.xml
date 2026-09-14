@@ -23,6 +23,13 @@
         android:title="@string/manage_menu_clear_invalid"
         app:showAsAction="never" />
 
+    <!-- 清理无数据库记录的本地残留文件（自用已清理完成，入口默认隐藏） -->
+    <item
+        android:id="@+id/action_clean_orphaned_files"
+        android:title="@string/manage_menu_clean_orphaned_files"
+        app:showAsAction="never"
+        android:visible="false" />
+
     <!-- 普通模式下可见：按归属筛选（叠加在 Tab / 标签 / 搜索 / 作者筛选之上） -->
     <item
         android:id="@+id/action_filter_relation"

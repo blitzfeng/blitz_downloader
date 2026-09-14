@@ -106,4 +106,33 @@ class BatchDownloadCoordinatorTest {
         val url = "https://p3.douyinpic.com/img/abc"
         assertEquals("jpg", BatchDownloadCoordinator.extractImageExtension(url))
     }
+
+    @Test
+    fun truncateUtf8Bytes_asciiAndChineseAndEmoji() {
+        assertEquals("hello", BatchDownloadCoordinator.truncateUtf8Bytes("hello world", 5))
+        // 4 Chinese characters = 12 bytes. Limit to 8 bytes -> 2 Chinese characters (6 bytes).
+        assertEquals("你好", BatchDownloadCoordinator.truncateUtf8Bytes("你好世界", 8))
+        // Emoji surrogate pair 😀 is 4 bytes. Limit to 5 bytes with 'a' -> 'a😀' (5 bytes).
+        val emojiStr = "a😀b"
+        assertEquals("a", BatchDownloadCoordinator.truncateUtf8Bytes(emojiStr, 4))
+        assertEquals("a😀", BatchDownloadCoordinator.truncateUtf8Bytes(emojiStr, 5))
+    }
+
+    @Test
+    fun buildFileNameBase_longChineseTitle_truncatesToWithin200Bytes() {
+        val longAuthor = "超长作者昵称测试名字非常非常非常长的一个作者名用于边界测试" // 30 chars = 90 bytes
+        val longDesc = "这是一条极度漫长的视频描述信息包含许多中文字符用来测试系统底层文件系统最大255字节限制是否会被安全防御住" // 50 chars = 150 bytes
+        val item = VideoItemUiModel(
+            id = "7999888777",
+            title = "长标题",
+            authorNickname = longAuthor,
+            descRaw = longDesc,
+            coverUrl = null,
+            downloadUrl = null,
+            isSelected = true,
+        )
+        val base = BatchDownloadCoordinator.buildFileNameBase(item)
+        val byteSize = base.toByteArray(Charsets.UTF_8).size
+        org.junit.Assert.assertTrue("Base byte size should be <= 200, was $byteSize", byteSize <= 200)
+    }
 }

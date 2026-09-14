@@ -38,6 +38,7 @@ import com.blitz.downloader.activity.BatchTagReviewActivity
 import com.blitz.downloader.activity.BatchTagReviewResultState
 import com.blitz.downloader.activity.TagManageActivity
 import com.blitz.downloader.adapter.AuthorFilterAdapter
+import com.blitz.downloader.dialog.CleanOrphanedFilesDialogFragment
 import com.blitz.downloader.data.db.DownloadedVideoDao.AuthorCount
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.databinding.FragmentManageBinding
@@ -174,6 +175,16 @@ class ManageFragment : Fragment() {
 
         setupAuthorDrawer()
         observeViewModel()
+
+        childFragmentManager.setFragmentResultListener(
+            CleanOrphanedFilesDialogFragment.REQUEST_KEY,
+            viewLifecycleOwner,
+        ) { _, bundle ->
+            val count = bundle.getInt(CleanOrphanedFilesDialogFragment.RESULT_DELETED_COUNT, 0)
+            if (count > 0) {
+                viewModel.requestReload(currentTab)
+            }
+        }
 
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
         updateToolbar()
@@ -543,6 +554,7 @@ class ManageFragment : Fragment() {
     private fun applyMenuState(menu: Menu) {
         val search = menu.findItem(R.id.action_search)
         val clearInvalid = menu.findItem(R.id.action_clear_invalid)
+        val cleanOrphanedFiles = menu.findItem(R.id.action_clean_orphaned_files)
         val deleteSelected = menu.findItem(R.id.action_delete_selected)
         val setTagsSelected = menu.findItem(R.id.action_set_tags_selected)
         val selectAll = menu.findItem(R.id.action_select_all)
@@ -567,6 +579,7 @@ class ManageFragment : Fragment() {
             // 多选模式：让出 Toolbar 给删除/标签按钮，其余入口在多选状态下都无意义
             search?.isVisible = false
             clearInvalid?.isVisible = false
+            cleanOrphanedFiles?.isVisible = false
             manageTags?.isVisible = false
             batchTagReview?.isVisible = false
             filterAuthor?.isVisible = false
@@ -595,6 +608,8 @@ class ManageFragment : Fragment() {
             search?.isVisible = true
             // 「清除已失效」仅在视频 Tab 下显示
             clearInvalid?.isVisible = onVideoTab
+            // 「清理残留文件」入口隐藏（自用手机已清理完成）
+            cleanOrphanedFiles?.isVisible = false
             manageTags?.isVisible = true
             batchTagReview?.isVisible = viewModel.hasBatch.value
             filterAuthor?.isVisible = true
@@ -683,6 +698,10 @@ class ManageFragment : Fragment() {
                 confirmClearInvalid()
                 true
             }
+            R.id.action_clean_orphaned_files -> {
+                showCleanOrphanedFilesDialog()
+                true
+            }
             R.id.action_manage_tags -> {
                 startActivity(Intent(requireContext(), TagManageActivity::class.java))
                 true
@@ -745,6 +764,11 @@ class ManageFragment : Fragment() {
             }
             .setNegativeButton(R.string.manage_confirm_cancel, null)
             .show()
+    }
+
+    private fun showCleanOrphanedFilesDialog() {
+        CleanOrphanedFilesDialogFragment.newInstance()
+            .show(childFragmentManager, CleanOrphanedFilesDialogFragment.TAG)
     }
 
     // ── 导出选中 ───────────────────────────────────────────────────────────────

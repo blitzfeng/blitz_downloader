@@ -31,4 +31,15 @@ object NumberFormatUtils {
         val frac = scaled % 10
         return if (frac == 0L) "$whole$suffix" else "$whole.$frac$suffix"
     }
+
+    /**
+     * 将字节大小格式化为易读的文本（B / KB / MB / GB）。
+     */
+    fun formatFileSize(bytes: Long): String = when {
+        bytes <= 0L -> "0 B"
+        bytes < 1024L -> "$bytes B"
+        bytes < 1024L * 1024L -> "%.1f KB".format(bytes / 1024.0)
+        bytes < 1024L * 1024L * 1024L -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+        else -> "%.2f GB".format(bytes / (1024.0 * 1024.0 * 1024.0))
+    }
 }

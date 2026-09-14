@@ -497,9 +497,41 @@ object BatchDownloadCoordinator {
      */
     internal fun buildFileName(item: VideoItemUiModel): String = "${buildFileNameBase(item)}.mp4"
 
+    internal const val MAX_FILE_NAME_BASE_BYTES = 200
+
+    /**
+     * 将字符串安全截断至不超过 [maxBytes] 个 UTF-8 字节，
+     * 避免切断多字节 UTF-8 字符或 UTF-16 Surrogate Pair（如 Emoji 表情）。
+     */
+    internal fun truncateUtf8Bytes(str: String, maxBytes: Int): String {
+        if (str.isEmpty() || maxBytes <= 0) return ""
+        val bytes = str.toByteArray(Charsets.UTF_8)
+        if (bytes.size <= maxBytes) return str
+
+        var low = 0
+        var high = str.length
+        var best = ""
+        while (low <= high) {
+            val mid = (low + high) ushr 1
+            val sub = str.substring(0, mid)
+            if (sub.toByteArray(Charsets.UTF_8).size <= maxBytes) {
+                best = sub
+                low = mid + 1
+            } else {
+                high = mid - 1
+            }
+        }
+        if (best.isNotEmpty() && best.last().isHighSurrogate()) {
+            best = best.dropLast(1)
+        }
+        return best
+    }
+
     /**
      * 无扩展名的基础文件名，图集各张图在其后追加 `_{序号}.{ext}`。
      * `{作者昵称}_{去掉#话题后的描述}`；若去掉话题后无描述则为 `{作者昵称}_{id}`。
+     * 针对 Linux / Android 文件系统单个文件名最大 255 字节（NAME_MAX）的限制，
+     * 此处限制基础名不超过 [MAX_FILE_NAME_BASE_BYTES]（200）个 UTF-8 字节，为扩展名及序号预留空间。
      */
     internal fun buildFileNameBase(item: VideoItemUiModel): String {
         val user = sanitizeFileNameBase(item.authorNickname).ifBlank { "user" }.take(40)
@@ -509,7 +541,9 @@ object BatchDownloadCoordinator {
         } else {
             descClean.take(80)
         }
-        return "${user}_${body}"
+        val rawBase = "${user}_${body}"
+        val truncated = truncateUtf8Bytes(rawBase, MAX_FILE_NAME_BASE_BYTES).trimEnd('_', ' ')
+        return truncated.ifBlank { "media_${item.id.ifBlank { System.currentTimeMillis().toString() }}" }
     }
 
     /**

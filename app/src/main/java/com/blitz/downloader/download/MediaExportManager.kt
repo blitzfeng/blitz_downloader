@@ -5,6 +5,7 @@ import android.media.MediaScannerConnection
 import android.os.Environment
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.model.MediaOrientation
+import com.blitz.downloader.util.DownloadedMediaFileManager
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
@@ -155,18 +156,8 @@ object MediaExportManager {
      * 所以这里不再限定「同封面扩展名」，而是收全封面图片扩展（webp/jpg/jpeg/png）+ mp4。
      * 浏览页的同名方法只需知道每张封面**是否**有 mp4 兄弟，聚合形态不同、扫描口径相同。
      */
-    private fun findImageSet(firstFile: File): List<File> {
-        val dir = firstFile.parentFile ?: return listOf(firstFile)
-        val baseName = firstFile.nameWithoutExtension.replace(Regex("_\\d+$"), "")
-        val pattern = Regex("^${Regex.escape(baseName)}_\\d+$")
-        val exts = setOf("webp", "jpg", "jpeg", "png", "mp4")
-        val files = dir.listFiles { f ->
-            f.isFile &&
-                f.extension.lowercase() in exts &&
-                f.nameWithoutExtension.matches(pattern)
-        }
-        return if (files.isNullOrEmpty()) listOf(firstFile) else files.sortedBy { it.name }
-    }
+    private fun findImageSet(firstFile: File): List<File> =
+        DownloadedMediaFileManager.findImageSetFiles(firstFile)
 
     /** 保证展示名在一次导出内唯一：同名时在扩展名前追加 `_2` / `_3` …。 */
     private fun uniqueName(name: String, used: MutableSet<String>): String {

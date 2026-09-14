@@ -17,6 +17,7 @@ import com.blitz.downloader.model.filter.ManageSortOrder
 import com.blitz.downloader.model.filter.ManageTagCountFilter
 import com.blitz.downloader.model.filter.ManageTagEditCountFilter
 import com.blitz.downloader.model.filter.TagQuery
+import com.blitz.downloader.util.DownloadedMediaFileManager
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -57,6 +58,9 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
     /** 仅 [ManageVideoViewModel] 用于「AI 建议」结果的反馈写入，图片 Tab 不涉及这条链路。 */
     protected val aiTagSuggestionRepo: AiTagSuggestionRepository
         get() = (getApplication<Application>() as BlitzApp).aiTagSuggestionRepository
+
+    protected val pendingDao
+        get() = (getApplication<Application>() as BlitzApp).database.aiTagSuggestionPendingDao()
 
     private val _uiState = MutableStateFlow(ManageTabUiState())
     val uiState: StateFlow<ManageTabUiState> = _uiState.asStateFlow()
@@ -368,7 +372,17 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteSelected(ids: List<String>) {
         if (ids.isEmpty()) return
         viewModelScope.launch {
-            val deleted = withContext(Dispatchers.IO) { repo.deleteByAwemeIds(ids) }
+            val deleted = withContext(Dispatchers.IO) {
+                val dbEntities = repo.getByAwemeIds(ids).associateBy { it.awemeId }
+                val entities = ids.mapNotNull { id ->
+                    dbEntities[id] ?: items.firstOrNull { it.entity.awemeId == id }?.entity
+                }
+                val files = entities.flatMap { DownloadedMediaFileManager.resolveEntityFiles(it) }
+                DownloadedMediaFileManager.deleteMediaFiles(getApplication(), files)
+
+                pendingDao.deleteByAwemeIds(ids)
+                repo.deleteByAwemeIds(ids)
+            }
             val idSet = ids.toSet()
             items.removeAll { it.entity.awemeId in idSet }
             publish()
@@ -491,10 +505,8 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
         _events.tryEmit(event)
     }
 
-    protected fun resolveFile(filePath: String): File {
-        @Suppress("DEPRECATION")
-        return File(Environment.getExternalStorageDirectory(), filePath)
-    }
+    protected fun resolveFile(filePath: String): File =
+        DownloadedMediaFileManager.resolveFile(filePath)
 
     companion object {
         private const val PAGE_SIZE = 20
