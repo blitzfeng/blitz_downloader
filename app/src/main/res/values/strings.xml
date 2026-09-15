@@ -419,4 +419,11 @@
     <string name="tag_manage_map_folder_saved">已保存「%1$s」的收藏夹映射</string>
     <string name="tag_manage_map_folder_cleared">已清除「%1$s」的收藏夹映射</string>
     <string name="tag_manage_mapped_folders_prefix">映射收藏夹：%1$s</string>
+    <!-- AI 分析日志 -->
+    <string name="batch_tag_review_log_entry">分析日志</string>
+    <string name="batch_tag_review_log_title">AI 分析交互日志</string>
+    <string name="batch_tag_review_log_clear">清空</string>
+    <string name="batch_tag_review_log_copy_all">复制全部</string>
+    <string name="batch_tag_review_log_empty">暂无分析日志\n开启批量分析后将在此实时记录请求与响应详情</string>
+    <string name="batch_tag_review_log_copied">已复制日志到剪贴板</string>
 </resources>

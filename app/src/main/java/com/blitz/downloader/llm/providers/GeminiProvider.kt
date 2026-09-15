@@ -189,22 +189,18 @@ class GeminiProvider(private val context: Context) : LlmProvider {
         appendLine("parentTagId 非空表示存在上级大类，仅供参考不代表必须同时选中）：")
         appendLine(gson.toJson(request.tagVocabulary))
         appendLine()
-        request.authorProfile?.let { profile ->
-            appendLine("该视频作者的历史标签先验（该作者共有 ${profile.sampleCount} 个已下载视频，以下是其中出现较多的标签及占比，")
+        request.authorProfile?.takeIf { it.topTags.isNotEmpty() }?.let { profile ->
+            val tagsSummary = profile.topTags.joinToString("、") { tag ->
+                val ratioText = tag.ratio?.let { "占比 ${(it * 100).toInt()}%" } ?: "出现 ${tag.count} 次"
+                "${tag.tagName} ($ratioText)"
+            }
+            appendLine("该视频作者的历史高频标签先验（该作者共有 ${profile.sampleCount} 个已下载视频，出现频率最高的目标标签为：$tagsSummary。")
             appendLine("**仅作先验参考，不能替代当前图片证据**——历史上常打某标签不代表这条视频也符合，必须以图片证据为准）：")
-            appendLine(gson.toJson(profile.topTags))
             appendLine()
         }
         request.preferenceProfileText?.takeIf { it.isNotBlank() }?.let { profileText ->
             appendLine("这是根据用户过往采纳/拒绝建议总结出的个人标签偏好，供参考：")
             appendLine(profileText)
-            appendLine()
-        }
-        if (request.fewShotExamples.isNotEmpty()) {
-            appendLine("以下是该用户过往对类似视频的真实标注结果，供参考风格标准（不代表这次视频的答案）：")
-            request.fewShotExamples.forEach { example ->
-                appendLine("- 文案：${example.desc}；最终标签：${example.confirmedTagNames.joinToString("、")}")
-            }
             appendLine()
         }
         appendLine("请严格按照给定的 JSON Schema 返回结果。")

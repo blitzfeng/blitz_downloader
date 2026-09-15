@@ -50,6 +50,8 @@ data class BatchTagReviewUiState(
     val parentMap: Map<String, String> = emptyMap(),
     val videoExistingTags: Map<String, Set<String>> = emptyMap(),
     val videoSuggestedTags: Map<String, Set<String>> = emptyMap(),
+    val logs: List<com.blitz.downloader.llm.AiAnalysisLogEntry> = emptyList(),
+    val isLogSheetVisible: Boolean = false,
 )
 
 sealed interface BatchTagReviewEvent {
@@ -116,6 +118,11 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                         reloadPendingGroups()
                     }
                 }
+            }
+        }
+        viewModelScope.launch {
+            com.blitz.downloader.llm.AiAnalysisLogStore.logs.collect { logList ->
+                _uiState.value = _uiState.value.copy(logs = logList)
             }
         }
     }
@@ -563,6 +570,14 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
             _events.tryEmit(BatchTagReviewEvent.ShowToast("已更新标签：$tagText"))
             refreshVideosAndGroups()
         }
+    }
+
+    fun setLogSheetVisible(visible: Boolean) {
+        _uiState.value = _uiState.value.copy(isLogSheetVisible = visible)
+    }
+
+    fun clearLogs() {
+        com.blitz.downloader.llm.AiAnalysisLogStore.clear()
     }
 
     private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)

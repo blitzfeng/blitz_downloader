@@ -333,7 +333,7 @@ class ListDownloadFragment : Fragment() {
             is ListDownloadEvent.ShowCollectsFolderPicker -> showCollectsFolderDialog(event.folders)
             ListDownloadEvent.CollectsFolderEmpty -> toast(R.string.collects_list_empty, long = true)
 
-            ListDownloadEvent.ShowSessionExpiredDialog -> showSessionExpiredDialog()
+            is ListDownloadEvent.ShowSessionExpiredDialog -> showSessionExpiredDialog(event.message)
             ListDownloadEvent.OpenBrowserForLogin ->
                 startDouyinBrowser(DouyinWebBrowserActivity.DOUYIN_DEFAULT_HOME_URL)
 
@@ -391,10 +391,16 @@ class ListDownloadFragment : Fragment() {
             .show()
     }
 
-    private fun showSessionExpiredDialog() {
+    private fun showSessionExpiredDialog(reason: String? = null) {
+        val baseMsg = getString(R.string.session_expired_msg)
+        val fullMsg = if (!reason.isNullOrBlank()) {
+            "$baseMsg\n\n详情：$reason"
+        } else {
+            baseMsg
+        }
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.session_expired_title)
-            .setMessage(R.string.session_expired_msg)
+            .setMessage(fullMsg)
             .setPositiveButton(R.string.session_expired_login) { _, _ ->
                 viewModel.onSessionExpiredLoginChosen()
             }

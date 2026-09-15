@@ -236,10 +236,9 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
 
 ### ArgusSecurityPlugin — `uifid` 请求头（2026-08 抖音新增网关校验）
 
-抖音在边缘网关（响应头 `Server: TLB`）挂了 `ArgusSecurityPlugin`，对**登录态列表接口**
-（`aweme/favorite/`「喜欢」、`aweme/listcollection/`「收藏」、`collects/list/`「收藏夹」）在业务逻辑
-**之前**做前置校验；`aweme/post/`（发布作品）**不在保护名单**，所以它一直正常。缺失时直接 403，
-正文是明文而非 JSON（拿不到 `status_code`）：
+抖音在边缘网关（响应头 `Server: TLB`）挂了 `ArgusSecurityPlugin`，对 Web 端列表接口
+（`aweme/favorite/`「喜欢」、`aweme/listcollection/`「收藏」、`collects/list/`「收藏夹」、以及现已扩展的 `aweme/post/`「作品列表」与 `mix/aweme/`「合集」等）在业务逻辑
+**之前**做前置校验。缺失时直接 403，正文是明文而非 JSON（拿不到 `status_code`）：
 
 - 缺 `uifid` → `Blocked by ArgusSecurityPlugin Uifid Not Found`
 - 缺签名 → `Blocked by ArgusSecurityPlugin Signature Not Found`
@@ -250,8 +249,7 @@ config (AppConfig — 编译期常量, AppSettings — 运行时用户偏好,
    值复用从 Cookie 解析出的 `DouyinApiClient.webId`（即 UIFID），对所有抖音 API 请求统一附加。
 2. **`x-tt-argus` 请求头**（缺 → `Signature Not Found`）。真机证实：query 里的真实 `a_bogus`**过不了**这道
    ——网关验的是独立的签名头，不是 `a_bogus`。**实测该版本只校验此头是否存在、不校验值**（任意/空值即放行），
-   是「疑似 App 流量放宽 web 校验」的旁路，故填占位 `"1"` 即可。仅对受保护接口（favorite / listcollection /
-   collects）附加，避免波及未受保护的 `post`。
+   是「疑似 App 流量放宽 web 校验」的旁路，故填占位 `"1"` 即可。已对所有 `/aweme/v1/web/` 请求统一附加。
 
 排查方法（可复用）：裸 `curl` 逐层剥错误链——`Uifid Not Found` →（补 uifid 头）→ `Signature Not Found`
 →（补 x-tt-argus 头）→ 200。**明文 403 正文里的 `ArgusSecurityPlugin ... Not Found` 直接就是根因**，

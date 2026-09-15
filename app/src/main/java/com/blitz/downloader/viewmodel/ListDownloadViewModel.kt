@@ -555,7 +555,7 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
         publish()
         if (e is DouyinAuthException) {
             pendingRetryAfterLogin = retry
-            emit(ListDownloadEvent.ShowSessionExpiredDialog)
+            emit(ListDownloadEvent.ShowSessionExpiredDialog(e.message))
         } else {
             emit(ListDownloadEvent.ListLoadFailed(e.message))
         }
@@ -911,7 +911,7 @@ sealed interface ListDownloadEvent {
     data object PhotoSelectionCleared : ListDownloadEvent
     data class ShowCollectsFolderPicker(val folders: List<DouyinCollectsFolderRow>) : ListDownloadEvent
     data object CollectsFolderEmpty : ListDownloadEvent
-    data object ShowSessionExpiredDialog : ListDownloadEvent
+    data class ShowSessionExpiredDialog(val message: String? = null) : ListDownloadEvent
     data object OpenBrowserForLogin : ListDownloadEvent
     data class OpenBrowser(val url: String?) : ListDownloadEvent
     data class OpenedAsPlainUrl(val url: String?) : ListDownloadEvent

@@ -82,12 +82,12 @@ object DouyinApiClient {
 
             // ArgusSecurityPlugin 第二道校验：缺 `Signature` 头时 403 `... Signature Not Found`。
             // 实测网关此版本只校验该头**是否存在**、不校验值（`x-tt-argus` 任意/空值即放行 200），
-            // 属「疑似 App 流量放宽 web 校验」的旁路；仅对受保护接口附加，避免影响 post 等未受保护接口。
+            // 属「疑似 App 流量放宽 web 校验」的旁路。
+            // 抖音网关已对 /aweme/v1/web/ 下的所有接口（包括 post 作品列表、mix 合集、favorite 喜欢、listcollection 收藏等）
+            // 逐步施加该校验，因此对所有 /aweme/v1/web/ 请求统一附加该头。
             // 注意这是权宜之计：网关一旦升级到真正校验签名值即失效，届时需走 WebView 内发真实请求方案。
             val path = original.url.encodedPath
-            val argusProtected = path.contains("/aweme/v1/web/aweme/favorite") ||
-                path.contains("/aweme/v1/web/aweme/listcollection") ||
-                path.contains("/aweme/v1/web/collects/")
+            val argusProtected = path.contains("/aweme/v1/web/")
             if (argusProtected) {
                 requestBuilder.header("x-tt-argus", "1")
             }

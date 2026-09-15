@@ -187,6 +187,14 @@ fun BatchTagReviewScreen(
         )
     }
 
+    if (uiState.isLogSheetVisible) {
+        AiAnalysisLogSheet(
+            logs = uiState.logs,
+            onDismiss = { viewModel.setLogSheetVisible(false) },
+            onClearLogs = { viewModel.clearLogs() },
+        )
+    }
+
     if (editingVideo != null) {
         val targetVideo = editingVideo!!
         SingleVideoTagEditSheet(
@@ -262,6 +270,14 @@ fun BatchTagReviewScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { viewModel.setLogSheetVisible(true) },
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_analysis_log),
+                            contentDescription = stringResource(R.string.batch_tag_review_log_entry),
+                        )
+                    }
                     IconButton(
                         onClick = { showPreviewSheet = true },
                         enabled = !uiState.isReviewCompleted && !uiState.isAnalyzing,

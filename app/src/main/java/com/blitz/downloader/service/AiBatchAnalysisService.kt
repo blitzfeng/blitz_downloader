@@ -95,6 +95,7 @@ class AiBatchAnalysisService : Service() {
         updateProgress(done = 0, total = total, indeterminate = false)
 
         val app = BlitzApp.instance
+        com.blitz.downloader.llm.AiAnalysisLogStore.clear()
         val videoRepo = app.downloadedVideoRepository
         val tagRepo = app.videoTagRepository
         val aiRepo = app.aiTagSuggestionRepository
@@ -135,6 +136,7 @@ class AiBatchAnalysisService : Service() {
                         desc = video.desc,
                         coverBytes = coverBytes,
                         videoFile = videoFile,
+                        authorName = video.userName,
                     )
 
                     outcome.fold(
