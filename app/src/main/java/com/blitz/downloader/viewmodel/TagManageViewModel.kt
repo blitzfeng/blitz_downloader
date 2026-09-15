@@ -29,15 +29,38 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadTags() {
         viewModelScope.launch {
-            val (tags, parentMap, descriptionMap, folderMap) = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
+                val entities = repo.getAvailableTagEntities()
+                val sorted = entities.sortedWith(compareBy({ it.sortOrder }, { it.tagName }))
+                val tags = sorted.map { it.tagName }
+                val parentMap = entities.filter { it.parentTagName.isNotBlank() }.associate { it.tagName to it.parentTagName }
+                val descriptionMap = entities.filter { it.description.isNotBlank() }.associate { it.tagName to it.description }
+                val folderMap = entities.filter { it.collectFolderNames.isNotBlank() }.associate { it.tagName to it.collectFolderNames }
+                val enableAiMap = entities.associate { it.tagName to it.enableAi }
+                val isExclusiveMap = entities.associate { it.tagName to it.isExclusive }
+                val parentNames = parentMap.values.toSet()
+                val hasChildrenMap = entities.associate { it.tagName to (it.tagName in parentNames) }
                 TagsLoadResult(
-                    tags = repo.getAvailableTags(),
-                    parentMap = repo.getParentMap(),
-                    descriptionMap = repo.getDescriptionMap(),
-                    folderMap = repo.getCollectFolderMap(),
+                    tags = tags,
+                    parentMap = parentMap,
+                    descriptionMap = descriptionMap,
+                    folderMap = folderMap,
+                    enableAiMap = enableAiMap,
+                    isExclusiveMap = isExclusiveMap,
+                    hasChildrenMap = hasChildrenMap,
                 )
             }
-            emit(TagManageEvent.TagsLoaded(tags, parentMap, descriptionMap, folderMap))
+            emit(
+                TagManageEvent.TagsLoaded(
+                    tags = result.tags,
+                    parentMap = result.parentMap,
+                    descriptionMap = result.descriptionMap,
+                    collectFolderMap = result.folderMap,
+                    enableAiMap = result.enableAiMap,
+                    isExclusiveMap = result.isExclusiveMap,
+                    hasChildrenMap = result.hasChildrenMap,
+                )
+            )
         }
     }
 
@@ -103,13 +126,25 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ── 标签描述（辅助 ai-tag-suggestions 的 AI 建议） ───────────────────────────
+    // ── 标签描述与 AI 配置（辅助 ai-tag-suggestions） ─────────────────────────
 
     /** 保存标签描述（[description] 传空字符串即清空）。这是标签名册元数据编辑，不产生 `tagEditCount`。 */
     fun setTagDescription(tagName: String, description: String) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { repo.setTagDescription(tagName, description) }
             emit(TagManageEvent.TagDescriptionSet(tagName, description))
+        }
+    }
+
+    /** 保存标签的描述、参与 AI 分析开关与互斥单选开关。 */
+    fun setTagAiConfig(tagName: String, description: String, enableAi: Boolean, isExclusive: Boolean) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                repo.setTagDescription(tagName, description)
+                repo.setTagEnableAi(tagName, enableAi)
+                repo.setTagIsExclusive(tagName, isExclusive)
+            }
+            emit(TagManageEvent.TagAiConfigSet(tagName, description, enableAi, isExclusive))
         }
     }
 
@@ -179,6 +214,8 @@ class TagManageViewModel(app: Application) : AndroidViewModel(app) {
                         description = e.description,
                         collectFolders = folders,
                         sortOrder = index,
+                        enableAi = e.enableAi,
+                        isExclusive = e.isExclusive,
                     )
                 }
                 GsonBuilder().setPrettyPrinting().serializeNulls().create().toJson(exportList) to exportList.size
@@ -197,6 +234,9 @@ private data class TagsLoadResult(
     val parentMap: Map<String, String>,
     val descriptionMap: Map<String, String>,
     val folderMap: Map<String, String>,
+    val enableAiMap: Map<String, Boolean>,
+    val isExclusiveMap: Map<String, Boolean>,
+    val hasChildrenMap: Map<String, Boolean>,
 )
 
 sealed interface TagManageEvent {
@@ -205,6 +245,9 @@ sealed interface TagManageEvent {
         val parentMap: Map<String, String>,
         val descriptionMap: Map<String, String>,
         val collectFolderMap: Map<String, String> = emptyMap(),
+        val enableAiMap: Map<String, Boolean> = emptyMap(),
+        val isExclusiveMap: Map<String, Boolean> = emptyMap(),
+        val hasChildrenMap: Map<String, Boolean> = emptyMap(),
     ) : TagManageEvent
     data class TagCreated(val name: String) : TagManageEvent
     data class TagRenamed(val position: Int, val oldName: String, val newName: String) : TagManageEvent
@@ -225,6 +268,14 @@ sealed interface TagManageEvent {
     /** 描述保存成功；[description] 空表示清空。 */
     data class TagDescriptionSet(val tagName: String, val description: String) : TagManageEvent
 
+    /** AI 配置（描述、参与 AI 开关、互斥单选开关）保存成功。 */
+    data class TagAiConfigSet(
+        val tagName: String,
+        val description: String,
+        val enableAi: Boolean,
+        val isExclusive: Boolean,
+    ) : TagManageEvent
+
     /** 收藏夹映射保存成功；[collectFolderNames] 空表示清空。 */
     data class TagFoldersSet(val position: Int, val tagName: String, val collectFolderNames: String) : TagManageEvent
 
@@ -244,5 +295,7 @@ data class TagExportItem(
     val description: String,
     val collectFolders: List<String> = emptyList(),
     val sortOrder: Int,
+    val enableAi: Boolean = true,
+    val isExclusive: Boolean = false,
 )
 

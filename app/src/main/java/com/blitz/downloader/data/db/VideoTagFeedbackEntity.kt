@@ -31,4 +31,9 @@ data class VideoTagFeedbackEntity(
     /** 模型返回的置信度；`MISSED`（AI 未建议）场景没有意义，为 `null`。 */
     val confidence: Float?,
     val createdAtMillis: Long,
+    /**
+     * AI 推断该标签所依据的关键证据帧（关联图）的本地相对路径（如 `covers/evidence/xxx.jpg`）。
+     * 仅在有对应证据帧时记录，空/null 表示无关联图或已失效。
+     */
+    val evidenceImagePath: String? = null,
 )

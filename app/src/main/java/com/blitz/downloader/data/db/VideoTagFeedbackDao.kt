@@ -76,7 +76,65 @@ interface VideoTagFeedbackDao {
         """,
     )
     suspend fun getRecentConfirmedGlobal(limit: Int): List<ConfirmedFeedbackRow>
+
+    /**
+     * 查询某作者带有效证据图的反馈记录（按 kind 过滤，如 ACCEPTED 或 REJECTED）。
+     */
+    @Query(
+        """
+        SELECT f.awemeId AS awemeId, v.desc AS `desc`, f.tagId AS tagId, f.kind AS kind, f.evidenceImagePath AS evidenceImagePath
+        FROM video_tag_feedback f
+        INNER JOIN downloaded_videos v ON v.awemeId = f.awemeId
+        WHERE v.videoAuthorSecUserId = :secUserId
+          AND f.kind = :kind
+          AND f.evidenceImagePath IS NOT NULL
+          AND f.evidenceImagePath != ''
+        ORDER BY f.createdAtMillis DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getRecentEvidenceByAuthor(secUserId: String, kind: String, limit: Int): List<EvidenceFeedbackRow>
+
+    /** 全局版 [getRecentEvidenceByAuthor]，同作者样例不足时兜底用。 */
+    @Query(
+        """
+        SELECT f.awemeId AS awemeId, v.desc AS `desc`, f.tagId AS tagId, f.kind AS kind, f.evidenceImagePath AS evidenceImagePath
+        FROM video_tag_feedback f
+        INNER JOIN downloaded_videos v ON v.awemeId = f.awemeId
+        WHERE f.kind = :kind
+          AND f.evidenceImagePath IS NOT NULL
+          AND f.evidenceImagePath != ''
+        ORDER BY f.createdAtMillis DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getRecentEvidenceGlobal(kind: String, limit: Int): List<EvidenceFeedbackRow>
+
+    /**
+     * 查询某作者某类反馈（如 ACCEPTED / REJECTED）下出现频次最高的标签 ID 列表。
+     */
+    @Query(
+        """
+        SELECT f.tagId
+        FROM video_tag_feedback f
+        INNER JOIN downloaded_videos v ON v.awemeId = f.awemeId
+        WHERE v.videoAuthorSecUserId = :secUserId AND f.kind = :kind
+        GROUP BY f.tagId
+        ORDER BY COUNT(*) DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun getTopTagIdsByAuthorAndKind(secUserId: String, kind: String, limit: Int): List<Long>
 }
 
 /** [VideoTagFeedbackDao.getRecentConfirmedByAuthor]/[VideoTagFeedbackDao.getRecentConfirmedGlobal] 的查询投影。 */
 data class ConfirmedFeedbackRow(val awemeId: String, val desc: String, val tagId: Long)
+
+/** [VideoTagFeedbackDao.getRecentEvidenceByAuthor]/[VideoTagFeedbackDao.getRecentEvidenceGlobal] 的查询投影。 */
+data class EvidenceFeedbackRow(
+    val awemeId: String,
+    val desc: String,
+    val tagId: Long,
+    val kind: String,
+    val evidenceImagePath: String,
+)

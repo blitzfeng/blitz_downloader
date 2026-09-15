@@ -24,8 +24,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,9 +55,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.blitz.downloader.R
+import com.blitz.downloader.data.db.AppDatabase
 import com.blitz.downloader.llm.AiAnalysisLogEntry
 import com.blitz.downloader.llm.AiAnalysisLogFormatter
 import com.blitz.downloader.llm.AiAnalysisLogStatus
+import com.blitz.downloader.llm.TagSuggestionRequestBuilder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,6 +72,13 @@ fun AiAnalysisLogSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
+    var showPromptTemplateDialog by remember { mutableStateOf(false) }
+
+    if (showPromptTemplateDialog) {
+        PromptPreviewDialog(
+            onDismiss = { showPromptTemplateDialog = false },
+        )
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -105,6 +119,13 @@ fun AiAnalysisLogSheet(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { showPromptTemplateDialog = true }) {
+                        Text(
+                            text = "Prompt 模板",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+
                     if (logs.isNotEmpty()) {
                         TextButton(
                             onClick = {
@@ -167,6 +188,7 @@ fun AiAnalysisLogSheet(
 @Composable
 fun AiAnalysisLogCard(entry: AiAnalysisLogEntry) {
     var expanded by remember { mutableStateOf(false) }
+    var showFullPrompt by remember { mutableStateOf(false) }
     var showRawRequest by remember { mutableStateOf(false) }
     var showRawResponse by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -300,6 +322,9 @@ fun AiAnalysisLogCard(entry: AiAnalysisLogEntry) {
                     if (entry.requestAuthorTagsSummary.isNotBlank()) {
                         DetailField(label = "作者高频标签", content = entry.requestAuthorTagsSummary)
                     }
+                    if (entry.requestEvidenceSamplesSummary.isNotBlank()) {
+                        DetailField(label = "历史审核参考", content = entry.requestEvidenceSamplesSummary)
+                    }
                     if (entry.requestFramesSummary.isNotBlank()) {
                         DetailField(label = "抽取图片", content = entry.requestFramesSummary)
                     }
@@ -308,6 +333,23 @@ fun AiAnalysisLogCard(entry: AiAnalysisLogEntry) {
                     }
                     if (entry.requestPrompt.isNotBlank()) {
                         DetailField(label = "提示词目标", content = entry.requestPrompt)
+                    }
+                    val promptToDisplay = entry.fullPrompt.ifBlank { entry.requestPrompt }
+                    if (promptToDisplay.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { showFullPrompt = !showFullPrompt },
+                        ) {
+                            Text(
+                                text = if (showFullPrompt) "▼ 隐藏请求完整 Prompt" else "▶ 查看请求完整 Prompt（含词表与描述）",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        if (showFullPrompt) {
+                            PromptBox(prompt = promptToDisplay)
+                        }
                     }
                     if (entry.rawRequestBody.isNotBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
@@ -431,6 +473,132 @@ private fun JsonBox(json: String) {
                 .horizontalScroll(rememberScrollState()),
         )
     }
+}
+
+@Composable
+private fun PromptBox(prompt: String) {
+    val context = LocalContext.current
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        shape = RoundedCornerShape(8.dp),
+        color = Color(0xFF1E1E1E),
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "完整 Prompt 内容 (${prompt.length} 字)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF9E9E9E),
+                )
+                TextButton(
+                    onClick = {
+                        copyToClipboard(context, "AiPrompt", prompt)
+                        Toast.makeText(context, "Prompt 已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.height(24.dp),
+                ) {
+                    Text(
+                        text = "复制 Prompt",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 280.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    text = prompt,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    ),
+                    color = Color(0xFFE0E0E0),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PromptPreviewDialog(
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    var promptText by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val tags = runCatching {
+                AppDatabase.getInstance(context).tagDao().getAllEntities()
+            }.getOrDefault(emptyList())
+            promptText = TagSuggestionRequestBuilder.buildPreviewPrompt(tags)
+            isLoading = false
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "AI 请求 Prompt 模板与词表",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "当前发送给大模型的固定角色设定、视觉维度定义、打标原则、标签词表与分类单选互斥规则：",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                if (isLoading) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    }
+                } else {
+                    PromptBox(prompt = promptText)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    if (promptText.isNotBlank()) {
+                        copyToClipboard(context, "AiPromptTemplate", promptText)
+                        Toast.makeText(context, "Prompt 模板已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                    }
+                },
+            ) {
+                Text("复制 Prompt")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+    )
 }
 
 @Composable

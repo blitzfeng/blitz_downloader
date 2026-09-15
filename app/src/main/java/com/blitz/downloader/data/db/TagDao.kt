@@ -90,6 +90,14 @@ interface TagDao {
     /** 查询所有配置了收藏夹映射的标签及映射关系。 */
     @Query("SELECT tagName, collectFolderNames FROM tags WHERE collectFolderNames != ''")
     suspend fun getAllCollectFolderMappings(): List<TagCollectFolderMappingRow>
+
+    /** 更新单个标签的 AI 分析参与状态。 */
+    @Query("UPDATE tags SET enableAi = :enableAi WHERE tagName = :tagName")
+    suspend fun updateEnableAi(tagName: String, enableAi: Boolean)
+
+    /** 更新单个标签的互斥单选状态。 */
+    @Query("UPDATE tags SET isExclusive = :isExclusive WHERE tagName = :tagName")
+    suspend fun updateIsExclusive(tagName: String, isExclusive: Boolean)
 }
 
 /**

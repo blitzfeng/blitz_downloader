@@ -86,7 +86,9 @@ class TagManageActivity : AppCompatActivity() {
         ) { _, bundle ->
             val tagName = bundle.getString(TagDescriptionDialogFragment.RESULT_TAG_NAME).orEmpty()
             val description = bundle.getString(TagDescriptionDialogFragment.RESULT_DESCRIPTION).orEmpty()
-            viewModel.setTagDescription(tagName, description)
+            val enableAi = bundle.getBoolean(TagDescriptionDialogFragment.RESULT_ENABLE_AI, true)
+            val isExclusive = bundle.getBoolean(TagDescriptionDialogFragment.RESULT_IS_EXCLUSIVE, false)
+            viewModel.setTagAiConfig(tagName, description, enableAi, isExclusive)
         }
 
         lifecycleScope.launch {
@@ -108,7 +110,15 @@ class TagManageActivity : AppCompatActivity() {
     private fun handleEvent(event: TagManageEvent) {
         when (event) {
             is TagManageEvent.TagsLoaded ->
-                adapter.submitList(event.tags, event.parentMap, event.descriptionMap, event.collectFolderMap)
+                adapter.submitList(
+                    list = event.tags,
+                    parents = event.parentMap,
+                    descriptions = event.descriptionMap,
+                    collectFolders = event.collectFolderMap,
+                    enableAi = event.enableAiMap,
+                    isExclusive = event.isExclusiveMap,
+                    hasChildren = event.hasChildrenMap,
+                )
             is TagManageEvent.TagCreated -> {
                 adapter.addItem(event.name)
                 binding.rvTagManage.scrollToPosition(adapter.itemCount - 1)
@@ -134,6 +144,8 @@ class TagManageActivity : AppCompatActivity() {
                 adapter.updateParent(event.position, event.tagName, event.parentTagName)
             is TagManageEvent.TagDescriptionSet ->
                 adapter.updateDescription(event.tagName, event.description)
+            is TagManageEvent.TagAiConfigSet ->
+                adapter.updateAiConfig(event.tagName, event.description, event.enableAi, event.isExclusive)
             is TagManageEvent.TagFoldersSet -> {
                 adapter.updateCollectFolders(event.position, event.tagName, event.collectFolderNames)
                 val msg = if (event.collectFolderNames.isNotBlank()) {
@@ -190,8 +202,15 @@ class TagManageActivity : AppCompatActivity() {
             onEdit = { pos, name -> showEditTagDialog(pos, name) },
             onDelete = { pos, name -> showDeleteTagDialog(pos, name) },
             onSetParent = { pos, name -> viewModel.requestParentPicker(pos, name) },
-            onEditDescription = { _, name ->
-                TagDescriptionDialogFragment.show(this, name, adapter.getDescription(name))
+            onEditDescription = { _, name, desc, enableAi, isExclusive, hasChildren ->
+                TagDescriptionDialogFragment.show(
+                    activity = this,
+                    tagName = name,
+                    currentDescription = desc,
+                    enableAi = enableAi,
+                    isExclusive = isExclusive,
+                    hasChildren = hasChildren,
+                )
             },
             onMapFolder = { pos, name -> showMapFolderDialog(pos, name) },
         )

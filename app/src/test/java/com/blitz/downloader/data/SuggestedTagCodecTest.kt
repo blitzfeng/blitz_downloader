@@ -13,13 +13,28 @@ class SuggestedTagCodecTest {
             TagCandidate(tagId = 12L, confidence = 0.88f, evidenceFrames = listOf(1, 3)),
             TagCandidate(tagId = 45L, confidence = 0.62f),
         )
+        val paths = mapOf(12L to "Download/bDouyin/covers/evidence/test_evidence_1.jpg")
 
-        val encoded = SuggestedTagCodec.encode(candidates)
+        val encoded = SuggestedTagCodec.encode(candidates, paths)
         val decoded = SuggestedTagCodec.decode(encoded)
 
         assertEquals(2, decoded.size)
-        assertEquals(0.88f, decoded.getValue(12L)!!, 0.001f)
-        assertEquals(0.62f, decoded.getValue(45L)!!, 0.001f)
+        assertEquals(0.88f, decoded.getValue(12L).confidence!!, 0.001f)
+        assertEquals("Download/bDouyin/covers/evidence/test_evidence_1.jpg", decoded.getValue(12L).evidencePath)
+        assertEquals(0.62f, decoded.getValue(45L).confidence!!, 0.001f)
+        assertEquals(null, decoded.getValue(45L).evidencePath)
+    }
+
+    @Test
+    fun decode_legacyFormat_backwardsCompatible() {
+        val legacy = "12:0.88|45:0.62"
+        val decoded = SuggestedTagCodec.decode(legacy)
+
+        assertEquals(2, decoded.size)
+        assertEquals(0.88f, decoded.getValue(12L).confidence!!, 0.001f)
+        assertEquals(null, decoded.getValue(12L).evidencePath)
+        assertEquals(0.62f, decoded.getValue(45L).confidence!!, 0.001f)
+        assertEquals(null, decoded.getValue(45L).evidencePath)
     }
 
     @Test

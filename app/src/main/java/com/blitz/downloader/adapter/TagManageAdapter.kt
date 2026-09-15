@@ -30,7 +30,14 @@ class TagManageAdapter(
     private val onEdit: (position: Int, tagName: String) -> Unit,
     private val onDelete: (position: Int, tagName: String) -> Unit,
     private val onSetParent: (position: Int, tagName: String) -> Unit,
-    private val onEditDescription: (position: Int, tagName: String) -> Unit,
+    private val onEditDescription: (
+        position: Int,
+        tagName: String,
+        description: String,
+        enableAi: Boolean,
+        isExclusive: Boolean,
+        hasChildren: Boolean,
+    ) -> Unit,
     private val onMapFolder: (position: Int, tagName: String) -> Unit,
 ) : RecyclerView.Adapter<TagManageAdapter.ViewHolder>() {
 
@@ -45,18 +52,33 @@ class TagManageAdapter(
     /** 标签名 → 映射的收藏夹名称，语义与 `VideoTagRepository.getCollectFolderMap()` 一致。 */
     private var collectFolderMap: Map<String, String> = emptyMap()
 
+    /** 标签名 → 是否参与 AI 建议分析（默认 true）。 */
+    private var enableAiMap: Map<String, Boolean> = emptyMap()
+
+    /** 标签名 → 子标签是否互斥单选（仅对父标签有效）。 */
+    private var isExclusiveMap: Map<String, Boolean> = emptyMap()
+
+    /** 标签名 → 是否拥有子标签。 */
+    private var hasChildrenMap: Map<String, Boolean> = emptyMap()
+
     /** 由 Activity 在初始化和刷新时调用。 */
     fun submitList(
         list: List<String>,
         parents: Map<String, String> = emptyMap(),
         descriptions: Map<String, String> = emptyMap(),
         collectFolders: Map<String, String> = emptyMap(),
+        enableAi: Map<String, Boolean> = emptyMap(),
+        isExclusive: Map<String, Boolean> = emptyMap(),
+        hasChildren: Map<String, Boolean> = emptyMap(),
     ) {
         tags.clear()
         tags.addAll(list)
         parentMap = parents
         descriptionMap = descriptions
         collectFolderMap = collectFolders
+        enableAiMap = enableAi
+        isExclusiveMap = isExclusive
+        hasChildrenMap = hasChildren
         notifyDataSetChanged()
     }
 
@@ -67,25 +89,37 @@ class TagManageAdapter(
         } else {
             parentMap + (tagName to parentTagName)
         }
+        val parentNames = parentMap.values.toSet()
+        hasChildrenMap = tags.associateWith { it in parentNames }
         if (position in tags.indices) notifyItemChanged(position)
     }
 
     /** 当前缓存的描述文本，供弹窗预填；未设置返回空字符串。 */
     fun getDescription(tagName: String): String = descriptionMap[tagName].orEmpty()
 
+    fun getEnableAi(tagName: String): Boolean = enableAiMap[tagName] ?: true
+
+    fun getIsExclusive(tagName: String): Boolean = isExclusiveMap[tagName] ?: false
+
+    fun hasChildren(tagName: String): Boolean = hasChildrenMap[tagName] ?: false
+
     /**
-     * 单个标签的描述保存成功后调用，只刷新这一行。不接收 position 参数——描述编辑弹窗是
-     * 异步的 Compose `DialogFragment`，结果通过 `FragmentResult` 回调时无法安全假设列表顺序
-     * 与弹出时一致（用户理论上可能同时在拖拽排序），当场按 [tagName] 重新查行号更稳妥。
+     * 单个标签的描述与 AI 配置保存成功后调用，只刷新这一行。
      */
-    fun updateDescription(tagName: String, description: String) {
+    fun updateAiConfig(tagName: String, description: String, enableAi: Boolean, isExclusive: Boolean) {
         descriptionMap = if (description.isBlank()) {
             descriptionMap - tagName
         } else {
             descriptionMap + (tagName to description)
         }
+        enableAiMap = enableAiMap + (tagName to enableAi)
+        isExclusiveMap = isExclusiveMap + (tagName to isExclusive)
         val position = tags.indexOf(tagName)
         if (position >= 0) notifyItemChanged(position)
+    }
+
+    fun updateDescription(tagName: String, description: String) {
+        updateAiConfig(tagName, description, getEnableAi(tagName), getIsExclusive(tagName))
     }
 
     /**
@@ -197,7 +231,14 @@ class TagManageAdapter(
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val tagName = tags[position]
-        holder.bind(tagName, parentMap[tagName], descriptionMap[tagName], collectFolderMap[tagName])
+        holder.bind(
+            tagName = tagName,
+            parentTagName = parentMap[tagName],
+            description = descriptionMap[tagName],
+            collectFolders = collectFolderMap[tagName],
+            enableAi = getEnableAi(tagName),
+            isExclusive = getIsExclusive(tagName),
+        )
     }
 
     override fun getItemCount(): Int = tags.size
@@ -216,7 +257,14 @@ class TagManageAdapter(
         private val btnEditDescription: ImageView = itemView.findViewById(R.id.btnEditTagDescription)
         private val btnMapFolder: ImageView = itemView.findViewById(R.id.btnMapFolder)
 
-        fun bind(tagName: String, parentTagName: String?, description: String?, collectFolders: String?) {
+        fun bind(
+            tagName: String,
+            parentTagName: String?,
+            description: String?,
+            collectFolders: String?,
+            enableAi: Boolean,
+            isExclusive: Boolean,
+        ) {
             tvTagName.text = tagName
             if (parentTagName.isNullOrBlank()) {
                 tvTagParent.visibility = View.GONE
@@ -224,10 +272,16 @@ class TagManageAdapter(
                 tvTagParent.text = "上级：$parentTagName"
                 tvTagParent.visibility = View.VISIBLE
             }
-            if (description.isNullOrBlank()) {
+
+            val badges = mutableListOf<String>()
+            if (!enableAi) badges.add("不参与AI")
+            if (isExclusive) badges.add("子项互斥")
+            val badgePrefix = if (badges.isNotEmpty()) "[${badges.joinToString("·")}] " else ""
+
+            if (description.isNullOrBlank() && badgePrefix.isEmpty()) {
                 tvTagDescription.visibility = View.GONE
             } else {
-                tvTagDescription.text = description
+                tvTagDescription.text = badgePrefix + (description.orEmpty())
                 tvTagDescription.visibility = View.VISIBLE
             }
             val folderList = VideoTagRepository.parseFolderNames(collectFolders.orEmpty())
@@ -255,7 +309,17 @@ class TagManageAdapter(
             }
             btnEditDescription.setOnClickListener {
                 val pos = bindingAdapterPosition
-                if (pos != RecyclerView.NO_ID.toInt()) onEditDescription(pos, tags[pos])
+                if (pos != RecyclerView.NO_ID.toInt()) {
+                    val name = tags[pos]
+                    onEditDescription(
+                        pos,
+                        name,
+                        getDescription(name),
+                        getEnableAi(name),
+                        getIsExclusive(name),
+                        hasChildren(name),
+                    )
+                }
             }
             btnMapFolder.setOnClickListener {
                 val pos = bindingAdapterPosition

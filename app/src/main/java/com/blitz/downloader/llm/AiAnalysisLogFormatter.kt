@@ -144,6 +144,9 @@ object AiAnalysisLogFormatter {
         if (entry.requestAuthorTagsSummary.isNotBlank()) {
             appendLine("• 作者高频标签: ${entry.requestAuthorTagsSummary}")
         }
+        if (entry.requestEvidenceSamplesSummary.isNotBlank()) {
+            appendLine("• 历史审核参考: ${entry.requestEvidenceSamplesSummary}")
+        }
         if (entry.requestFramesSummary.isNotBlank()) {
             appendLine("• 图片与选帧: ${entry.requestFramesSummary}")
         }

@@ -16,10 +16,12 @@ import com.blitz.downloader.llm.AiAnalysisLogStore
 import com.blitz.downloader.llm.FewShotExample
 import com.blitz.downloader.llm.ImagePart
 import com.blitz.downloader.llm.LlmProvider
+import com.blitz.downloader.llm.MultimodalEvidenceSample
 import com.blitz.downloader.llm.PreferenceSummaryRequest
 import com.blitz.downloader.llm.TagSuggestionRequestBuilder
 import com.blitz.downloader.llm.VisualFeatureProfile
 import com.blitz.downloader.llm.providers.GeminiProvider
+import com.blitz.downloader.util.EvidenceFileManager
 import com.blitz.downloader.util.VideoFrameExtractor
 import com.google.gson.Gson
 import java.io.File
@@ -115,6 +117,12 @@ class AiTagSuggestionRepository(context: Context) {
         val authorProfile = videoTagRepository.getAuthorProfileForAi(secUserId, threshold)
         val preferenceProfileText = preferenceProfileDao.getLatest()?.profileText
 
+        val multimodalEvidenceSamples = if (secUserId.isNotBlank()) {
+            getMultimodalEvidenceSamplesForAuthor(secUserId, tagById)
+        } else {
+            emptyList()
+        }
+
         val request = TagSuggestionRequestBuilder.build(
             coverImage = coverImage,
             keyFrames = keyFrames,
@@ -123,6 +131,7 @@ class AiTagSuggestionRepository(context: Context) {
             authorProfile = authorProfile,
             preferenceProfileText = preferenceProfileText,
             fewShotExamples = emptyList(),
+            multimodalEvidenceSamples = multimodalEvidenceSamples,
         )
 
         val faceCount = keyFrames.count { it.hasFace }
@@ -136,6 +145,23 @@ class AiTagSuggestionRepository(context: Context) {
         } else {
             "无 (未达到高频阈值或无历史标签)"
         }
+
+        val evidenceSamplesSummary = if (multimodalEvidenceSamples.isNotEmpty()) {
+            val acceptedCount = multimodalEvidenceSamples.count { it.acceptedTagNames.isNotEmpty() }
+            val rejectedCount = multimodalEvidenceSamples.count { it.rejectedTagNames.isNotEmpty() }
+            val sampleDetails = multimodalEvidenceSamples.mapIndexed { idx, s ->
+                val actions = mutableListOf<String>()
+                if (s.acceptedTagNames.isNotEmpty()) actions.add("采纳 [${s.acceptedTagNames.joinToString("、")}]")
+                if (s.rejectedTagNames.isNotEmpty()) actions.add("拒绝 [${s.rejectedTagNames.joinToString("、")}]")
+                val imgNote = if (s.evidenceImage != null) " (附参考图)" else ""
+                val descSnippet = if (s.desc.isNotBlank()) " - 文案「${s.desc.take(25)}」" else ""
+                "  • 样例 ${idx + 1}: ${actions.joinToString("; ")}$imgNote$descSnippet"
+            }.joinToString("\n")
+            "共 ${multimodalEvidenceSamples.size} 条 (采纳 $acceptedCount 条, 拒绝 $rejectedCount 条):\n$sampleDetails"
+        } else {
+            "无 (该作者暂无历史采纳/拒绝参考样例)"
+        }
+
         val promptSummary = buildString {
             append("目标：按五个视觉维度提供证据，并从词表中选择候选标签。\n")
             if (desc.isNotBlank()) append("文案：$desc\n")
@@ -146,6 +172,9 @@ class AiTagSuggestionRepository(context: Context) {
                 }
                 append("作者高频标签：$tagsText\n")
             }
+            if (multimodalEvidenceSamples.isNotEmpty()) {
+                append("历史审核参考：共 ${multimodalEvidenceSamples.size} 条样例\n")
+            }
             append("候选词表：共 ${request.tagVocabulary.size} 个标签")
         }
 
@@ -153,6 +182,16 @@ class AiTagSuggestionRepository(context: Context) {
             val ratioText = tag.ratio?.let { "${(it * 100).toInt()}%" } ?: "${tag.count}次"
             mapOf("tagName" to tag.tagName, "count" to tag.count, "ratio" to ratioText)
         } ?: emptyList()
+
+        val evidenceSamplesJsonList = multimodalEvidenceSamples.mapIndexed { idx, s ->
+            mapOf(
+                "sampleIndex" to idx + 1,
+                "desc" to s.desc,
+                "acceptedTags" to s.acceptedTagNames,
+                "rejectedTags" to s.rejectedTagNames,
+                "hasEvidenceImage" to (s.evidenceImage != null),
+            )
+        }
 
         val redactedRequestJson = buildString {
             append("{\n")
@@ -162,9 +201,30 @@ class AiTagSuggestionRepository(context: Context) {
             }
             append("  \"videoDesc\": \"${desc.replace("\"", "\\\"")}\",\n")
             append("  \"authorHighFreqTags\": ${gson.toJson(authorTagsJsonList)},\n")
+            append("  \"multimodalEvidenceSamples\": ${gson.toJson(evidenceSamplesJsonList)},\n")
             append("  \"framesSummary\": \"$framesSummary\",\n")
             append("  \"tagVocabularyCount\": ${request.tagVocabulary.size}\n")
             append("}")
+        }
+
+        val promptText = TagSuggestionRequestBuilder.buildTagSuggestionPrompt(request)
+        val fullPrompt = if (multimodalEvidenceSamples.isNotEmpty()) {
+            buildString {
+                appendLine(promptText)
+                appendLine()
+                appendLine("【同作者历史审核参考样例（包含用户曾采纳与拒绝的标签及对应依据图，仅作风格参考，不要据此给当前视频打标）】：")
+                multimodalEvidenceSamples.forEachIndexed { idx, sample ->
+                    append("历史参考案例 ${idx + 1}：")
+                    if (sample.desc.isNotBlank()) append("文案「${sample.desc}」；")
+                    if (sample.acceptedTagNames.isNotEmpty()) append("用户曾采纳标签：${sample.acceptedTagNames.joinToString("、")}；")
+                    if (sample.rejectedTagNames.isNotEmpty()) append("用户曾拒绝标签：${sample.rejectedTagNames.joinToString("、")}；")
+                    if (sample.evidenceImage != null) append("（含参考依据图）")
+                    appendLine()
+                }
+                appendLine("【以下是当前需要分析的新视频，候选标签的 evidenceFrames 序号仅针对待分析图片】")
+            }
+        } else {
+            promptText
         }
 
         AiAnalysisLogStore.addEntry(
@@ -177,7 +237,9 @@ class AiTagSuggestionRepository(context: Context) {
                 timestamp = startTime,
                 status = AiAnalysisLogStatus.RUNNING,
                 requestPrompt = promptSummary,
+                fullPrompt = fullPrompt,
                 requestAuthorTagsSummary = authorTagsSummary,
+                requestEvidenceSamplesSummary = evidenceSamplesSummary,
                 requestFramesSummary = framesSummary,
                 requestVocabularySummary = vocabSummary,
                 rawRequestBody = AiAnalysisLogFormatter.formatJson(redactedRequestJson),
@@ -196,27 +258,43 @@ class AiTagSuggestionRepository(context: Context) {
             return Result.failure(err)
         }
 
-        // spec"建议结果仅限于系统现有标签词表"：优先按直观的 tagName 匹配，备选按 tagId 匹配，词表外的项直接丢弃
-        val resolvedCandidates = response.candidates.mapNotNull { candidate ->
-            val entity = (if (candidate.tagName.isNotBlank()) tagByName[candidate.tagName] else null)
-                ?: tagById[candidate.tagId]
-                ?: return@mapNotNull null
-            candidate.copy(tagId = entity.id, tagName = entity.tagName)
+        // 解析建议结果，并根据 parentId / parentTagName 在本地自动继承与补齐父标签
+        val deduplicatedCandidates = TagSuggestionRequestBuilder.resolveCandidatesWithParentHierarchy(
+            rawCandidates = response.candidates,
+            allTags = tags,
+        )
+
+        // 抽取并降采样持久化关键证据帧（宽高各缩放 50%，每视频最多 MAX_EVIDENCE_PER_VIDEO 张）
+        val referencedFrameIndices = deduplicatedCandidates
+            .flatMap { it.evidenceFrames }
+            .distinct()
+            .take(EvidenceFileManager.MAX_EVIDENCE_PER_VIDEO)
+            .ifEmpty { listOf(0) }
+
+        val frameIndexToPath = mutableMapOf<Int, String>()
+        for (idx in referencedFrameIndices) {
+            val rawBytes = when {
+                idx == 0 -> coverBytes
+                idx in 1..keyFrames.size -> keyFrames[idx - 1].jpegBytes
+                else -> null
+            } ?: continue
+            val savedPath = EvidenceFileManager.saveDownscaledEvidenceFrame(
+                awemeId = awemeId,
+                frameIndex = idx,
+                rawJpegBytes = rawBytes,
+            )
+            if (savedPath != null) {
+                frameIndexToPath[idx] = savedPath
+            }
         }
 
-        // 去重：同一标签若被模型针对多帧重复输出，合并 evidenceFrames 并取最高置信度
-        val deduplicatedCandidates = resolvedCandidates
-            .groupBy { it.tagName }
-            .map { (tagName, items) ->
-                val best = items.maxByOrNull { it.confidence } ?: items.first()
-                val mergedFrames = items.flatMap { it.evidenceFrames }.distinct().sorted()
-                com.blitz.downloader.llm.TagCandidate(
-                    tagId = best.tagId,
-                    confidence = best.confidence,
-                    evidenceFrames = mergedFrames,
-                    tagName = tagName,
-                )
-            }
+        // 建立各候选标签与证据帧的关联映射
+        val tagIdToEvidencePath = deduplicatedCandidates.associate { candidate ->
+            val path = candidate.evidenceFrames.firstNotNullOfOrNull { frameIndexToPath[it] }
+                ?: frameIndexToPath[0]
+                ?: ""
+            candidate.tagId to path
+        }
 
         Log.i(TAG, "[$awemeId] AI 建议标签结果: ${deduplicatedCandidates.map { "${it.tagName}(${it.confidence})" }}")
 
@@ -238,7 +316,7 @@ class AiTagSuggestionRepository(context: Context) {
                 provider = llmProvider.providerId,
                 model = llmProvider.modelId,
                 profileVersion = PROFILE_SCHEMA_VERSION,
-                suggestedTagIds = SuggestedTagCodec.encode(deduplicatedCandidates),
+                suggestedTagIds = SuggestedTagCodec.encode(deduplicatedCandidates, tagIdToEvidencePath),
                 succeeded = true,
                 createdAtMillis = now,
             ),
@@ -277,14 +355,15 @@ class AiTagSuggestionRepository(context: Context) {
         val now = System.currentTimeMillis()
 
         val rows = mutableListOf<VideoTagFeedbackEntity>()
-        for ((tagId, confidence) in suggested) {
+        for ((tagId, detail) in suggested) {
             val kind = if (tagId in confirmedTagIds) AiTagFeedbackKind.ACCEPTED else AiTagFeedbackKind.REJECTED
             rows += VideoTagFeedbackEntity(
                 awemeId = analysis.awemeId,
                 analysisId = analysisId,
                 tagId = tagId,
                 kind = kind,
-                confidence = confidence,
+                confidence = detail.confidence,
+                evidenceImagePath = detail.evidencePath,
                 createdAtMillis = now,
             )
         }
@@ -295,6 +374,7 @@ class AiTagSuggestionRepository(context: Context) {
                 tagId = tagId,
                 kind = AiTagFeedbackKind.MISSED,
                 confidence = null,
+                evidenceImagePath = null,
                 createdAtMillis = now,
             )
         }
@@ -332,6 +412,46 @@ class AiTagSuggestionRepository(context: Context) {
                 updatedAtMillis = System.currentTimeMillis(),
             ),
         )
+    }
+
+    private suspend fun getMultimodalEvidenceSamplesForAuthor(
+        secUserId: String,
+        tagById: Map<Long, com.blitz.downloader.data.db.TagEntity>,
+    ): List<MultimodalEvidenceSample> {
+        val acceptedRows = videoTagFeedbackDao.getRecentEvidenceByAuthor(secUserId, "ACCEPTED", limit = 4)
+        val rejectedRows = videoTagFeedbackDao.getRecentEvidenceByAuthor(secUserId, "REJECTED", limit = 4)
+
+        val samples = mutableListOf<MultimodalEvidenceSample>()
+
+        for (row in acceptedRows) {
+            if (samples.count { it.acceptedTagNames.isNotEmpty() } >= 2) break
+            val imagePart = EvidenceFileManager.loadEvidenceImagePart(row.evidenceImagePath)
+            val tagName = tagById[row.tagId]?.tagName ?: continue
+            samples.add(
+                MultimodalEvidenceSample(
+                    desc = row.desc,
+                    acceptedTagNames = listOf(tagName),
+                    rejectedTagNames = emptyList(),
+                    evidenceImage = imagePart,
+                ),
+            )
+        }
+
+        for (row in rejectedRows) {
+            if (samples.count { it.rejectedTagNames.isNotEmpty() } >= 2) break
+            val imagePart = EvidenceFileManager.loadEvidenceImagePart(row.evidenceImagePath)
+            val tagName = tagById[row.tagId]?.tagName ?: continue
+            samples.add(
+                MultimodalEvidenceSample(
+                    desc = row.desc,
+                    acceptedTagNames = emptyList(),
+                    rejectedTagNames = listOf(tagName),
+                    evidenceImage = imagePart,
+                ),
+            )
+        }
+
+        return samples
     }
 
     private fun groupIntoFewShotExamples(

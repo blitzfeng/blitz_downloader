@@ -240,6 +240,16 @@ class VideoTagRepository(context: Context) {
         tagDao.updateCollectFolderNames(tagName, normalized)
     }
 
+    /** 设置单个标签的 AI 分析参与状态。 */
+    suspend fun setTagEnableAi(tagName: String, enableAi: Boolean) {
+        tagDao.updateEnableAi(tagName, enableAi)
+    }
+
+    /** 设置单个标签的互斥单选状态（仅对父标签有效）。 */
+    suspend fun setTagIsExclusive(tagName: String, isExclusive: Boolean) {
+        tagDao.updateIsExclusive(tagName, isExclusive)
+    }
+
     // ──────────────────── 视频打标签（video_tags 表） ────────────────────
 
     /** 为视频添加单个标签；重复调用幂等。 */

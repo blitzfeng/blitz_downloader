@@ -12,6 +12,7 @@ import com.blitz.downloader.llm.PreferenceSummaryRequest
 import com.blitz.downloader.llm.TagCandidate
 import com.blitz.downloader.llm.TagSuggestionRequest
 import com.blitz.downloader.llm.TagSuggestionResponse
+import com.blitz.downloader.llm.TagSuggestionRequestBuilder
 import com.blitz.downloader.llm.TagWordEntry
 import com.blitz.downloader.llm.VisualDimension
 import com.blitz.downloader.llm.VisualFeatureProfile
@@ -82,7 +83,24 @@ class GeminiProvider(private val context: Context) : LlmProvider {
 
         val parts = buildList {
             add(GeminiPart(text = buildTagSuggestionPrompt(request)))
-            add(GeminiPart(text = "图片 0（封面）"))
+            if (request.multimodalEvidenceSamples.isNotEmpty()) {
+                add(GeminiPart(text = "【同作者历史审核参考样例（包含用户曾采纳与拒绝的标签及对应依据图，仅作风格参考，不要据此给当前视频打标）】："))
+                request.multimodalEvidenceSamples.forEachIndexed { idx, sample ->
+                    val tagInfo = buildString {
+                        append("历史参考案例 ${idx + 1}：")
+                        if (sample.desc.isNotBlank()) append("文案「${sample.desc}」；")
+                        if (sample.acceptedTagNames.isNotEmpty()) append("用户曾采纳标签：${sample.acceptedTagNames.joinToString("、")}；")
+                        if (sample.rejectedTagNames.isNotEmpty()) append("用户曾拒绝标签：${sample.rejectedTagNames.joinToString("、")}；")
+                    }
+                    add(GeminiPart(text = tagInfo))
+                    sample.evidenceImage?.let { img ->
+                        // 必须强制使用 MEDIA_RESOLUTION_LOW，绝不使用 medium！
+                        add(toGeminiPart(img, resolution = MEDIA_RESOLUTION_LOW))
+                    }
+                }
+                add(GeminiPart(text = "【以下是当前需要分析的新视频，候选标签的 evidenceFrames 序号仅针对以下待分析图片】："))
+            }
+            add(GeminiPart(text = "当前待分析图片 0（封面）"))
             // 封面是唯一保证会被看到的图，也是"第一印象"，恒定用 MEDIUM，不参与按人脸降档
             add(toGeminiPart(request.coverImage, resolution = MEDIA_RESOLUTION_MEDIUM))
             request.keyFrames.forEachIndexed { i, frame ->
@@ -91,7 +109,7 @@ class GeminiProvider(private val context: Context) : LlmProvider {
                 } else {
                     "（本地初筛未检测到人脸，不代表画面中一定没有人物，仅供参考，请以你自己观察到的为准）"
                 }
-                add(GeminiPart(text = "图片 ${i + 1} $faceNote"))
+                add(GeminiPart(text = "当前待分析图片 ${i + 1} $faceNote"))
                 // 含人脸的帧留给 face/expression 判断，需要更清晰的细节，用 MEDIUM；
                 // 不含人脸的帧只用来佐证 bodyAndStyling/clothing/action，细节要求更低，降到 LOW 省 token。
                 val resolution = if (frame.hasFace) MEDIA_RESOLUTION_MEDIUM else MEDIA_RESOLUTION_LOW
@@ -168,43 +186,8 @@ class GeminiProvider(private val context: Context) : LlmProvider {
         mediaResolution = GeminiMediaResolutionConfig(level = resolution),
     )
 
-    private fun buildTagSuggestionPrompt(request: TagSuggestionRequest): String = buildString {
-        appendLine("你是一个短视频内容标签助手。请仔细观察后面提供的图片（第一张是视频封面，其余是从视频中抽取的关键帧），")
-        appendLine("结合视频文案，完成两件事：")
-        appendLine("1. 输出结构化的视觉证据 visualFeatureProfile：按 face/expression/bodyAndStyling/clothing/action 五个维度，")
-        appendLine("   分别说明该维度在图片中是否可见（visibility: high/medium/low/none）、观察到的具体特征、以及依据的图片序号")
-        appendLine("   （图片序号从 0 开始，0 是封面，之后依次是关键帧）。某个维度在图片里完全看不出来时，visibility 填 \"none\"，")
-        appendLine("   不要编造证据。")
-        appendLine("2. 从下面给出的标签词表中选择候选标签，必须返回词表中已有标签的 tagName（标签名称，如 \"颜值\"）与对应的 tagId，不要创造新标签或返回词表之外的名字。")
-        appendLine("   每个候选标签给出 confidence（0~1）与支撑该标签的图片序号 evidenceFrames。")
-        appendLine("   注意：evidenceFrames 只需填写观察到相关特征的少数关键图片序号，不要无脑填入全部图片序号。")
-        appendLine("   如果某个标签依赖的视觉维度在图片中缺乏清晰证据（尤其是颜值类标签依赖清晰人脸），必须降低该标签的置信度")
-        appendLine("   或直接不返回这个候选，不能仅凭文案或猜测给出高置信度。")
-        appendLine()
-        if (request.desc.isNotBlank()) {
-            appendLine("视频文案：${request.desc}")
-            appendLine()
-        }
-        appendLine("可选标签词表（JSON，字段：name 是标签名称 tagName、tagId 是标签标识、description 是人工定义的判断标准，")
-        appendLine("parentTagId 非空表示存在上级大类，仅供参考不代表必须同时选中）：")
-        appendLine(gson.toJson(request.tagVocabulary))
-        appendLine()
-        request.authorProfile?.takeIf { it.topTags.isNotEmpty() }?.let { profile ->
-            val tagsSummary = profile.topTags.joinToString("、") { tag ->
-                val ratioText = tag.ratio?.let { "占比 ${(it * 100).toInt()}%" } ?: "出现 ${tag.count} 次"
-                "${tag.tagName} ($ratioText)"
-            }
-            appendLine("该视频作者的历史高频标签先验（该作者共有 ${profile.sampleCount} 个已下载视频，出现频率最高的目标标签为：$tagsSummary。")
-            appendLine("**仅作先验参考，不能替代当前图片证据**——历史上常打某标签不代表这条视频也符合，必须以图片证据为准）：")
-            appendLine()
-        }
-        request.preferenceProfileText?.takeIf { it.isNotBlank() }?.let { profileText ->
-            appendLine("这是根据用户过往采纳/拒绝建议总结出的个人标签偏好，供参考：")
-            appendLine(profileText)
-            appendLine()
-        }
-        appendLine("请严格按照给定的 JSON Schema 返回结果。")
-    }
+    private fun buildTagSuggestionPrompt(request: TagSuggestionRequest): String =
+        TagSuggestionRequestBuilder.buildTagSuggestionPrompt(request)
 
     private fun buildPreferenceSummaryPrompt(request: PreferenceSummaryRequest): String = buildString {
         appendLine("以下是某用户最近对 AI 建议标签的确认记录（视频文案 + 最终确认的标签），请用简洁的中文段落总结出")

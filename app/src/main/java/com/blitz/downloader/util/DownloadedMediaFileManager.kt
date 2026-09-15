@@ -93,9 +93,19 @@ object DownloadedMediaFileManager {
     fun findOrphanMediaFiles(
         allEntities: Collection<DownloadedVideoEntity>,
         rootDir: File = getExternalStorageDirectorySafely(),
+        extraValidPaths: Collection<String> = emptyList(),
     ): List<OrphanMediaFile> {
         val validPaths = HashSet<String>()
         val validRelativeKeys = HashSet<String>()
+
+        for (path in extraValidPaths) {
+            if (path.isNotBlank()) {
+                val f = resolveFile(path, rootDir)
+                validPaths.add(f.absolutePath)
+                runCatching { f.canonicalPath }.getOrNull()?.let { validPaths.add(it) }
+                normalizeRelativeKey(path)?.let { validRelativeKeys.add(it) }
+            }
+        }
 
         for (entity in allEntities) {
             val files = resolveEntityFiles(entity, rootDir)
@@ -272,7 +282,7 @@ object DownloadedMediaFileManager {
         }
     }
 
-    private fun getExternalStorageDirectorySafely(): File {
+    internal fun getExternalStorageDirectorySafely(): File {
         return try {
             @Suppress("DEPRECATION")
             Environment.getExternalStorageDirectory()

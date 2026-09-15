@@ -263,10 +263,13 @@
     <string name="tag_edit_ai_suggest_failed">获取建议失败：%1$s</string>
     <!-- 标签编辑弹窗内「预览视频」入口：跳播放页判断 AI 建议/手动打标是否准确，返回时弹窗仍在 -->
     <string name="tag_edit_preview_video_button">预览视频</string>
-    <!-- 标签描述编辑弹窗（辅助 ai-tag-suggestions 的 AI 建议理解标签判断标准） -->
-    <string name="tag_description_dialog_title">编辑「%1$s」的描述</string>
+    <string name="tag_description_dialog_title">编辑「%1$s」的描述与设置</string>
     <string name="tag_description_dialog_placeholder">帮助 AI 理解这个标签的判断标准</string>
     <string name="tag_description_dialog_count">%1$d/%2$d</string>
+    <string name="tag_ai_enable_label">参与 AI 建议分析</string>
+    <string name="tag_ai_enable_desc">关闭后在生成 AI 候选词表时自动排除</string>
+    <string name="tag_exclusive_label">子标签互斥单选</string>
+    <string name="tag_exclusive_desc">开启后，AI 在该分类下至多推荐 1 项或父标签兜底</string>
     <string name="manage_menu_set_tags_selected">批量设置标签</string>
     <string name="manage_set_tags_title">为选中的 %1$d 项批量添加标签</string>
     <string name="manage_set_tags_no_tags">暂无可用标签，请先在「标签管理」中创建标签</string>

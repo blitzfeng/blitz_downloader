@@ -227,7 +227,7 @@ private fun BatchTagDialogPreview() {
         DialogContainer {
             BatchTagDialogContent(
                 selectedCount = 12,
-                allTags = listOf("美腿", "可爱", "纯欲", "波霸", "小沟", "穿搭"),
+                allTags = listOf("美腿", "可爱", "纯欲", "波霸", "乳沟", "穿搭"),
                 preCheckedTags = listOf("美腿"),
                 parentMap = emptyMap(),
                 onConfirmTags = {},

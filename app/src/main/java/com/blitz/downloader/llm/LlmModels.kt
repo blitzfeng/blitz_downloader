@@ -14,6 +14,8 @@ data class TagWordEntry(
     val name: String,
     val description: String = "",
     val parentTagId: Long? = null,
+    val isExclusiveCategory: Boolean = false,
+    val isParent: Boolean = false,
 )
 
 /** 作者历史标签先验的单项，见 [com.blitz.downloader.data.AuthorTagRatio]。 */
@@ -25,6 +27,14 @@ data class AuthorProfileContext(val sampleCount: Int, val topTags: List<AuthorTa
 /** 一条 few-shot 样例：这条视频的文案 + 用户最终确认的标签名集合。 */
 data class FewShotExample(val desc: String, val confirmedTagNames: List<String>)
 
+/** 一条多模态参考样例：文案 + 同作者历史接受与拒绝标签名 + 关联证据图片（50% 降采样）。 */
+data class MultimodalEvidenceSample(
+    val desc: String,
+    val acceptedTagNames: List<String>,
+    val rejectedTagNames: List<String> = emptyList(),
+    val evidenceImage: ImagePart? = null,
+)
+
 /** 一次 AI 建议标签请求的完整输入。 */
 data class TagSuggestionRequest(
     val coverImage: ImagePart,
@@ -34,6 +44,7 @@ data class TagSuggestionRequest(
     val authorProfile: AuthorProfileContext? = null,
     val preferenceProfileText: String? = null,
     val fewShotExamples: List<FewShotExample> = emptyList(),
+    val multimodalEvidenceSamples: List<MultimodalEvidenceSample> = emptyList(),
 )
 
 /** 单个视觉维度的可见证据；`visibility` 取值 "high"/"medium"/"low"/"none"。 */

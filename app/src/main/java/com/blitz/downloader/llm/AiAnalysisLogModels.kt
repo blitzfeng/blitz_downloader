@@ -23,7 +23,9 @@ data class AiAnalysisLogEntry(
     val durationMs: Long = 0L,
     // 请求数据
     val requestPrompt: String = "",
+    val fullPrompt: String = "",
     val requestAuthorTagsSummary: String = "",
+    val requestEvidenceSamplesSummary: String = "",
     val requestFramesSummary: String = "",
     val requestVocabularySummary: String = "",
     val rawRequestBody: String = "",

@@ -35,8 +35,8 @@ object VideoFrameExtractor {
     /** 每隔这么多毫秒规划一个候选采样点，用于按时长动态决定候选帧数量。 */
     private const val CANDIDATE_INTERVAL_MS = 2500L
 
-    /** 最终上传张数上限（不含封面，封面由调用方单独提供，两者相加对齐文档"8~12 张含封面"的建议）。 */
-    private const val MAX_FINAL_FRAMES = 10
+    /** 最终上传张数上限（不含封面，封面由调用方单独提供；从 10 张下调至 8 张以降低冗余与 token 消耗）。 */
+    private const val MAX_FINAL_FRAMES = 8
 
     /**
      * 上传前统一缩放到的最长边。**真机验证过：这个值对 token 消耗没有影响**——

@@ -41,4 +41,14 @@ data class TagEntity(
      * 空字符串表示未映射任何收藏夹。
      */
     val collectFolderNames: String = "",
+    /**
+     * 是否参与 AI 建议标签分析。设为 false 时（如「不导出」、「图片」等系统控制标签），
+     * 生成 AI 词表与 Prompt 时自动排除。
+     */
+    val enableAi: Boolean = true,
+    /**
+     * 仅对父标签有效：指示其直属子标签是否互斥单选。
+     * 为 true 时，Prompt 约束模型至多选择 1 项（或选择父标签自身作为兜底项）。
+     */
+    val isExclusive: Boolean = false,
 )

@@ -66,6 +66,7 @@ class AiAnalysisLogFormatterTest {
             durationMs = 1200,
             requestPrompt = "请给出标签",
             requestAuthorTagsSummary = "已下载 10 个视频，高频标签: 搞笑 (80%)",
+            requestEvidenceSamplesSummary = "共 1 条 (采纳 1 条, 拒绝 0 条): 样例 1: 采纳 [搞笑]",
             suggestedTags = listOf(TagCandidate(tagId = 1L, confidence = 0.9f, tagName = "搞笑")),
         )
         val text = AiAnalysisLogFormatter.formatEntryToPlainText(entry)
@@ -75,6 +76,7 @@ class AiAnalysisLogFormatterTest {
         assertTrue(text.contains("分析成功"))
         assertTrue(text.contains("1200 ms"))
         assertTrue(text.contains("作者高频标签: 已下载 10 个视频，高频标签: 搞笑 (80%)"))
+        assertTrue(text.contains("历史审核参考: 共 1 条 (采纳 1 条, 拒绝 0 条): 样例 1: 采纳 [搞笑]"))
         assertTrue(text.contains("[ 搞笑 ]"))
     }
 }

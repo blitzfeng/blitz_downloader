@@ -258,7 +258,7 @@ private fun TagEditDialogPreview() {
     BlitzTheme {
         DialogContainer {
             TagEditDialogContent(
-                allTags = listOf("美腿", "可爱", "纯欲", "波霸", "小沟", "穿搭"),
+                allTags = listOf("美腿", "可爱", "纯欲", "波霸", "乳沟", "穿搭"),
                 currentTags = listOf("可爱", "穿搭"),
                 parentMap = emptyMap(),
                 aiSuggestionEnabled = true,
