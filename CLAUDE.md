@@ -714,6 +714,15 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 
 ## 约定 / 容易踩的坑
 
+- 点赞浏览底部计数分两行：已选择/当前列表数量，以及“累计索引 N 条”。累计数由当前来源会话的去重条目数提供，已包含历史浏览与本次新加载；不可再加当前列表数量，否则恢复位置附近的重叠条目会重复计数。隐藏已下载只影响当前列表，不减少累计数。
+
+- 点赞索引抽屉仅保留“继续浏览”和“重置”：继续浏览自动创建或恢复会话，滚动按需请求后续分页；重置经确认后清除该来源的缓存和位置。无 100/500/1000 条停止限制，也不暴露排序选择。进入抽屉及执行操作时自动选中“点赞”，退出作者作品模式；旧会话保留条目和 cursor 并取消上限。
+
+- 列表下载页的点赞索引操作集中在右侧抽屉（顶部“点赞索引”按钮），内容使用 Compose Material 3；关闭、遮罩点击和返回键均可收起。顶部地址栏保持横向 LinearLayout：输入框使用宽度 0dp + weight=1，不能单独将父容器改为纵向，否则输入框宽度会归零。
+
+- **点赞列表可恢复索引**：`liked_list_index_session` 保存来源身份、状态、上限和服务端原样 `max_cursor`，`liked_list_index_item` 按 `(sourceKey, awemeId)` 去重并保存来源顺序/作品创建时间。cursor 是不透明服务端边界，绝不能当页码或按条目数推导；每页成功时条目和下一 cursor 必须在同一 Room 事务检查点化。当前只允许 `like` 来源，`collectionId` 仅为未来收藏夹扩展预留。
+- 索引条目**禁止**持久化签名封面、视频或图集 URL。用户从索引选择下载时，必须通过 `DouyinParser.fetchVideoDetail` 重新解析媒体；认证失败、未推进 cursor 或 `has_more` 下空页会保留已有条目并进入 `RECOVERY_REQUIRED`，只能由用户明确从 cursor=0 重建。
+
 - 不要再引入新的"WebView DOM 抽取"式解析。新接口走 `DouyinApiService` + `DouyinParser`/`DouyinListApi` + 签名层。`api/DouyinSignatureGenerator.kt` 是早期"WebView 跑页面 JS 算签名"的**遗留占位类，当前无任何调用方**；现役签名一律在 `api/signing/`。别照着它写新代码，也别以为改它能影响请求。
 - 日志里不要打印原始 Cookie 或 `msToken`——这些等同于完整账号权限。登录成功的 toast 已经主动做了脱敏，新增日志保持同样标准。
 - `BatchDownloadCoordinator` 与 `DouyinList*` 层的并发数 / 重试 / 分页常量是为了对齐 F2 而调的，改之前先确认动机，不要随手调。

@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.drawerlayout.widget.DrawerLayout android:id="@+id/likeDrawerLayout" xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <FrameLayout android:layout_width="match_parent" android:layout_height="match_parent">
     <androidx.core.widget.NestedScrollView
         android:id="@+id/nestedScrollView"
         android:layout_width="match_parent"
@@ -20,7 +21,6 @@
                 android:id="@+id/topBar"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
                 android:orientation="horizontal"
                 android:padding="12dp"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -58,6 +58,12 @@
                     android:text="粘贴"
                     android:visibility="gone" />
 
+                <Button
+                    android:id="@+id/btnOpenLikeIndex"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="点赞索引" />
             </LinearLayout>
 
             <RadioGroup
@@ -241,3 +247,9 @@
         app:elevation="6dp" />
 
 </FrameLayout>
+    <androidx.compose.ui.platform.ComposeView
+        android:id="@+id/likeIndexDrawerContent"
+        android:layout_width="320dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end" />
+</androidx.drawerlayout.widget.DrawerLayout>

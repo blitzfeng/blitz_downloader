@@ -13,6 +13,11 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
+import androidx.core.view.GravityCompat
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.drawerlayout.widget.DrawerLayout
+import com.blitz.downloader.ui.LikedIndexDrawer
+import com.blitz.downloader.ui.theme.BlitzTheme
 import androidx.core.content.ContextCompat
 import androidx.core.widget.NestedScrollView
 import androidx.fragment.app.Fragment
@@ -71,6 +76,10 @@ class ListDownloadFragment : Fragment() {
      */
     private val backCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
+            if (binding.likeDrawerLayout.isDrawerOpen(GravityCompat.END)) {
+                binding.likeDrawerLayout.closeDrawer(GravityCompat.END)
+                return
+            }
             // 先取来源（读并清），再退出作者模式：exitAuthorPostsMode 里的 clear 就成了幂等空操作
             val origin = shellNav.takeAuthorPostsOrigin()
             exitAuthorPostsMode()
@@ -115,6 +124,7 @@ class ListDownloadFragment : Fragment() {
         // 该调用一直传的是相对路径 File(COVER_SUBDIR)，实际解析成 /bDouyin/covers，从未成功过。
         // 改成绝对路径后实测确认它会把封面弄坏 —— 见 BatchDownloadCoordinator.coversDir 的说明。
 
+        setupLikedIndexDrawer()
         setupRecyclerView()
         setupScrollListener()
         setupClickListeners()
@@ -183,6 +193,10 @@ class ListDownloadFragment : Fragment() {
         binding.btnOpenDouyinBrowser.setOnClickListener { startDouyinBrowser(initialUrlFromInput()) }
         binding.btnSelectAll.setOnClickListener { viewModel.toggleSelectAll() }
         binding.btnDownloadSelected.setOnClickListener { viewModel.startBatchDownload() }
+        binding.btnOpenLikeIndex.setOnClickListener {
+            selectLikedBrowse()
+            binding.likeDrawerLayout.openDrawer(GravityCompat.END)
+        }
         binding.cbHideDownloaded.setOnCheckedChangeListener { _, checked ->
             viewModel.setHideDownloaded(checked)
         }
@@ -240,11 +254,14 @@ class ListDownloadFragment : Fragment() {
             binding.cbHideDownloaded.isChecked = state.hideDownloaded
         }
         binding.btnDownloadSelected.isEnabled = state.canDownload
-        binding.tvSelectedCount.text = if (state.hiddenCount > 0) {
+        val selectionText = if (state.hiddenCount > 0) {
             "已选择 ${state.selectedCount} / ${state.totalCount}（隐藏 ${state.hiddenCount}）"
         } else {
             "已选择 ${state.selectedCount} / ${state.totalCount}"
         }
+        binding.tvSelectedCount.text = state.indexedTotalCount?.let {
+            "$selectionText\n累计索引 $it 条"
+        } ?: selectionText
         binding.tvStatus.text = statusText(state)
         updateBackCallback()
     }
@@ -257,6 +274,16 @@ class ListDownloadFragment : Fragment() {
         is ListStatus.Error -> getString(R.string.list_api_error, s.message ?: "")
         is ListStatus.AuthorPostsMode -> getString(R.string.author_posts_mode_hint, s.nickname)
         is ListStatus.Enqueued -> getString(R.string.batch_download_enqueued, s.count)
+        is ListStatus.Indexing -> "正在加载点赞作品：已缓存 ${s.current} 条"
+        is ListStatus.Indexed -> {
+            val sort = if (s.byCreateTime) "作品创建时间升序" else "来源顺序"
+            when (s.sessionState) {
+                "complete_limit" -> "点赞浏览缓存：${s.total} 条（$sort）"
+                "complete_remote" -> "点赞索引已到列表末尾：${s.total} 条（$sort）"
+                "recovery_required" -> "续页失败，可在点赞索引抽屉中重置（已保留 ${s.total} 条）"
+                else -> "点赞索引：${s.visible}/${s.total} 条（$sort）"
+            }
+        }
         is ListStatus.Loaded -> {
             val tail = getString(
                 if (s.hasMore) R.string.list_api_has_more else R.string.list_api_no_more,
@@ -451,8 +478,8 @@ class ListDownloadFragment : Fragment() {
     private fun updateBackCallback() {
         if (_binding == null) return
         backCallback.isEnabled = isPageResumed &&
-            viewModel.uiState.value.isAuthorPostsMode &&
-            shellNav.hasAuthorPostsOrigin
+            (binding.likeDrawerLayout.isDrawerOpen(GravityCompat.END) ||
+                (viewModel.uiState.value.isAuthorPostsMode && shellNav.hasAuthorPostsOrigin))
     }
 
     /**
@@ -500,6 +527,44 @@ class ListDownloadFragment : Fragment() {
         R.id.rbKindCollection -> ListKindChoice.Collection
         R.id.rbKindCollectsFolder -> ListKindChoice.CollectsFolder
         else -> ListKindChoice.Post
+    }
+
+    private fun selectLikedBrowse() {
+        if (viewModel.uiState.value.isAuthorPostsMode) {
+            viewModel.exitAuthorPostsMode()
+            shellNav.clearAuthorPostsOrigin()
+        }
+        binding.rgListKind.check(R.id.rbKindLike)
+    }
+
+    private fun setupLikedIndexDrawer() {
+        binding.likeIndexDrawerContent.layoutParams =
+            binding.likeIndexDrawerContent.layoutParams.apply {
+                width = minOf((320 * resources.displayMetrics.density).toInt(),
+                    (resources.displayMetrics.widthPixels * 0.88f).toInt())
+            }
+        binding.likeDrawerLayout.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
+            override fun onDrawerOpened(drawerView: View) = updateBackCallback()
+            override fun onDrawerClosed(drawerView: View) = updateBackCallback()
+        })
+        binding.likeIndexDrawerContent.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        binding.likeIndexDrawerContent.setContent {
+            BlitzTheme {
+                LikedIndexDrawer(
+                    onContinue = {
+                        selectLikedBrowse()
+                        viewModel.continueLikedBrowse(binding.etUrlInput.text?.toString())
+                        binding.likeDrawerLayout.closeDrawer(GravityCompat.END)
+                    },
+                    onReset = {
+                        selectLikedBrowse()
+                        viewModel.continueLikedBrowse(binding.etUrlInput.text?.toString(), reset = true)
+                        binding.likeDrawerLayout.closeDrawer(GravityCompat.END)
+                    },
+                )
+            }
+        }
     }
 
     private fun readClipboardText(): String? {

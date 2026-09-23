@@ -1,4 +1,9 @@
 <resources>
+    <string-array name="like_index_limits">
+        <item>最多 100 条</item>
+        <item>最多 500 条</item>
+        <item>最多 1000 条</item>
+    </string-array>
     <string name="app_name">Blitz Downloader</string>
     <string name="list_batch_scope_hint"></string>
     <string name="btn_sync_cookie_from_webview">同步Cookie</string>

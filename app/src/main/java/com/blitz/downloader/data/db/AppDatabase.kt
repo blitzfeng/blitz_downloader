@@ -20,8 +20,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PreferenceProfileEntity::class,
         DownloadBatchEntity::class,
         AiTagSuggestionPendingEntity::class,
+        LikedListIndexSessionEntity::class,
+        LikedListIndexItemEntity::class,
     ],
-    version = 22,
+    version = 26,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -47,6 +49,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun downloadBatchDao(): DownloadBatchDao
 
     abstract fun aiTagSuggestionPendingDao(): AiTagSuggestionPendingDao
+
+    abstract fun likedListIndexDao(): LikedListIndexDao
 
     companion object {
         /** 数据库文件名；[DatabaseBackupManager] 也会用这个名字（务必保持一致）。 */
@@ -468,6 +472,74 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v22 → v23：点赞列表可恢复索引。条目不保存任何会过期的媒体 URL。 */
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS liked_list_index_session (
+                        sourceKey TEXT NOT NULL,
+                        sourceType TEXT NOT NULL,
+                        ownerSecUserId TEXT NOT NULL,
+                        collectionId TEXT,
+                        state TEXT NOT NULL,
+                        maxItems INTEGER NOT NULL,
+                        indexedCount INTEGER NOT NULL,
+                        nextCursor INTEGER NOT NULL,
+                        nextSourcePosition INTEGER NOT NULL,
+                        lastSuccessfulPageAtMillis INTEGER NOT NULL,
+                        recoveryError TEXT,
+                        PRIMARY KEY(sourceKey)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS liked_list_index_item (
+                        sourceKey TEXT NOT NULL,
+                        awemeId TEXT NOT NULL,
+                        sourcePosition INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        authorNickname TEXT NOT NULL,
+                        authorSecUserId TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        createTime INTEGER NOT NULL,
+                        isPhoto INTEGER NOT NULL,
+                        collectStat INTEGER NOT NULL,
+                        userDigged INTEGER NOT NULL,
+                        diggCount INTEGER NOT NULL,
+                        collectCount INTEGER NOT NULL,
+                        PRIMARY KEY(sourceKey, awemeId)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_liked_list_index_item_source_order ON liked_list_index_item(sourceKey, sourcePosition)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_liked_list_index_item_source_create_time ON liked_list_index_item(sourceKey, createTime)")
+            }
+        }
+
+        private val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE liked_list_index_session ADD COLUMN lastViewedOffset INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        private val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE liked_list_index_item ADD COLUMN coverUrl TEXT")
+                db.execSQL("ALTER TABLE liked_list_index_item ADD COLUMN mediaUrl TEXT")
+            }
+        }
+
+        /** v25 之前的「达到预索引上限」在可恢复浏览模型中仍可继续向下拉取。 */
+        private val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "UPDATE liked_list_index_session SET state = 'running' WHERE state = 'complete_limit'",
+                )
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -484,7 +556,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
                         MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
-                        MIGRATION_20_21, MIGRATION_21_22,
+                        MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
+                        MIGRATION_25_26,
                     )
                     .fallbackToDestructiveMigration()
                     .build()

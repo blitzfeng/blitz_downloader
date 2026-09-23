@@ -11,12 +11,17 @@ import com.blitz.downloader.api.DouyinAuthException
 import com.blitz.downloader.api.DouyinCollectsFolderRow
 import com.blitz.downloader.api.DouyinListApi
 import com.blitz.downloader.api.DouyinPageKind
+import com.blitz.downloader.api.DouyinParser
 import com.blitz.downloader.api.DouyinUrlParser
 import com.blitz.downloader.config.AppConfig
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.DownloadMediaType
 import com.blitz.downloader.data.DownloadSourceType
 import com.blitz.downloader.data.DownloadedVideoRepository
+import com.blitz.downloader.data.LikedListIndexCoordinator
+import com.blitz.downloader.data.LikedListIndexRepository
+import com.blitz.downloader.data.db.LikedListIndexItemEntity
+import com.blitz.downloader.data.db.LikedListIndexSessionState
 import com.blitz.downloader.download.DownloadEvents
 import com.blitz.downloader.download.DownloadJob
 import com.blitz.downloader.download.DownloadRecordMeta
@@ -106,6 +111,11 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
     private var listNextCursor: Long = 0L
     private var listHasMore: Boolean = false
     private var listLoadingMore: Boolean = false
+    private var likedIndexOwnerSecUserId: String? = null
+    private var likedIndexByCreateTime = false
+    private var likedIndexOffset = 0
+    private var likedIndexTotal = 0
+    private var likedIndexHasMore = false
 
     private var status: ListStatus = ListStatus.Idle
     private var listLoadJob: Job? = null
@@ -123,6 +133,8 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
 
     private val downloadedRepo: DownloadedVideoRepository
         get() = (getApplication<Application>() as BlitzApp).downloadedVideoRepository
+    private val likedIndexRepo: LikedListIndexRepository
+        get() = (getApplication<Application>() as BlitzApp).likedListIndexRepository
 
     init {
         // 下载服务写库成功后就地刷新列表（打角标 + 取消勾选）。
@@ -390,6 +402,13 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun loadNextListPage() {
+        if (likedIndexOwnerSecUserId != null) {
+            // 本地缓存耗尽但服务端 cursor 尚可续拉时，也必须进入 loadLikedIndexPage。
+            if (listLoadingMore || (likedIndexOffset >= likedIndexTotal && !likedIndexHasMore)) return
+            listLoadJob?.cancel()
+            listLoadJob = viewModelScope.launch { loadLikedIndexPage(reset = false) }
+            return
+        }
         if (!canLoadMore()) return
         listLoadJob?.cancel()
         listLoadJob = viewModelScope.launch { fetchListPage(isFirstPage = false) }
@@ -397,7 +416,86 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 滚动分页的前置判定：Fragment 的滚动监听里先问这个，避免每次滚动都进协程。 */
     fun canLoadMore(): Boolean =
-        listApiMode != ListApiMode.None && !listLoadingMore && listHasMore
+        if (likedIndexOwnerSecUserId != null) !listLoadingMore && (likedIndexOffset < likedIndexTotal || likedIndexHasMore)
+        else listApiMode != ListApiMode.None && !listLoadingMore && listHasMore
+
+    /** 一个入口完成首次加载或恢复；只有显式重置才清除已有记录。 */
+    fun continueLikedBrowse(rawUrl: String?, reset: Boolean = false) {
+        val raw = rawUrl?.trim().orEmpty()
+        if (raw.isBlank()) { emit(ListDownloadEvent.UrlInputEmpty); return }
+        listLoadJob?.cancel()
+        listLoadJob = viewModelScope.launch {
+            try {
+                val owner = DouyinUrlParser.parse(raw).secUserId
+                if (owner.isNullOrBlank()) { emit(ListDownloadEvent.NeedUserOrMix); return@launch }
+                authorPostsMode = false
+                likedIndexByCreateTime = false
+                val coordinator = LikedListIndexCoordinator(likedIndexRepo)
+                val existing = if (reset) null else coordinator.prepareForBrowsing(owner)
+                val session = existing ?: coordinator.start(owner, Int.MAX_VALUE, replace = reset)
+                showLikedIndex(owner, session.indexedCount)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                status = ListStatus.Error(e.message)
+                publish()
+                emit(ListDownloadEvent.ListLoadFailed(e.message))
+            }
+        }
+    }
+
+    private suspend fun showLikedIndex(owner: String, count: Int) {
+        val session = likedIndexRepo.session(owner) ?: return
+        likedIndexOwnerSecUserId = owner
+        likedIndexOffset = (session.lastViewedOffset - 2).coerceAtLeast(0)
+        likedIndexTotal = count
+        likedIndexHasMore = session.state == LikedListIndexSessionState.RUNNING
+        resetListBatchState(ListApiMode.UserLike, owner, null)
+        likedIndexOwnerSecUserId = owner // reset only clears transient UI state; index identity remains explicit.
+        likedIndexTotal = count
+        likedIndexHasMore = session.state == LikedListIndexSessionState.RUNNING
+        loadLikedIndexPage(reset = false)
+    }
+
+    private suspend fun loadLikedIndexPage(reset: Boolean, autoFillDepth: Int = 0) {
+        val owner = likedIndexOwnerSecUserId ?: return
+        if (listLoadingMore) return
+        listLoadingMore = true
+        var shouldAutoFill = false
+        try {
+            status = ListStatus.Loading; publish()
+            if (!reset && likedIndexOffset >= likedIndexTotal && likedIndexHasMore) {
+                val progressed = LikedListIndexCoordinator(likedIndexRepo).resume(owner)
+                likedIndexTotal = progressed.indexedCount
+                likedIndexHasMore = progressed.state == LikedListIndexSessionState.RUNNING
+            }
+            val page = if (likedIndexByCreateTime) likedIndexRepo.createTimeOrder(owner, INDEX_UI_PAGE_SIZE, if (reset) 0 else likedIndexOffset)
+            else likedIndexRepo.sourceOrder(owner, INDEX_UI_PAGE_SIZE, if (reset) 0 else likedIndexOffset)
+            val mapped = page.map(::indexItemToUi)
+            if (reset) { items.clear(); selectedIds.clear(); imageSelections.clear(); likedIndexOffset = 0 }
+            items.addAll(mapped)
+            likedIndexOffset += mapped.size
+            likedIndexRepo.updateLastViewedOffset(owner, likedIndexOffset)
+            reapplyDownloadedFlags()
+            val session = likedIndexRepo.session(owner)
+            status = ListStatus.Indexed(session?.state.orEmpty(), items.size, likedIndexTotal, likedIndexByCreateTime)
+            publish()
+            // 恢复点通常贴近已缓存尾部（例如第 98 条后只剩 2 条）。此时 NestedScrollView
+            // 没有滚动距离，底部监听不会触发；自动补到约一屏，且仅在缓存耗尽后才续拉远端 cursor。
+            shouldAutoFill = mapped.size < AUTO_FILL_MIN_VISIBLE && likedIndexHasMore
+        } finally { listLoadingMore = false }
+        if (shouldAutoFill && autoFillDepth < AUTO_FILL_MAX_PAGES) {
+            loadLikedIndexPage(reset = false, autoFillDepth = autoFillDepth + 1)
+        }
+    }
+
+    private fun indexItemToUi(item: LikedListIndexItemEntity) = VideoItemUiModel(
+        id = item.awemeId, title = item.title, authorNickname = item.authorNickname, descRaw = item.description,
+        coverUrl = item.coverUrl, downloadUrl = if (item.isPhoto) null else item.mediaUrl,
+        isSelected = false, isPhoto = item.isPhoto,
+        authorSecUserId = item.authorSecUserId, collectStat = item.collectStat, userDigged = item.userDigged,
+        createTime = item.createTime, diggCount = item.diggCount, collectCount = item.collectCount,
+    )
 
     private suspend fun runCollectsFolderPickFlow() {
         status = ListStatus.CollectsLoading
@@ -439,6 +537,7 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
         listMixId = mixId
         listCollectsId = collectsId
         listCollectsName = ""
+        likedIndexOwnerSecUserId = null
         listNextCursor = 0L
         listHasMore = false
         items.clear()
@@ -648,6 +747,10 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
      * 下载与写库都在服务内完成，离开本页 / 应用退到后台也不会中断，进度见通知栏。
      */
     fun startBatchDownload() {
+        if (likedIndexOwnerSecUserId != null) {
+            startIndexedBatchDownload()
+            return
+        }
         val selected = items.filter { it.id in selectedIds }.map(::compose)
         if (selected.isEmpty()) {
             emit(ListDownloadEvent.NothingSelected)
@@ -710,6 +813,39 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
         status = ListStatus.Enqueued(downloadable.size)
         publish()
         emit(ListDownloadEvent.BatchDownloadEnqueued(downloadable.size))
+    }
+
+    /** 索引条目没有 URL；仅在用户实际下载时逐项重新解析详情，拒绝使用陈旧持久化数据。 */
+    private fun startIndexedBatchDownload() {
+        val ids = selectedIds.toList()
+        if (ids.isEmpty()) { emit(ListDownloadEvent.NothingSelected); return }
+        viewModelScope.launch {
+            status = ListStatus.Loading; publish()
+            val quality = AppSettings.getVideoQualityPreference(getApplication()).targetResolution
+            val fresh = withContext(Dispatchers.IO) {
+                ids.mapNotNull { DouyinParser().fetchVideoDetail(it)?.let { aweme ->
+                    AwemeMapper.toGridItemOrNull(aweme, quality)?.copy(isSelected = true)
+                } }
+            }
+            if (fresh.isEmpty()) { emit(ListDownloadEvent.NoPlayUrl); status = loadedStatus(); publish(); return@launch }
+            submitDownload(fresh)
+        }
+    }
+
+    private fun submitDownload(downloadable: List<VideoItemUiModel>) {
+        emit(ListDownloadEvent.RequestNotificationPermission)
+        val owner = likedIndexOwnerSecUserId ?: listSecUserId.orEmpty()
+        val metas = downloadable.associate { item -> item.id to DownloadRecordMeta(
+            downloadType = DownloadSourceType.LIKE, userName = item.authorNickname,
+            mediaType = if (item.isPhoto) DownloadMediaType.IMAGE else DownloadMediaType.VIDEO,
+            createTime = item.createTime, desc = item.descRaw, collectionType = "", collectId = "",
+            videoAuthorSecUserId = item.authorSecUserId,
+            sourceOwnerSecUserId = owner, userRelation = DownloadedVideoRepository.buildUserRelationFromLike(item.collectStat),
+            diggCount = item.diggCount, collectCount = item.collectCount, linkCollectFolderTag = false,
+            hasLivePhoto = item.hasLivePhoto,
+        ) }
+        DownloadService.start(getApplication<Application>().applicationContext, DownloadJob(items = downloadable, metas = metas))
+        status = ListStatus.Enqueued(downloadable.size); publish(); emit(ListDownloadEvent.BatchDownloadEnqueued(downloadable.size))
     }
 
     private fun listSourceTypeForCurrentMode(): String = when (listApiMode) {
@@ -822,6 +958,7 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.value = ListDownloadUiState(
             visibleItems = visible,
             totalCount = items.size,
+            indexedTotalCount = likedIndexTotal.takeIf { likedIndexOwnerSecUserId != null },
             selectedCount = selectedCount,
             hiddenCount = if (hideDownloaded) items.count { it.isDownloaded } else 0,
             hideDownloaded = hideDownloaded,
@@ -845,6 +982,7 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
 
         /** 传给播放页的副标题最长字数。 */
         private const val PREVIEW_SUBTITLE_MAX = 60
+        private const val INDEX_UI_PAGE_SIZE = 60
 
         /**
          * 作者主页 URL。两个入口共用同一份拼接，改这里即可同时影响列表内跳转与管理页跳转。
@@ -872,11 +1010,15 @@ sealed interface ListStatus {
     data object CollectsLoading : ListStatus
     data object CollectsEmpty : ListStatus
     data class Enqueued(val count: Int) : ListStatus
+    data class Indexing(val current: Int, val limit: Int) : ListStatus
+    data class Indexed(val sessionState: String, val visible: Int, val total: Int, val byCreateTime: Boolean) : ListStatus
 }
 
 data class ListDownloadUiState(
     val visibleItems: List<VideoItemUiModel> = emptyList(),
     val totalCount: Int = 0,
+    /** 当前来源累计去重缓存数，包含历史浏览及本次新加载；普通列表为 null。 */
+    val indexedTotalCount: Int? = null,
     val selectedCount: Int = 0,
     val hiddenCount: Int = 0,
     val hideDownloaded: Boolean = false,
