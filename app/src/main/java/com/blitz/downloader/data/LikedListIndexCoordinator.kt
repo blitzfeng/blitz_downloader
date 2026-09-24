@@ -115,6 +115,7 @@ class LikedListIndexCoordinator(private val repository: LikedListIndexRepository
             coverUrl = video?.cover?.urlList?.firstOrNull() ?: images?.firstOrNull()?.urlList?.firstOrNull(),
             mediaUrl = if (AwemeMapper.isPhotoItem(this)) AwemeMapper.preferredImageUrls(this).firstOrNull()
                 else AwemeMapper.preferredPlayDownloadUrl(this),
+            photoMediaJson = AwemeMapper.toGridItemOrNull(this)?.let(LikedIndexMedia::encode),
         )
 
     companion object { const val PAGE_SIZE = 50 }

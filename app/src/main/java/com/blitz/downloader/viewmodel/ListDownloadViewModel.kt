@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /**
@@ -116,6 +117,36 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
     private var likedIndexOffset = 0
     private var likedIndexTotal = 0
     private var likedIndexHasMore = false
+    private val likedSourcePositions = mutableMapOf<String, Long>()
+    private var likedBrowseRestore: LikedBrowseRestore? = null
+    private var restoreSequence = 0L
+    private var anchorSaveJob: Job? = null
+    private var likedBrowseSwitching = false
+
+    /** 仅由真实视口上报，加载分页绝不能推进浏览锚点。写入串行化，避免旧位置后到。 */
+    fun saveLikedBrowsePosition(id: String, offsetPx: Int) {
+        val owner = likedIndexOwnerSecUserId ?: return
+        if (likedBrowseRestore != null || likedBrowseSwitching) return
+        val position = likedSourcePositions[id] ?: return
+        val previous = anchorSaveJob
+        // 最后一次后台/退出补存不能被 ViewModel 清理中断；仅包住短小的串行数据库写入。
+        anchorSaveJob = viewModelScope.launch(kotlinx.coroutines.NonCancellable) {
+            previous?.join()
+            try {
+                likedIndexRepo.updateAnchor(owner, id, position, offsetPx)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                emit(ListDownloadEvent.ListLoadFailed("浏览位置保存失败：${e.message}"))
+            }
+        }
+    }
+
+    fun completeLikedBrowseRestore(token: Long) {
+        if (likedBrowseRestore?.token != token) return
+        likedBrowseRestore = null
+        publish()
+    }
 
     private var status: ListStatus = ListStatus.Idle
     private var listLoadJob: Job? = null
@@ -230,6 +261,14 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
     // -----------------------------------------------------------------------
 
     fun toggleSelection(id: String) {
+        if (likedIndexOwnerSecUserId != null && id !in selectedIds) {
+            withFreshIndexedMedia(id) { toggleResolvedSelection(id) }
+            return
+        }
+        toggleResolvedSelection(id)
+    }
+
+    private fun toggleResolvedSelection(id: String) {
         val item = items.firstOrNull { it.id == id } ?: return
         if (item.isDownloaded) return
         if (id in selectedIds) {
@@ -404,9 +443,21 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
     fun loadNextListPage() {
         if (likedIndexOwnerSecUserId != null) {
             // 本地缓存耗尽但服务端 cursor 尚可续拉时，也必须进入 loadLikedIndexPage。
-            if (listLoadingMore || (likedIndexOffset >= likedIndexTotal && !likedIndexHasMore)) return
+            if (!canLoadMore()) return
             listLoadJob?.cancel()
-            listLoadJob = viewModelScope.launch { loadLikedIndexPage(reset = false) }
+            listLoadJob = viewModelScope.launch {
+                try {
+                    loadLikedIndexPage(reset = false)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    likedIndexHasMore = false
+                    status = ListStatus.Error(e.message)
+                    emit(ListDownloadEvent.ListLoadFailed(e.message))
+                } finally {
+                    publish()
+                }
+            }
             return
         }
         if (!canLoadMore()) return
@@ -416,7 +467,7 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 滚动分页的前置判定：Fragment 的滚动监听里先问这个，避免每次滚动都进协程。 */
     fun canLoadMore(): Boolean =
-        if (likedIndexOwnerSecUserId != null) !listLoadingMore && (likedIndexOffset < likedIndexTotal || likedIndexHasMore)
+        if (likedIndexOwnerSecUserId != null) !likedBrowseSwitching && likedBrowseRestore == null && !listLoadingMore && (likedIndexOffset < likedIndexTotal || likedIndexHasMore)
         else listApiMode != ListApiMode.None && !listLoadingMore && listHasMore
 
     /** 一个入口完成首次加载或恢复；只有显式重置才清除已有记录。 */
@@ -425,7 +476,9 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
         if (raw.isBlank()) { emit(ListDownloadEvent.UrlInputEmpty); return }
         listLoadJob?.cancel()
         listLoadJob = viewModelScope.launch {
+            likedBrowseSwitching = true
             try {
+                anchorSaveJob?.join()
                 val owner = DouyinUrlParser.parse(raw).secUserId
                 if (owner.isNullOrBlank()) { emit(ListDownloadEvent.NeedUserOrMix); return@launch }
                 authorPostsMode = false
@@ -440,21 +493,26 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
                 status = ListStatus.Error(e.message)
                 publish()
                 emit(ListDownloadEvent.ListLoadFailed(e.message))
+            } finally {
+                likedBrowseSwitching = false
+                publish()
             }
         }
     }
 
     private suspend fun showLikedIndex(owner: String, count: Int) {
+        anchorSaveJob?.join()
         val session = likedIndexRepo.session(owner) ?: return
-        likedIndexOwnerSecUserId = owner
-        likedIndexOffset = (session.lastViewedOffset - 2).coerceAtLeast(0)
-        likedIndexTotal = count
-        likedIndexHasMore = session.state == LikedListIndexSessionState.RUNNING
+        val anchorIndex = likedIndexRepo.anchorIndex(owner, session).coerceAtMost((count - 1).coerceAtLeast(0))
         resetListBatchState(ListApiMode.UserLike, owner, null)
+        likedIndexOffset = com.blitz.downloader.data.LikedBrowsePosition.windowStart(anchorIndex)
         likedIndexOwnerSecUserId = owner // reset only clears transient UI state; index identity remains explicit.
         likedIndexTotal = count
         likedIndexHasMore = session.state == LikedListIndexSessionState.RUNNING
+        likedBrowseRestore = LikedBrowseRestore(++restoreSequence, session.anchorAwemeId,
+            session.anchorSourcePosition, session.anchorOffsetPx ?: 0)
         loadLikedIndexPage(reset = false)
+        publish()
     }
 
     private suspend fun loadLikedIndexPage(reset: Boolean, autoFillDepth: Int = 0) {
@@ -464,7 +522,7 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
         var shouldAutoFill = false
         try {
             status = ListStatus.Loading; publish()
-            if (!reset && likedIndexOffset >= likedIndexTotal && likedIndexHasMore) {
+            if (!reset && com.blitz.downloader.data.LikedBrowsePosition.needsRemote(likedIndexOffset, likedIndexTotal, likedIndexHasMore)) {
                 val progressed = LikedListIndexCoordinator(likedIndexRepo).resume(owner)
                 likedIndexTotal = progressed.indexedCount
                 likedIndexHasMore = progressed.state == LikedListIndexSessionState.RUNNING
@@ -474,28 +532,24 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
             val mapped = page.map(::indexItemToUi)
             if (reset) { items.clear(); selectedIds.clear(); imageSelections.clear(); likedIndexOffset = 0 }
             items.addAll(mapped)
+            page.forEach { likedSourcePositions[it.awemeId] = it.sourcePosition }
             likedIndexOffset += mapped.size
-            likedIndexRepo.updateLastViewedOffset(owner, likedIndexOffset)
             reapplyDownloadedFlags()
             val session = likedIndexRepo.session(owner)
             status = ListStatus.Indexed(session?.state.orEmpty(), items.size, likedIndexTotal, likedIndexByCreateTime)
             publish()
             // 恢复点通常贴近已缓存尾部（例如第 98 条后只剩 2 条）。此时 NestedScrollView
             // 没有滚动距离，底部监听不会触发；自动补到约一屏，且仅在缓存耗尽后才续拉远端 cursor。
-            shouldAutoFill = mapped.size < AUTO_FILL_MIN_VISIBLE && likedIndexHasMore
+            shouldAutoFill = visibleItems().size < AUTO_FILL_MIN_VISIBLE &&
+                (likedIndexOffset < likedIndexTotal || likedIndexHasMore)
         } finally { listLoadingMore = false }
         if (shouldAutoFill && autoFillDepth < AUTO_FILL_MAX_PAGES) {
             loadLikedIndexPage(reset = false, autoFillDepth = autoFillDepth + 1)
         }
     }
 
-    private fun indexItemToUi(item: LikedListIndexItemEntity) = VideoItemUiModel(
-        id = item.awemeId, title = item.title, authorNickname = item.authorNickname, descRaw = item.description,
-        coverUrl = item.coverUrl, downloadUrl = if (item.isPhoto) null else item.mediaUrl,
-        isSelected = false, isPhoto = item.isPhoto,
-        authorSecUserId = item.authorSecUserId, collectStat = item.collectStat, userDigged = item.userDigged,
-        createTime = item.createTime, diggCount = item.diggCount, collectCount = item.collectCount,
-    )
+    private fun indexItemToUi(item: LikedListIndexItemEntity) =
+        com.blitz.downloader.data.LikedIndexMedia.restore(item)
 
     private suspend fun runCollectsFolderPickFlow() {
         status = ListStatus.CollectsLoading
@@ -538,6 +592,8 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
         listCollectsId = collectsId
         listCollectsName = ""
         likedIndexOwnerSecUserId = null
+        likedSourcePositions.clear()
+        likedBrowseRestore = null
         listNextCursor = 0L
         listHasMore = false
         items.clear()
@@ -824,7 +880,8 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
             val quality = AppSettings.getVideoQualityPreference(getApplication()).targetResolution
             val fresh = withContext(Dispatchers.IO) {
                 ids.mapNotNull { DouyinParser().fetchVideoDetail(it)?.let { aweme ->
-                    AwemeMapper.toGridItemOrNull(aweme, quality)?.copy(isSelected = true)
+                    AwemeMapper.toGridItemOrNull(aweme, quality)?.takeIf { item -> item.id == it }
+                        ?.copy(isSelected = true, selectedImageIndices = imageSelections[it])
                 } }
             }
             if (fresh.isEmpty()) { emit(ListDownloadEvent.NoPlayUrl); status = loadedStatus(); publish(); return@launch }
@@ -907,6 +964,51 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
      * - 视频：把列表中所有可预览的视频一并交给播放页，支持上下滑动切换。
      */
     fun onPreviewClicked(id: String) {
+        if (likedIndexOwnerSecUserId != null) {
+            withFreshIndexedMedia(id) { previewResolvedItem(id) }
+            return
+        }
+        previewResolvedItem(id)
+    }
+
+    private val indexedMediaRequests = mutableSetOf<String>()
+
+    /** 旧缓存可能缺少图集或类型错误，点击时按详情修复，再分派图集/视频预览。 */
+    private fun withFreshIndexedMedia(id: String, action: () -> Unit) {
+        val owner = likedIndexOwnerSecUserId ?: return
+        val original = items.firstOrNull { it.id == id } ?: return
+        if (!indexedMediaRequests.add(id)) return
+        viewModelScope.launch {
+            try {
+                val quality = AppSettings.getVideoQualityPreference(getApplication()).targetResolution
+                val detail = DouyinParser().fetchVideoDetail(id)
+                val fresh = detail?.let { AwemeMapper.toGridItemOrNull(it, quality) }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (fresh == null || fresh.id != id ||
+                    (if (fresh.isPhoto) fresh.imageUrls.isEmpty() else fresh.downloadUrl.isNullOrBlank())) {
+                    emit(ListDownloadEvent.ListLoadFailed("无法获取作品详情，请检查登录状态或稍后重试"))
+                    return@launch
+                }
+                // 请求期间切换来源或重建列表时，不向新列表写入旧请求结果。
+                if (likedIndexOwnerSecUserId != owner || items.none { it === original }) return@launch
+                likedIndexRepo.updateMedia(owner, fresh)
+                if (likedIndexOwnerSecUserId != owner) return@launch
+                val index = items.indexOfFirst { it === original }
+                if (index < 0) return@launch
+                items[index] = fresh.copy(isDownloaded = original.isDownloaded)
+                publish()
+                action()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                emit(ListDownloadEvent.ListLoadFailed("更新作品媒体信息失败，请稍后重试"))
+            } finally {
+                indexedMediaRequests.remove(id)
+            }
+        }
+    }
+
+    private fun previewResolvedItem(id: String) {
         val item = items.firstOrNull { it.id == id } ?: return
         if (item.isPhoto) {
             if (item.imageUrls.isEmpty()) {
@@ -959,6 +1061,11 @@ class ListDownloadViewModel(app: Application) : AndroidViewModel(app) {
             visibleItems = visible,
             totalCount = items.size,
             indexedTotalCount = likedIndexTotal.takeIf { likedIndexOwnerSecUserId != null },
+            likedBrowseRestore = likedBrowseRestore?.takeIf { !listLoadingMore }?.let { request ->
+                if (visible.any { it.id == request.awemeId }) request
+                else request.copy(awemeId = com.blitz.downloader.data.LikedBrowsePosition.visibleAnchor(
+                    visible.map { it.id }, likedSourcePositions, request.sourcePosition), offsetPx = 0)
+            },
             selectedCount = selectedCount,
             hiddenCount = if (hideDownloaded) items.count { it.isDownloaded } else 0,
             hideDownloaded = hideDownloaded,
@@ -1014,7 +1121,10 @@ sealed interface ListStatus {
     data class Indexed(val sessionState: String, val visible: Int, val total: Int, val byCreateTime: Boolean) : ListStatus
 }
 
+data class LikedBrowseRestore(val token: Long, val awemeId: String?, val sourcePosition: Long?, val offsetPx: Int)
+
 data class ListDownloadUiState(
+    val likedBrowseRestore: LikedBrowseRestore? = null,
     val visibleItems: List<VideoItemUiModel> = emptyList(),
     val totalCount: Int = 0,
     /** 当前来源累计去重缓存数，包含历史浏览及本次新加载；普通列表为 null。 */

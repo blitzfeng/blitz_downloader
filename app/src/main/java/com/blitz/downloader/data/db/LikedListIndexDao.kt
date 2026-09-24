@@ -20,8 +20,18 @@ interface LikedListIndexDao {
     @Query("SELECT COUNT(*) FROM liked_list_index_item WHERE sourceKey = :sourceKey")
     suspend fun countItems(sourceKey: String): Int
 
-    @Query("UPDATE liked_list_index_session SET lastViewedOffset = :offset WHERE sourceKey = :sourceKey")
-    suspend fun updateLastViewedOffset(sourceKey: String, offset: Int)
+    @Query("UPDATE liked_list_index_session SET anchorAwemeId = :id, anchorSourcePosition = :position, anchorOffsetPx = :offsetPx WHERE sourceKey = :sourceKey")
+    suspend fun updateAnchor(sourceKey: String, id: String, position: Long, offsetPx: Int)
+
+    @Query("SELECT * FROM liked_list_index_item WHERE sourceKey = :sourceKey AND awemeId = :id")
+    suspend fun getItem(sourceKey: String, id: String): LikedListIndexItemEntity?
+
+    @Query("SELECT COUNT(*) FROM liked_list_index_item WHERE sourceKey = :sourceKey AND sourcePosition < :position")
+    suspend fun countBefore(sourceKey: String, position: Long): Int
+
+    /** 仅修复当前来源的媒体缓存，不改来源顺序、数量或会话游标。 */
+    @Query("UPDATE liked_list_index_item SET isPhoto = :isPhoto, coverUrl = :coverUrl, mediaUrl = :mediaUrl, photoMediaJson = :photos WHERE sourceKey = :sourceKey AND awemeId = :id")
+    suspend fun updateMedia(sourceKey: String, id: String, isPhoto: Boolean, coverUrl: String?, mediaUrl: String?, photos: String)
 
     @Query("SELECT awemeId FROM liked_list_index_item WHERE sourceKey = :sourceKey AND awemeId IN (:awemeIds)")
     suspend fun existingAwemeIds(sourceKey: String, awemeIds: List<String>): List<String>
@@ -39,7 +49,14 @@ interface LikedListIndexDao {
     @Transaction
     suspend fun checkpointPage(session: LikedListIndexSessionEntity, items: List<LikedListIndexItemEntity>) {
         insertIgnoreItems(items)
-        upsertSession(session.copy(indexedCount = countItems(session.sourceKey)))
+        // 网络请求可能早于滚动保存发起；检查点不可用旧会话覆盖最新视口锚点。
+        val current = getSession(session.sourceKey)
+        upsertSession(session.copy(
+            indexedCount = countItems(session.sourceKey),
+            anchorAwemeId = current?.anchorAwemeId,
+            anchorSourcePosition = current?.anchorSourcePosition,
+            anchorOffsetPx = current?.anchorOffsetPx,
+        ))
     }
 
     /** 显式重新索引在同一事务内替换旧条目与会话，绝不在恢复失败时自动调用。 */

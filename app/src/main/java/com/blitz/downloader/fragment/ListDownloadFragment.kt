@@ -9,6 +9,8 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.graphics.Rect
+import androidx.core.view.doOnPreDraw
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -98,6 +100,71 @@ class ListDownloadFragment : Fragment() {
     private var isPageResumed = false
 
     private var showFabRunnable: Runnable? = null
+    private var restoreInProgress: Long? = null
+    private val saveBrowsePositionRunnable = Runnable { saveBrowsePosition() }
+
+    /** 外层滚动容器才是真正的视口，不能用网格 LayoutManager 的首项代替。 */
+    private fun saveBrowsePosition() {
+        val b = _binding ?: return
+        if (restoreInProgress != null || !isPageResumed ||
+            b.likeDrawerLayout.isDrawerOpen(GravityCompat.END)) return
+        val state = viewModel.uiState.value
+        if (state.indexedTotalCount == null || state.likedBrowseRestore != null) return
+        val viewport = Rect()
+        if (!visibleScreenRect(b.nestedScrollView, viewport)) return
+        val bottomBar = Rect()
+        if (visibleScreenRect(b.bottomBar, bottomBar)) viewport.bottom = minOf(viewport.bottom, bottomBar.top)
+        val location = IntArray(2)
+        val grid = b.rvVideos
+        for (index in 0 until grid.childCount) {
+            val child = grid.getChildAt(index)
+            child.getLocationOnScreen(location)
+            if (location[1] + child.height <= viewport.top || location[1] >= viewport.bottom) continue
+            val position = grid.getChildAdapterPosition(child)
+            val item = videoAdapter.itemAt(position) ?: continue
+            viewModel.saveLikedBrowsePosition(item.id, location[1] - viewport.top)
+            return
+        }
+    }
+
+    private fun visibleScreenRect(view: View, rect: Rect): Boolean {
+        if (!view.getLocalVisibleRect(rect)) return false
+        val location = IntArray(2)
+        view.getLocationOnScreen(location)
+        rect.offset(location[0], location[1])
+        return true
+    }
+
+    private fun restoreBrowsePosition(state: ListDownloadUiState) {
+        val request = state.likedBrowseRestore ?: return
+        if (restoreInProgress == request.token) return
+        val b = binding
+        restoreInProgress = request.token
+        b.root.removeCallbacks(saveBrowsePositionRunnable)
+        b.rvVideos.doOnPreDraw {
+            if (_binding !== b) return@doOnPreDraw
+            if (viewModel.uiState.value.likedBrowseRestore?.token != request.token) {
+                restoreInProgress = null
+                return@doOnPreDraw
+            }
+            val index = state.visibleItems.indexOfFirst { it.id == request.awemeId }
+            val child = b.rvVideos.layoutManager?.findViewByPosition(index)
+            if (child != null) {
+                val viewport = Rect()
+                visibleScreenRect(b.nestedScrollView, viewport)
+                val location = IntArray(2)
+                child.getLocationOnScreen(location)
+                val offset = request.offsetPx.coerceAtLeast(1 - child.height)
+                b.nestedScrollView.scrollTo(0,
+                    (b.nestedScrollView.scrollY + location[1] - viewport.top - offset).coerceAtLeast(0))
+            } else {
+                b.nestedScrollView.scrollTo(0, 0)
+            }
+            viewModel.completeLikedBrowseRestore(request.token)
+            restoreInProgress = null
+            b.root.postDelayed(saveBrowsePositionRunnable, 300)
+        }
+    }
 
     /** 本 App 所有者的主页地址，用于「返回我的主页」时回填输入框。 */
     private val indexMainPage =
@@ -164,6 +231,8 @@ class ListDownloadFragment : Fragment() {
         val thresholdPx = (200 * resources.displayMetrics.density).toInt()
         binding.nestedScrollView.setOnScrollChangeListener(
             NestedScrollView.OnScrollChangeListener { v, _, scrollY, _, _ ->
+                binding.root.removeCallbacks(saveBrowsePositionRunnable)
+                if (restoreInProgress == null) binding.root.postDelayed(saveBrowsePositionRunnable, 300)
                 // FAB：滚动时立即隐藏；滚回顶部后延迟 300ms 确认停止再显示
                 showFabRunnable?.let { binding.root.removeCallbacks(it) }
                 if (scrollY > 0) {
@@ -174,7 +243,7 @@ class ListDownloadFragment : Fragment() {
                     binding.root.postDelayed(r, 300)
                 }
                 // 加载下一页
-                if (!viewModel.canLoadMore()) return@OnScrollChangeListener
+                if (restoreInProgress != null || !viewModel.canLoadMore()) return@OnScrollChangeListener
                 val diff = v.getChildAt(0).measuredHeight - v.measuredHeight - scrollY
                 if (diff <= thresholdPx) {
                     viewModel.loadNextListPage()
@@ -185,6 +254,7 @@ class ListDownloadFragment : Fragment() {
 
     private fun setupClickListeners() {
         binding.fabParse.setOnClickListener {
+            saveBrowsePosition()
             viewModel.parseAndLoad(binding.etUrlInput.text?.toString(), currentListKind())
         }
         binding.btnBackToMyPage.setOnClickListener { exitAuthorPostsMode() }
@@ -194,6 +264,7 @@ class ListDownloadFragment : Fragment() {
         binding.btnSelectAll.setOnClickListener { viewModel.toggleSelectAll() }
         binding.btnDownloadSelected.setOnClickListener { viewModel.startBatchDownload() }
         binding.btnOpenLikeIndex.setOnClickListener {
+            saveBrowsePosition()
             selectLikedBrowse()
             binding.likeDrawerLayout.openDrawer(GravityCompat.END)
         }
@@ -228,12 +299,16 @@ class ListDownloadFragment : Fragment() {
     }
 
     override fun onPause() {
+        _binding?.root?.removeCallbacks(saveBrowsePositionRunnable)
+        saveBrowsePosition()
         super.onPause()
         isPageResumed = false
         updateBackCallback()
     }
 
     override fun onDestroyView() {
+        _binding?.root?.removeCallbacks(saveBrowsePositionRunnable)
+        restoreInProgress = null
         showFabRunnable?.let { _binding?.root?.removeCallbacks(it) }
         showFabRunnable = null
         _binding = null
@@ -247,6 +322,7 @@ class ListDownloadFragment : Fragment() {
     private fun render(state: ListDownloadUiState) {
         videoAdapter.setUserPostMode(state.isUserPostMode)
         videoAdapter.submitList(state.visibleItems)
+        restoreBrowsePosition(state)
         renderAuthorPostsChrome(state.isAuthorPostsMode)
         // 配置变更后视图会重建成 XML 默认值，从 state 回写一次；
         // 这会触发监听器，但 setHideDownloaded 对同值早返回，不会形成回环。

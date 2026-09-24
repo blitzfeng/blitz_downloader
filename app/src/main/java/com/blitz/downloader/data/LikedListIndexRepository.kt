@@ -22,6 +22,16 @@ class LikedListIndexRepository(context: Context) {
     suspend fun replace(session: LikedListIndexSessionEntity) = dao.replaceSession(session)
     suspend fun existingIds(ownerSecUserId: String, awemeIds: List<String>): Set<String> =
         dao.existingAwemeIds(sourceKey(ownerSecUserId), awemeIds).toSet()
-    suspend fun updateLastViewedOffset(ownerSecUserId: String, offset: Int) =
-        dao.updateLastViewedOffset(sourceKey(ownerSecUserId), offset)
+    suspend fun updateAnchor(owner: String, id: String, position: Long, offsetPx: Int) =
+        dao.updateAnchor(sourceKey(owner), id, position, offsetPx)
+
+    suspend fun anchorIndex(owner: String, session: LikedListIndexSessionEntity): Int {
+        val position = session.anchorAwemeId?.let { dao.getItem(sourceKey(owner), it)?.sourcePosition }
+            ?: session.anchorSourcePosition ?: return 0
+        return dao.countBefore(sourceKey(owner), position)
+    }
+
+    suspend fun updateMedia(owner: String, item: com.blitz.downloader.model.VideoItemUiModel) =
+        dao.updateMedia(sourceKey(owner), item.id, item.isPhoto, item.coverUrl,
+            if (item.isPhoto) null else item.downloadUrl, LikedIndexMedia.encode(item))
 }

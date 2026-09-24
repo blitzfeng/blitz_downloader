@@ -30,13 +30,16 @@ data class LikedListIndexSessionEntity(
     val indexedCount: Int = 0,
     val nextCursor: Long = 0L,
     val nextSourcePosition: Long = 0L,
-    /** 已浏览到的本地条目偏移；恢复时从其前两项附近呈现。 */
+    /** 旧版本的加载边界，仅保留兼容，不能当作真实浏览位置。 */
     val lastViewedOffset: Int = 0,
+    val anchorAwemeId: String? = null,
+    val anchorSourcePosition: Long? = null,
+    val anchorOffsetPx: Int? = null,
     val lastSuccessfulPageAtMillis: Long = 0L,
     val recoveryError: String? = null,
 )
 
-/** 仅保存稳定展示/排序元数据；封面和媒体 URL 必须在消费时重新解析。 */
+/** 展示元数据与可过期的媒体缓存；下载前重新解析详情。 */
 @Entity(
     tableName = "liked_list_index_item",
     primaryKeys = ["sourceKey", "awemeId"],
@@ -62,4 +65,6 @@ data class LikedListIndexItemEntity(
     /** 可过期的浏览缓存；绝不能直接作为下载凭据。 */
     val coverUrl: String? = null,
     val mediaUrl: String? = null,
+    /** 完整图集及逐图实况视频配对；null 表示旧版缺失，需要从详情补齐。 */
+    val photoMediaJson: String? = null,
 )

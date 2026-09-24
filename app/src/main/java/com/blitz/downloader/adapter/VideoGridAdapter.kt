@@ -62,6 +62,8 @@ class VideoGridAdapter(
 
     override fun getItemCount(): Int = items.size
 
+    fun itemAt(position: Int): VideoItemUiModel? = items.getOrNull(position)
+
     inner class VideoViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val cover: ImageView = itemView.findViewById(R.id.ivCover)
         private val title: TextView = itemView.findViewById(R.id.tvTitle)
