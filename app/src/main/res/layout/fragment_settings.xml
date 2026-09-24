@@ -618,6 +618,11 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
+            <androidx.compose.ui.platform.ComposeView
+                android:id="@+id/cameraOrganizationEntry"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content" />
+
         </LinearLayout>
     </ScrollView>
 

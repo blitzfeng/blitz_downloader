@@ -23,7 +23,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
     <!--
         Android 11+：所有文件访问权限。
-        只服务于「对系统相册隐藏下载目录」（设置页开关）：目录一旦有 .nomedia，里面的文件在
+        服务于设置页「整理相机目录」的媒体移动，以及「对系统相册隐藏下载目录」开关。
+        目录一旦有 .nomedia，里面的文件在
         MediaStore 里就不再算媒体，READ_MEDIA_* 不再覆盖它们，本 App 用直接文件路径读会失败。
         有了这个权限才能既对相册隐身、又保证自己读得到。详见 util/MediaVisibilityManager。
         它需要用户在系统设置里手动授予，不能用普通权限弹窗；未授予时隐藏功能不可用（而非静默锁死）。

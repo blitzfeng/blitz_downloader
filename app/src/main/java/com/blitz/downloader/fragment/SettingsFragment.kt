@@ -77,6 +77,28 @@ class SettingsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        binding.cameraOrganizationEntry.setViewCompositionStrategy(
+            androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed,
+        )
+        binding.cameraOrganizationEntry.setContent {
+            com.blitz.downloader.ui.theme.BlitzTheme {
+                com.blitz.downloader.dialog.CameraOrganizationEntry {
+                    if (childFragmentManager.findFragmentByTag("camera_organization") == null) {
+                        com.blitz.downloader.dialog.CameraOrganizationDialogFragment()
+                            .show(childFragmentManager, "camera_organization")
+                    }
+                }
+            }
+        }
+        childFragmentManager.setFragmentResultListener(
+            com.blitz.downloader.dialog.CameraOrganizationDialogFragment.REQUEST_KEY,
+            viewLifecycleOwner,
+        ) { _, result ->
+            val organizer = com.blitz.downloader.BlitzApp.instance.cameraVideoOrganizer
+            val batch = result.getString("batch").orEmpty()
+            if (result.getBoolean("confirm")) organizer.confirm(batch) else organizer.cancelPreview(batch)
+        }
+
         // status bar 高度 → Toolbar 顶部 padding；底部导航的 inset 由外壳处理。
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())

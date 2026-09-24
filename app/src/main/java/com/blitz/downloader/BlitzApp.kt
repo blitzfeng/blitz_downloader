@@ -9,6 +9,8 @@ import com.blitz.downloader.data.db.AppDatabase
 
 class BlitzApp : Application() {
 
+    val cameraVideoOrganizer by lazy { com.blitz.downloader.data.CameraVideoOrganizer(this) }
+
     val database: AppDatabase by lazy { AppDatabase.getInstance(this) }
 
     val downloadedVideoRepository: DownloadedVideoRepository by lazy {

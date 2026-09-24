@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="camera_organize_title">整理相机目录</string>
+    <string name="camera_organize_summary">视频 → Download/history；图片 → Download/history_img</string>
+    <string name="camera_organize_rules">仅整理 DCIM/Camera 当前目录：视频保留 img、vid 开头的文件，其余移至 Download/history；图片保留 img、mvimg、pano、retouch 开头的文件，其余移至 Download/history_img。前缀判断忽略大小写。同名自动加序号，不覆盖。仅按文件名判断，不能保证识别真实拍摄来源。</string>
+    <string name="camera_organize_access_help">Android 11 及以上需授予所有文件访问权限；Android 10 请依次选择主存储的 DCIM/Camera 和 Download 目录。授权后先预览，确认才移动。</string>
+    <string name="camera_organize_permission_denied">未获得所需读写权限，未移动文件。</string>
+    <string name="camera_organize_select_source">请选择主存储的 DCIM/Camera 目录</string>
+    <string name="camera_organize_select_download">请选择主存储的 Download 目录</string>
+    <string name="camera_organize_scanning">正在扫描视频和图片…</string>
+    <string name="camera_organize_progress">已处理 %1$d / %2$d 个文件</string>
+    <string name="camera_organize_empty">没有符合规则的视频或图片</string>
+    <string name="camera_organize_preview">待移动 %1$d 个文件，共 %2$s</string>
+    <string name="camera_organize_result">成功 %1$d · 跳过 %2$d · 失败 %3$d · 未处理 %4$d</string>
+    <string name="camera_organize_success">成功</string>
+    <string name="camera_organize_skipped">跳过</string>
+    <string name="camera_organize_failed">失败</string>
+    <string name="camera_organize_leftovers">以下是未完成或未清理的文件记录。请在文件管理器中核对；应用不会自动删除这些文件或重试删除源文件。</string>
+    <string name="camera_organize_close">关闭</string>
+    <string name="camera_organize_confirm">确认移动</string>
+    <string name="camera_organize_scan">扫描 / 授权</string>
+</resources>
