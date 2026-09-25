@@ -29,6 +29,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.blitz.downloader.R
 import com.blitz.downloader.activity.DouyinWebBrowserActivity
 import com.blitz.downloader.activity.MainActivity
@@ -111,28 +112,37 @@ class ListDownloadFragment : Fragment() {
         val state = viewModel.uiState.value
         if (state.indexedTotalCount == null || state.likedBrowseRestore != null) return
         val viewport = Rect()
-        if (!visibleScreenRect(b.nestedScrollView, viewport)) return
+        if (!b.nestedScrollView.getGlobalVisibleRect(viewport)) return
         val bottomBar = Rect()
-        if (visibleScreenRect(b.bottomBar, bottomBar)) viewport.bottom = minOf(viewport.bottom, bottomBar.top)
+        if (b.bottomBar.isShown && b.bottomBar.getGlobalVisibleRect(bottomBar)) {
+            viewport.bottom = minOf(viewport.bottom, bottomBar.top)
+        }
         val location = IntArray(2)
         val grid = b.rvVideos
+        var bestItem: com.blitz.downloader.model.VideoItemUiModel? = null
+        var bestOffsetPx = 0
+        var minPosition = Int.MAX_VALUE
         for (index in 0 until grid.childCount) {
             val child = grid.getChildAt(index)
-            child.getLocationOnScreen(location)
-            if (location[1] + child.height <= viewport.top || location[1] >= viewport.bottom) continue
+            child.getLocationInWindow(location)
+            if (!com.blitz.downloader.data.LikedBrowsePosition.isChildVisibleInViewport(
+                    childTop = location[1],
+                    childHeight = child.height,
+                    viewportTop = viewport.top,
+                    viewportBottom = viewport.bottom,
+                )) continue
             val position = grid.getChildAdapterPosition(child)
+            if (position == RecyclerView.NO_POSITION) continue
             val item = videoAdapter.itemAt(position) ?: continue
-            viewModel.saveLikedBrowsePosition(item.id, location[1] - viewport.top)
-            return
+            if (position < minPosition) {
+                minPosition = position
+                bestItem = item
+                bestOffsetPx = com.blitz.downloader.data.LikedBrowsePosition.childOffsetInViewport(location[1], viewport.top)
+            }
         }
-    }
-
-    private fun visibleScreenRect(view: View, rect: Rect): Boolean {
-        if (!view.getLocalVisibleRect(rect)) return false
-        val location = IntArray(2)
-        view.getLocationOnScreen(location)
-        rect.offset(location[0], location[1])
-        return true
+        if (bestItem != null) {
+            viewModel.saveLikedBrowsePosition(bestItem.id, bestOffsetPx)
+        }
     }
 
     private fun restoreBrowsePosition(state: ListDownloadUiState) {
@@ -148,15 +158,23 @@ class ListDownloadFragment : Fragment() {
                 return@doOnPreDraw
             }
             val index = state.visibleItems.indexOfFirst { it.id == request.awemeId }
-            val child = b.rvVideos.layoutManager?.findViewByPosition(index)
+            val child = if (index >= 0) b.rvVideos.layoutManager?.findViewByPosition(index) else null
             if (child != null) {
                 val viewport = Rect()
-                visibleScreenRect(b.nestedScrollView, viewport)
-                val location = IntArray(2)
-                child.getLocationOnScreen(location)
-                val offset = request.offsetPx.coerceAtLeast(1 - child.height)
-                b.nestedScrollView.scrollTo(0,
-                    (b.nestedScrollView.scrollY + location[1] - viewport.top - offset).coerceAtLeast(0))
+                if (b.nestedScrollView.getGlobalVisibleRect(viewport)) {
+                    val location = IntArray(2)
+                    child.getLocationInWindow(location)
+                    val offset = request.offsetPx.coerceAtLeast(1 - child.height)
+                    val targetScrollY = com.blitz.downloader.data.LikedBrowsePosition.computeRestoreScrollY(
+                        currentScrollY = b.nestedScrollView.scrollY,
+                        childTop = location[1],
+                        viewportTop = viewport.top,
+                        offsetPx = offset,
+                    )
+                    b.nestedScrollView.scrollTo(0, targetScrollY)
+                } else {
+                    b.nestedScrollView.scrollTo(0, 0)
+                }
             } else {
                 b.nestedScrollView.scrollTo(0, 0)
             }

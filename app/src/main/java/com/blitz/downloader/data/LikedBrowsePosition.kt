@@ -13,4 +13,13 @@ object LikedBrowsePosition {
     fun visibleAnchor(ids: List<String>, positions: Map<String, Long>, anchor: Long?): String? =
         if (anchor == null) ids.firstOrNull()
         else ids.firstOrNull { (positions[it] ?: Long.MIN_VALUE) >= anchor } ?: ids.lastOrNull()
+
+    fun isChildVisibleInViewport(childTop: Int, childHeight: Int, viewportTop: Int, viewportBottom: Int): Boolean =
+        childTop + childHeight > viewportTop && childTop < viewportBottom
+
+    fun childOffsetInViewport(childTop: Int, viewportTop: Int): Int =
+        childTop - viewportTop
+
+    fun computeRestoreScrollY(currentScrollY: Int, childTop: Int, viewportTop: Int, offsetPx: Int): Int =
+        (currentScrollY + childTop - viewportTop - offsetPx).coerceAtLeast(0)
 }
