@@ -7,6 +7,10 @@ import androidx.room.Query
 @Dao
 interface VideoTagFeedbackDao {
 
+    @Query("DELETE FROM video_tag_feedback WHERE analysisId = :analysisId")
+    suspend fun deleteByAnalysisId(analysisId: Long)
+
+
     /** 一次「AI 建议 → 用户确认」按标签分类写入的多行。 */
     @Insert
     suspend fun insertAll(rows: List<VideoTagFeedbackEntity>)

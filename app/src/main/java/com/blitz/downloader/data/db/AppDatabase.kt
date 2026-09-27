@@ -10,6 +10,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         DownloadedVideoEntity::class,
+        BatchAnalysisSessionEntity::class,
+        BatchAnalysisItemEntity::class,
         VideoTagEntity::class,
         TagEntity::class,
         AuthorTagFrequencyEntity::class,
@@ -23,10 +25,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LikedListIndexSessionEntity::class,
         LikedListIndexItemEntity::class,
     ],
-    version = 28,
-    exportSchema = false,
+    version = 29,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
+
+    abstract fun batchAnalysisDao(): BatchAnalysisDao
 
     abstract fun downloadedVideoDao(): DownloadedVideoDao
 
@@ -554,6 +558,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v28 → v29：保留批量分析成员、失败原因与审核恢复状态。 */
+        val MIGRATION_28_29 = object : Migration(28, 29) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS batch_analysis_session (
+                    id TEXT NOT NULL PRIMARY KEY, createdAtMillis INTEGER NOT NULL,
+                    sourceBatchIds TEXT NOT NULL, finished INTEGER NOT NULL,
+                    reviewJson TEXT NOT NULL, isLegacy INTEGER NOT NULL)""")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS batch_analysis_item (
+                    sessionId TEXT NOT NULL, awemeId TEXT NOT NULL, position INTEGER NOT NULL,
+                    videoJson TEXT NOT NULL, status TEXT NOT NULL, error TEXT NOT NULL,
+                    analysisId INTEGER, suggestedTags TEXT NOT NULL, reviewTags TEXT,
+                    PRIMARY KEY(sessionId, awemeId))""")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -571,7 +590,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
                         MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
                         MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                        MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28,
+                        MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
                     )
                     .fallbackToDestructiveMigration()
                     .build()

@@ -222,7 +222,7 @@
     <!-- 批量下载后标签整理（batch-ai-tag-review） -->
     <string name="manage_menu_batch_tag_review">最近下载-设置标签</string>
     <string name="batch_tag_review_title">批量标签整理</string>
-    <string name="batch_tag_review_empty">暂无待整理的视频批次</string>
+    <string name="batch_tag_review_empty">暂无待分析的视频</string>
     <string name="batch_tag_review_start_llm">AI 分析</string>
     <string name="batch_tag_review_llm_running">AI 分析中…</string>
     <string name="batch_tag_review_btn_preview">预览</string>
@@ -248,7 +248,7 @@
     <string name="batch_tag_review_notif_done_text">成功 %1$d 条，失败 %2$d 条</string>
     <string name="batch_tag_review_total_items">共 %1$d 条视频（最近批次 %2$d 条，上一批次未打标 %3$d 条）</string>
     <string name="batch_tag_review_total_items_with_excluded">共 %1$d 条视频（待分析 %2$d 条，已排除 %3$d 条）</string>
-    <string name="batch_tag_review_total_items_completed">共 %1$d 条视频（已全部确认）</string>
+    <string name="batch_tag_review_total_items_completed">本次 %1$d 条视频（建议审核已完成）</string>
     <string name="batch_tag_review_group_title">建议标签：%1$s (%2$d 条)</string>
     <string name="batch_tag_review_all_done">所有建议标签已处理完毕</string>
     <string name="batch_tag_review_preview_entry">封面预览</string>
@@ -434,4 +434,21 @@
     <string name="batch_tag_review_log_copy_all">复制全部</string>
     <string name="batch_tag_review_log_empty">暂无分析日志\n开启批量分析后将在此实时记录请求与响应详情</string>
     <string name="batch_tag_review_log_copied">已复制日志到剪贴板</string>
+    <string name="batch_review_session_count">本次分析 %1$d 条，可发起新分析 %2$d 条</string>
+    <string name="batch_review_all">本次分析全部视频（%1$d）</string>
+    <string name="batch_review_failed">分析失败（%1$d）</string>
+    <string name="batch_review_status_failed">AI 分析失败</string>
+    <string name="batch_review_status_succeeded">AI 分析成功</string>
+    <string name="batch_review_author">作者：%1$s</string>
+    <string name="batch_review_unknown_author">未知作者</string>
+    <string name="batch_review_selected_tags">已选标签</string>
+    <string name="batch_review_no_tags">暂无标签</string>
+    <string name="batch_review_edit_tags">修改标签</string>
+    <string name="batch_review_processing">正在处理…</string>
+    <string name="batch_review_selected">已选 %1$d 项</string>
+    <string name="batch_review_confirmed">已确认，写入 %1$d 项</string>
+    <string name="batch_review_skipped">已跳过该分组</string>
+    <string name="batch_review_undone">已撤销处理</string>
+    <string name="batch_review_saved">标签已保存</string>
+    <string name="batch_review_action_failed">操作失败，可重试：%1$s</string>
 </resources>

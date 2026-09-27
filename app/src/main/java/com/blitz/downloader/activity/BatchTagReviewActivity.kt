@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -51,6 +52,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -74,8 +77,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -86,6 +91,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.blitz.downloader.R
+import com.blitz.downloader.data.db.BatchAnalysisItemEntity
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.dialog.TagCheckGrid
 import com.blitz.downloader.dialog.rememberCheckedTags
@@ -102,7 +108,7 @@ import java.io.File
  * 批量下载后的 AI 标签整理页面（Compose / Material 3）。
  *
  * 遵循项目「新增 UI 一律 Compose」约定。
- * 加载最近批次全部视频与上一批次未打标视频，提供批量 LLM 分析入口、
+ * 加载最近两个批次的未打标视频，保留本次成功与失败结果，提供批量 LLM 分析入口、
  * 按建议标签分组批量确认/跳过、单视频取消勾选与按修改次数筛选。
  */
 /**
@@ -156,11 +162,12 @@ fun BatchTagReviewScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
     var showPreviewSheet by rememberSaveable { mutableStateOf(false) }
     var editingVideo by remember { mutableStateOf<DownloadedVideoEntity?>(null) }
 
     LaunchedEffect(viewModel) {
-        viewModel.events.collect { event ->
+        viewModel.events.collectLatest { event ->
             when (event) {
                 is BatchTagReviewEvent.ShowAiDisabledHint -> {
                     AlertDialog.Builder(context)
@@ -169,8 +176,21 @@ fun BatchTagReviewScreen(
                         .setPositiveButton(android.R.string.ok, null)
                         .show()
                 }
+                is BatchTagReviewEvent.ActionDone -> {
+                    val message = when (event.action) {
+                        "confirm" -> context.getString(R.string.batch_review_confirmed, event.count)
+                        "skip" -> context.getString(R.string.batch_review_skipped)
+                        "undo" -> context.getString(R.string.batch_review_undone)
+                        "selection" -> context.getString(R.string.batch_review_selected, event.count)
+                        else -> context.getString(R.string.batch_review_saved)
+                    }
+                    snackbarHostState.showSnackbar(message)
+                }
+                is BatchTagReviewEvent.ActionFailed -> {
+                    snackbarHostState.showSnackbar(context.getString(R.string.batch_review_action_failed, event.reason))
+                }
                 is BatchTagReviewEvent.ShowToast -> {
-                    Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                    snackbarHostState.showSnackbar(event.message)
                 }
             }
         }
@@ -253,6 +273,7 @@ fun BatchTagReviewScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -280,13 +301,13 @@ fun BatchTagReviewScreen(
                     }
                     IconButton(
                         onClick = { showPreviewSheet = true },
-                        enabled = !uiState.isReviewCompleted && !uiState.isAnalyzing,
+                        enabled = !uiState.isAnalyzing && uiState.busyAction == null,
                     ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_preview_eye),
                             contentDescription = stringResource(R.string.batch_tag_review_preview_entry),
                             modifier = Modifier.let {
-                                if (uiState.isReviewCompleted || uiState.isAnalyzing) {
+                                if (uiState.isAnalyzing || uiState.busyAction != null) {
                                     it.alpha(0.38f)
                                 } else it
                             },
@@ -308,7 +329,7 @@ fun BatchTagReviewScreen(
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-            } else if (!uiState.hasBatches || uiState.allVideos.isEmpty()) {
+            } else if (uiState.allVideos.isEmpty() && uiState.sessionVideos.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         text = stringResource(R.string.batch_tag_review_empty),
@@ -364,8 +385,11 @@ private fun BatchHeaderSection(
                     uiState.isReviewCompleted -> {
                         stringResource(
                             R.string.batch_tag_review_total_items_completed,
-                            totalCount,
+                            uiState.sessionVideos.size,
                         )
+                    }
+                    uiState.sessionVideos.isNotEmpty() -> {
+                        stringResource(R.string.batch_review_session_count, uiState.sessionVideos.size, activeCount)
                     }
                     excludedCount > 0 -> {
                         stringResource(
@@ -396,7 +420,7 @@ private fun BatchHeaderSection(
             ) {
                 Button(
                     onClick = onStartLlm,
-                    enabled = !uiState.isAnalyzing && !uiState.isReviewCompleted && activeCount > 0,
+                    enabled = !uiState.isAnalyzing && uiState.busyAction == null && activeCount > 0,
                 ) {
                     Text(
                         text = if (uiState.isAnalyzing) {
@@ -409,7 +433,7 @@ private fun BatchHeaderSection(
 
                 OutlinedButton(
                     onClick = onOpenPreview,
-                    enabled = !uiState.isAnalyzing && !uiState.isReviewCompleted,
+                    enabled = !uiState.isAnalyzing && uiState.busyAction == null,
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_preview_eye),
@@ -492,8 +516,6 @@ private fun GroupsListSection(
 ) {
     var groupToUndo by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
-    val coroutineScope = rememberCoroutineScope()
-
     if (groupToUndo != null) {
         val tagName = groupToUndo!!
         ComposeAlertDialog(
@@ -518,7 +540,16 @@ private fun GroupsListSection(
         )
     }
 
-    if (uiState.groups.isEmpty()) {
+    val failedIds = uiState.analysisItems.filter { it.status == BatchAnalysisItemEntity.FAILED }.map { it.awemeId }.toSet()
+    val failedVideos = uiState.sessionVideos.filter { it.awemeId in failedIds }
+    val entries = buildList<Pair<String, TagReviewGroup?>> {
+        // 保存标签时保持该 item 和 key，避免 LazyColumn 把滚动锚点切到失败区域。
+        if (uiState.isReviewCompleted) add("all" to null)
+        uiState.groups.filter { !it.isProcessed }.forEach { add("unprocessed_${it.tagName}" to it) }
+        if (failedVideos.isNotEmpty()) add("failed" to null)
+        // 已处理组保留状态及渲染实现，但不加入列表；统一从“全部”中复查与编辑。
+    }
+    if (entries.isEmpty()) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -538,34 +569,35 @@ private fun GroupsListSection(
     } else {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().testTag("review_list"),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 horizontal = 16.dp,
                 vertical = 8.dp,
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // 采用 isProcessed 区分 key，避免卡片确认移至末尾时 Compose 自动将视口跟踪滚向已处理区域
+            // 使用稳定的区域/分组 key，编辑标签时保持列表滚动位置。
             items(
-                items = uiState.groups,
-                key = { if (it.isProcessed) "processed_${it.tagName}" else "unprocessed_${it.tagName}" },
-            ) { group ->
-                TagGroupCard(
+                items = entries,
+                key = { it.first },
+            ) { (key, group) ->
+                if (group == null) {
+                    val videos = if (key == "all") uiState.sessionVideos else failedVideos
+                    ResultVideosCard(
+                        sectionKey = key,
+                        title = stringResource(if (key == "all") R.string.batch_review_all else R.string.batch_review_failed, videos.size),
+                        videos = videos,
+                        uiState = uiState,
+                        onPlayVideo = { video -> onPlayVideo(TagReviewGroup(key, videos, emptySet(), true), video) },
+                        onEditVideo = onEditVideo,
+                    )
+                } else TagGroupCard(
                     group = group,
+                    busy = uiState.busyAction != null,
                     onToggleVideo = { awemeId -> onToggleVideo(group.tagName, awemeId) },
                     onInvertSelection = { onInvertSelection(group.tagName) },
-                    onConfirm = {
-                        onConfirmGroup(group.tagName)
-                        coroutineScope.launch {
-                            listState.scrollToItem(0, 0)
-                        }
-                    },
-                    onSkip = {
-                        onSkipGroup(group.tagName)
-                        coroutineScope.launch {
-                            listState.scrollToItem(0, 0)
-                        }
-                    },
+                    onConfirm = { onConfirmGroup(group.tagName) },
+                    onSkip = { onSkipGroup(group.tagName) },
                     onUndo = { groupToUndo = group.tagName },
                     onPlayVideo = { video -> onPlayVideo(group, video) },
                     onEditVideo = onEditVideo,
@@ -579,6 +611,7 @@ private fun GroupsListSection(
 @Composable
 private fun TagGroupCard(
     group: TagReviewGroup,
+    busy: Boolean,
     onToggleVideo: (String) -> Unit,
     onInvertSelection: () -> Unit,
     onConfirm: () -> Unit,
@@ -590,11 +623,12 @@ private fun TagGroupCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("review_group_${group.tagName}")
             .then(
                 if (group.isProcessed) {
                     Modifier.combinedClickable(
                         onClick = { /* no-op */ },
-                        onLongClick = onUndo,
+                        onLongClick = { if (!busy) onUndo() },
                     )
                 } else {
                     Modifier
@@ -646,6 +680,11 @@ private fun TagGroupCard(
 
             if (!group.isProcessed) {
                 Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = if (busy) stringResource(R.string.batch_review_processing)
+                        else stringResource(R.string.batch_review_selected, group.selectedAwemeIds.size),
+                    style = MaterialTheme.typography.labelMedium,
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
@@ -653,7 +692,8 @@ private fun TagGroupCard(
                 ) {
                     OutlinedButton(
                         onClick = onSkip,
-                        modifier = Modifier.height(32.dp),
+                        enabled = !busy,
+                        modifier = Modifier.heightIn(min = 48.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     ) {
                         Text(
@@ -664,7 +704,8 @@ private fun TagGroupCard(
                     Spacer(modifier = Modifier.width(8.dp))
                     OutlinedButton(
                         onClick = onInvertSelection,
-                        modifier = Modifier.height(32.dp),
+                        enabled = !busy,
+                        modifier = Modifier.heightIn(min = 48.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     ) {
                         Text(
@@ -675,7 +716,8 @@ private fun TagGroupCard(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = onConfirm,
-                        modifier = Modifier.height(32.dp),
+                        enabled = !busy,
+                        modifier = Modifier.heightIn(min = 48.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     ) {
                         Text(
@@ -708,9 +750,9 @@ private fun TagGroupCard(
                                     isChecked = isChecked,
                                     isProcessed = group.isProcessed,
                                     isTagged = isTagged,
-                                    onToggle = { onToggleVideo(video.awemeId) },
+                                    onToggle = { if (!busy) onToggleVideo(video.awemeId) },
                                     onPlay = { onPlayVideo(video) },
-                                    onEdit = { onEditVideo(video) },
+                                    onEdit = { if (!busy) onEditVideo(video) },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }
@@ -719,6 +761,98 @@ private fun TagGroupCard(
                             Spacer(modifier = Modifier.weight(1f))
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+// 与管理页高频标签共用六色多巴胺配色，标签按名称排序后循环取色。
+private val ReviewTagPalette = intArrayOf(
+    R.color.dopamine_chip_magenta,
+    R.color.dopamine_chip_orange,
+    R.color.dopamine_yellow,
+    R.color.dopamine_fourth_green,
+    R.color.dopamine_chip_teal,
+    R.color.dopamine_chip_purple,
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ResultVideosCard(
+    sectionKey: String,
+    title: String,
+    videos: List<DownloadedVideoEntity>,
+    uiState: BatchTagReviewUiState,
+    onPlayVideo: (DownloadedVideoEntity) -> Unit,
+    onEditVideo: (DownloadedVideoEntity) -> Unit,
+) {
+    val results = uiState.analysisItems.associateBy { it.awemeId }
+    Card(modifier = Modifier.fillMaxWidth().testTag("review_$sectionKey")) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            videos.chunked(3).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    row.forEach { video ->
+                        val result = results[video.awemeId]
+                        Column(modifier = Modifier.weight(1f)) {
+                            VideoItemThumbnail(video, false, true, video.tagEditCount > 0,
+                                onToggle = {}, onPlay = { onPlayVideo(video) },
+                                onEdit = { if (uiState.busyAction == null) onEditVideo(video) },
+                                showCaption = false,
+                            )
+                            Text(
+                                text = stringResource(R.string.batch_review_author,
+                                    video.userName.trim().ifBlank { stringResource(R.string.batch_review_unknown_author) }),
+                                modifier = Modifier.padding(top = 6.dp, bottom = 4.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                stringResource(if (result?.status == BatchAnalysisItemEntity.FAILED)
+                                    R.string.batch_review_status_failed else R.string.batch_review_status_succeeded),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (result?.status == BatchAnalysisItemEntity.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                            )
+                            if (!result?.error.isNullOrBlank()) Text(result!!.error, maxLines = 2,
+                                overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                            val tags = uiState.videoExistingTags[video.awemeId].orEmpty().sorted()
+                            Text(
+                                text = stringResource(if (tags.isEmpty()) R.string.batch_review_no_tags else R.string.batch_review_selected_tags),
+                                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                tags.forEachIndexed { index, tag ->
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = colorResource(ReviewTagPalette[index % ReviewTagPalette.size]),
+                                        contentColor = Color(0xFF212121),
+                                    ) {
+                                        Text(
+                                            text = tag,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+                            TextButton(onClick = { onEditVideo(video) }, enabled = uiState.busyAction == null) {
+                                Text(stringResource(R.string.batch_review_edit_tags))
+                            }
+                        }
+                    }
+                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
@@ -736,6 +870,7 @@ private fun VideoItemThumbnail(
     onPlay: () -> Unit,
     onEdit: () -> Unit,
     modifier: Modifier = Modifier,
+    showCaption: Boolean = true,
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -857,18 +992,20 @@ private fun VideoItemThumbnail(
                 }
             }
 
-            Text(
-                text = video.desc.ifBlank { video.userName },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.labelSmall,
-                color = if (isProcessed && !isTagged) {
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
-                modifier = Modifier.padding(4.dp),
-            )
+            if (showCaption) {
+                Text(
+                    text = video.desc.ifBlank { video.userName },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isProcessed && !isTagged) {
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    modifier = Modifier.padding(4.dp),
+                )
+            }
         }
     }
 }

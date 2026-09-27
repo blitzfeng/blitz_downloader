@@ -11,6 +11,10 @@ import android.os.Build
 import android.os.Environment
 import android.os.IBinder
 import android.util.Log
+import androidx.room.withTransaction
+import com.blitz.downloader.data.db.BatchAnalysisItemEntity
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
@@ -71,8 +75,20 @@ class AiBatchAnalysisService : Service() {
             try {
                 while (true) {
                     val job = pendingJobs.poll() ?: break
-                    runCatching { processJob(job) }
-                        .onFailure { Log.e(TAG, "batch analysis job failed", it) }
+                    try {
+                        processJob(job)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "batch analysis job failed", e)
+                        withContext(NonCancellable + Dispatchers.IO) {
+                            val dao = BlitzApp.instance.database.batchAnalysisDao()
+                            dao.failUnfinished(job.sessionId, "分析中断，请重新分析或人工打标签")
+                            dao.finish(job.sessionId)
+                        }
+                        AiBatchAnalysisEvents.setAnalyzing(false)
+                        if (e is CancellationException) throw e
+                    } finally {
+                        activeSessionIds.remove(job.sessionId)
+                    }
                 }
             } finally {
                 working.set(false)
@@ -100,6 +116,7 @@ class AiBatchAnalysisService : Service() {
         val tagRepo = app.videoTagRepository
         val aiRepo = app.aiTagSuggestionRepository
         val pendingDao = app.database.aiTagSuggestionPendingDao()
+        val sessionDao = app.database.batchAnalysisDao()
 
         // 确保所有标签均已分配稳定唯一数值 ID
         withContext(Dispatchers.IO) {
@@ -110,10 +127,13 @@ class AiBatchAnalysisService : Service() {
         var failedCount = 0
 
         for ((index, awemeId) in awemeIds.withIndex()) {
+            var failureReason = "分析失败，请人工打标签或重新分析"
             val success = withContext(Dispatchers.IO) {
+                sessionDao.setResult(job.sessionId, awemeId, BatchAnalysisItemEntity.RUNNING)
                 try {
                     val video = videoRepo.getByAwemeIds(listOf(awemeId)).firstOrNull()
                     if (video == null) {
+                        failureReason = "视频记录不存在"
                         Log.w(TAG, "Video not found for $awemeId")
                         return@withContext false
                     }
@@ -124,6 +144,7 @@ class AiBatchAnalysisService : Service() {
                         ?: runCatching { coverFile.readBytes() }.getOrNull()
 
                     if (coverBytes == null) {
+                        failureReason = "无法读取视频封面"
                         Log.w(TAG, "Cover file missing for $awemeId: ${video.coverPath}")
                         return@withContext false
                     }
@@ -151,22 +172,30 @@ class AiBatchAnalysisService : Service() {
                             val suggestedTags = candidateNames.joinToString("|")
                             Log.i(TAG, "[$awemeId] 建议标签: $suggestedTags")
 
-                            pendingDao.upsert(
-                                AiTagSuggestionPendingEntity(
-                                    awemeId = video.awemeId,
-                                    analysisId = result.analysisId,
-                                    suggestedTags = suggestedTags,
-                                    generatedAtMillis = System.currentTimeMillis(),
-                                ),
-                            )
+                            app.database.withTransaction {
+                                pendingDao.upsert(
+                                    AiTagSuggestionPendingEntity(
+                                        awemeId = video.awemeId,
+                                        analysisId = result.analysisId,
+                                        suggestedTags = suggestedTags,
+                                        generatedAtMillis = System.currentTimeMillis(),
+                                    ),
+                                )
+                                sessionDao.setResult(job.sessionId, awemeId, BatchAnalysisItemEntity.SUCCEEDED,
+                                    analysisId = result.analysisId, tags = suggestedTags)
+                            }
                             true
                         },
                         onFailure = { err ->
+                            if (err is CancellationException) throw err
+                            failureReason = err.message?.take(160) ?: "AI 服务返回错误"
                             Log.e(TAG, "Analysis failed for $awemeId", err)
                             false
                         },
                     )
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    failureReason = e.message?.take(160) ?: "分析发生异常"
                     Log.e(TAG, "Exception during analysis for $awemeId", e)
                     false
                 }
@@ -176,6 +205,9 @@ class AiBatchAnalysisService : Service() {
                 succeededCount++
             } else {
                 failedCount++
+                withContext(Dispatchers.IO) {
+                    sessionDao.setResult(job.sessionId, awemeId, BatchAnalysisItemEntity.FAILED, failureReason)
+                }
             }
 
             val done = index + 1
@@ -184,6 +216,7 @@ class AiBatchAnalysisService : Service() {
             updateProgress(done = done, total = total, indeterminate = false)
         }
 
+        withContext(Dispatchers.IO) { sessionDao.finish(job.sessionId) }
         AiBatchAnalysisEvents.notifyBatchFinished(succeededCount, failedCount)
         notifyComplete(succeededCount, failedCount)
     }
@@ -258,7 +291,7 @@ class AiBatchAnalysisService : Service() {
         super.onDestroy()
     }
 
-    data class BatchAnalysisJob(val awemeIds: List<String>)
+    data class BatchAnalysisJob(val sessionId: String, val awemeIds: List<String>)
 
     companion object {
         private const val TAG = "AiBatchAnalysisService"
@@ -266,6 +299,9 @@ class AiBatchAnalysisService : Service() {
         private const val FOREGROUND_ID = 2001
         private var completeIdSeq = 3000
         private fun nextCompleteId(): Int = ++completeIdSeq
+
+        private val activeSessionIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        fun isSessionActive(id: String): Boolean = id in activeSessionIds
 
         private val pendingJobs = ConcurrentLinkedQueue<BatchAnalysisJob>()
 
@@ -276,13 +312,22 @@ class AiBatchAnalysisService : Service() {
         }
 
         /** 启动批量分析服务 */
-        fun start(context: Context, awemeIds: List<String>): Boolean {
-            if (!isConfigured(context)) return false
-            if (awemeIds.isEmpty()) return false
-            pendingJobs.add(BatchAnalysisJob(awemeIds))
-            val intent = Intent(context, AiBatchAnalysisService::class.java)
-            ContextCompat.startForegroundService(context, intent)
-            return true
+        @Synchronized
+        fun start(context: Context, awemeIds: List<String>, sessionId: String): Boolean {
+            if (!isConfigured(context) || awemeIds.isEmpty() || activeSessionIds.isNotEmpty()) return false
+            val job = BatchAnalysisJob(sessionId, awemeIds)
+            activeSessionIds.add(sessionId)
+            pendingJobs.add(job)
+            return try {
+                ContextCompat.startForegroundService(context, Intent(context, AiBatchAnalysisService::class.java))
+                AiBatchAnalysisEvents.setAnalyzing(true, awemeIds.size)
+                true
+            } catch (e: Exception) {
+                pendingJobs.remove(job)
+                activeSessionIds.remove(sessionId)
+                Log.e(TAG, "Cannot start analysis service", e)
+                false
+            }
         }
     }
 }

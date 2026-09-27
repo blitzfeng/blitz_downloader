@@ -11,18 +11,29 @@ import com.blitz.downloader.viewmodel.TagReviewGroup
  */
 object BatchReviewLogic {
 
+    /** 会话来源按最新批次、上一批次保存；新批次不能复用旧会话的结果。 */
+    fun matchesLatestBatch(sourceBatchIds: String, latestBatchId: Long?): Boolean =
+        latestBatchId != null && sourceBatchIds.substringBefore('|').toLongOrNull() == latestBatchId
+
+    fun isEligibleForAnalysis(video: DownloadedVideoEntity): Boolean =
+        video.mediaType == "video" && video.tagEditCount == 0
+
+    fun isSessionReviewCompleted(
+        items: List<com.blitz.downloader.data.db.BatchAnalysisItemEntity>,
+        analysisFinished: Boolean,
+        groups: List<TagReviewGroup>,
+    ): Boolean = items.isNotEmpty() && analysisFinished && items.all { it.isTerminal } && groups.all { it.isProcessed }
+
     /**
      * 合并最近批次与上一批次未打标视频：
-     * - 最近批次：全部保留
+     * - 最近批次：只保留未人工打标的视频
      * - 上一批次：仅保留 tagEditCount == 0 的未打标视频，且排除最近批次已包含的 awemeId
      */
     fun mergeBatchVideos(
         latestVideos: List<DownloadedVideoEntity>,
         prevVideos: List<DownloadedVideoEntity>,
     ): List<DownloadedVideoEntity> {
-        val latestIds = latestVideos.map { it.awemeId }.toSet()
-        val prevUnlabeled = prevVideos.filter { it.tagEditCount == 0 && it.awemeId !in latestIds }
-        return (latestVideos + prevUnlabeled).distinctBy { it.awemeId }
+        return (latestVideos + prevVideos).distinctBy { it.awemeId }.filter(::isEligibleForAnalysis)
     }
 
     /**
@@ -38,14 +49,13 @@ object BatchReviewLogic {
     }
 
     /**
-     * 过滤待参与 LLM 分析的视频列表，排除用户手动移出的条目。
+     * 过滤待分析名单：自动排除非视频、已人工编辑及手动排除项。
      */
     fun filterVideosForAnalysis(
         videos: List<DownloadedVideoEntity>,
         excludedIds: Set<String>,
     ): List<DownloadedVideoEntity> {
-        if (excludedIds.isEmpty()) return videos
-        return videos.filter { it.awemeId !in excludedIds }
+        return videos.distinctBy { it.awemeId }.filter { isEligibleForAnalysis(it) && it.awemeId !in excludedIds }
     }
 
     /**
@@ -217,18 +227,4 @@ object BatchReviewLogic {
         return result
     }
 
-    /**
-     * 判定当前批次视频的标签整理是否已全部完成：
-     * 1. 存在分组时，所有分组均已被处理（确认或跳过）；
-     * 2. 或列表不为空且所有视频均已打标（tagEditCount > 0）。
-     */
-    fun isReviewCompleted(
-        groups: List<TagReviewGroup>,
-        allVideos: List<DownloadedVideoEntity>,
-    ): Boolean {
-        if (groups.isNotEmpty()) {
-            return groups.all { it.isProcessed }
-        }
-        return allVideos.isNotEmpty() && allVideos.all { it.tagEditCount > 0 }
-    }
 }

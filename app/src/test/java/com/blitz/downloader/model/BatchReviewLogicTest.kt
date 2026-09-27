@@ -24,10 +24,53 @@ class BatchReviewLogicTest {
     }
 
     @Test
-    fun mergeBatchVideos_combinesLatestAll_andPrevUnlabeledOnly() {
+    fun sessionRestore_onlyMatchesTheLatestSourceBatch() {
+        assertTrue(BatchReviewLogic.matchesLatestBatch("12|11", 12L))
+        assertTrue(BatchReviewLogic.matchesLatestBatch("12", 12L))
+        assertFalse(BatchReviewLogic.matchesLatestBatch("12|11", 13L))
+        assertFalse(BatchReviewLogic.matchesLatestBatch("12|11", 11L))
+        assertFalse(BatchReviewLogic.matchesLatestBatch("", 12L))
+        assertFalse(BatchReviewLogic.matchesLatestBatch("12|11", null))
+    }
+
+    @Test
+    fun analysisEligibility_excludesImagesLivePhotosEditedAndManualExclusions() {
+        val videos = listOf(createFakeVideo("video"), createFakeVideo("edited", 1),
+            createFakeVideo("image").copy(mediaType = "image"),
+            createFakeVideo("live").copy(mediaType = "image", hasLivePhoto = true),
+            createFakeVideo("excluded"))
+        assertEquals(listOf("video"), BatchReviewLogic.filterVideosForAnalysis(videos, setOf("excluded")).map { it.awemeId })
+        assertEquals(listOf("video", "excluded"), BatchReviewLogic.filterVideosForAnalysis(videos, emptySet()).map { it.awemeId })
+    }
+
+    @Test
+    fun sessionCompletion_requiresTerminalAnalysisAndUnfilteredReview() {
+        val failed = com.blitz.downloader.data.db.BatchAnalysisItemEntity("s", "v", 0, "{}", "failed")
+        val emptySuccess = failed.copy(awemeId = "v2", status = "succeeded")
+        assertTrue(BatchReviewLogic.isSessionReviewCompleted(listOf(failed, emptySuccess), true, emptyList()))
+        assertFalse(BatchReviewLogic.isSessionReviewCompleted(listOf(failed), false, emptyList()))
+        assertFalse(BatchReviewLogic.isSessionReviewCompleted(emptyList(), true, emptyList()))
+        assertFalse(BatchReviewLogic.isSessionReviewCompleted(listOf(failed.copy(status = "running")), true, emptyList()))
+        val pendingGroup = TagReviewGroup("tag", listOf(createFakeVideo("v2", 2)), setOf("v2"))
+        assertFalse(BatchReviewLogic.isSessionReviewCompleted(listOf(failed, emptySuccess), true, listOf(pendingGroup)))
+        assertTrue(BatchReviewLogic.isSessionReviewCompleted(listOf(failed, emptySuccess), true, listOf(pendingGroup.copy(isProcessed = true))))
+    }
+
+    @Test
+    fun currentSessionGroups_keepEditedMembersEvenThoughNextAnalysisExcludesThem() {
+        val edited = createFakeVideo("v", 1)
+        val rows = listOf(AiTagSuggestionPendingEntity("v", 1, "first|second", 0))
+        val groups = BatchReviewLogic.buildTagGroups(rows, listOf(edited), setOf("first"), emptyMap())
+        assertEquals(2, groups.size)
+        assertTrue(groups.all { it.videos.single().awemeId == "v" })
+        assertTrue(BatchReviewLogic.filterVideosForAnalysis(listOf(edited), emptySet()).isEmpty())
+    }
+
+    @Test
+    fun mergeBatchVideos_combinesEligibleVideosFromBothBatches() {
         val latestVideos = listOf(
             createFakeVideo("latest_1", tagEditCount = 0),
-            createFakeVideo("latest_2", tagEditCount = 3), // 最新批次即使已改过也保留
+            createFakeVideo("latest_2", tagEditCount = 3), // 最新批次已编辑的也排除
         )
         val prevVideos = listOf(
             createFakeVideo("prev_unlabeled", tagEditCount = 0), // 上一批次未打标：保留
@@ -37,7 +80,7 @@ class BatchReviewLogicTest {
 
         val merged = BatchReviewLogic.mergeBatchVideos(latestVideos, prevVideos)
 
-        val expectedIds = listOf("latest_1", "latest_2", "prev_unlabeled")
+        val expectedIds = listOf("latest_1", "prev_unlabeled")
         assertEquals(expectedIds, merged.map { it.awemeId })
     }
 
@@ -154,37 +197,6 @@ class BatchReviewLogicTest {
         val feedbackOne = BatchReviewLogic.classifyFeedback(suggestedTags, confirmedTagsOne)
         assertEquals(AiTagFeedbackKind.ACCEPTED, feedbackOne["舞蹈"])
         assertEquals(AiTagFeedbackKind.REJECTED, feedbackOne["可爱"])
-    }
-
-    @Test
-    fun isReviewCompleted_verifiesBatchCompletionAccurately() {
-        val v1 = createFakeVideo("v1", tagEditCount = 0)
-        val v2 = createFakeVideo("v2", tagEditCount = 0)
-        val v1Labeled = createFakeVideo("v1", tagEditCount = 1)
-        val v2Labeled = createFakeVideo("v2", tagEditCount = 1)
-
-        // 场景 1：所有分组已处理 -> 完成
-        val allProcessedGroups = listOf(
-            TagReviewGroup("舞蹈", listOf(v1), setOf("v1"), isProcessed = true),
-            TagReviewGroup("美食", listOf(v2), setOf("v2"), isProcessed = true),
-        )
-        assertTrue(BatchReviewLogic.isReviewCompleted(allProcessedGroups, listOf(v1, v2)))
-
-        // 场景 2：存在未处理分组 -> 未完成
-        val mixedGroups = listOf(
-            TagReviewGroup("舞蹈", listOf(v1), setOf("v1"), isProcessed = true),
-            TagReviewGroup("美食", listOf(v2), setOf("v2"), isProcessed = false),
-        )
-        assertFalse(BatchReviewLogic.isReviewCompleted(mixedGroups, listOf(v1, v2)))
-
-        // 场景 3：无分组，但所有视频均已打标（tagEditCount > 0） -> 完成
-        assertTrue(BatchReviewLogic.isReviewCompleted(emptyList(), listOf(v1Labeled, v2Labeled)))
-
-        // 场景 4：无分组，存在未打标视频 -> 未完成
-        assertFalse(BatchReviewLogic.isReviewCompleted(emptyList(), listOf(v1, v2Labeled)))
-
-        // 场景 5：列表为空 -> 未完成
-        assertFalse(BatchReviewLogic.isReviewCompleted(emptyList(), emptyList()))
     }
 
     @Test

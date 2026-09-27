@@ -1,5 +1,6 @@
 package com.blitz.downloader.data
 
+import androidx.room.withTransaction
 import android.content.Context
 import android.util.Log
 import com.blitz.downloader.config.AppSettings
@@ -349,7 +350,7 @@ class AiTagSuggestionRepository(context: Context) {
      * `analysisId` 查不到对应分析记录时静默返回，不抛异常——理论上不应发生（结果契约保证
      * 只有真正发起过建议才会带这个 id），但防御性处理优于崩溃。
      */
-    suspend fun recordFeedback(analysisId: Long, confirmedTagIds: Set<Long>) {
+    suspend fun recordFeedback(analysisId: Long, confirmedTagIds: Set<Long>, refreshProfile: Boolean = true) {
         val analysis = videoAiAnalysisDao.getById(analysisId) ?: return
         val suggested = SuggestedTagCodec.decode(analysis.suggestedTagIds)
         val now = System.currentTimeMillis()
@@ -378,11 +379,12 @@ class AiTagSuggestionRepository(context: Context) {
                 createdAtMillis = now,
             )
         }
-        if (rows.isEmpty()) return
-
-        videoTagFeedbackDao.insertAll(rows)
-        tagPreferenceDao.recomputeAll(now)
-        maybeRefreshPreferenceProfile()
+        db.withTransaction {
+            videoTagFeedbackDao.deleteByAnalysisId(analysisId)
+            if (rows.isNotEmpty()) videoTagFeedbackDao.insertAll(rows)
+            tagPreferenceDao.recomputeAll(now)
+        }
+        if (refreshProfile) maybeRefreshPreferenceProfile()
     }
 
     /**
@@ -391,7 +393,7 @@ class AiTagSuggestionRepository(context: Context) {
      * 不产生任何调用（避免过于频繁的额外费用）。生成失败（网络异常等）静默忽略——
      * 摘要是锦上添花的上下文，不应该因为这一步失败而影响调用方主流程。
      */
-    private suspend fun maybeRefreshPreferenceProfile() {
+    suspend fun maybeRefreshPreferenceProfile() {
         val currentTotal = videoTagFeedbackDao.countAll()
         val lastSampleCount = preferenceProfileDao.getLatestSampleCount() ?: 0
         if (currentTotal - lastSampleCount < PREFERENCE_REFRESH_THRESHOLD) return

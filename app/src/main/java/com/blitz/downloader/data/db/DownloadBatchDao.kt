@@ -17,6 +17,9 @@ interface DownloadBatchDao {
     @Query("SELECT * FROM download_batch ORDER BY createdAtMillis DESC, id DESC LIMIT :limit")
     suspend fun getRecentBatches(limit: Int = 2): List<DownloadBatchEntity>
 
+    @Query("SELECT * FROM download_batch ORDER BY createdAtMillis DESC, id DESC LIMIT :limit")
+    fun observeRecentBatches(limit: Int = 2): Flow<List<DownloadBatchEntity>>
+
     /**
      * 是否存在至少一条批次记录，供管理页菜单动态判断是否显示入口。
      */

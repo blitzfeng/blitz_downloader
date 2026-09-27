@@ -55,6 +55,8 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
+    sourceSets.getByName("androidTest").assets.srcDir("schemas")
+
     buildFeatures {
         viewBinding = true
         // 新增 UI（页面 / 对话框）走 Compose，存量 XML 页面保持不动，两者在同一进程内共存
@@ -97,6 +99,12 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
