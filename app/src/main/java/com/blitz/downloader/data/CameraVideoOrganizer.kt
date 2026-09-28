@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.system.Os
+import android.system.OsConstants
 import android.webkit.MimeTypeMap
 import androidx.core.content.ContextCompat
 import com.blitz.downloader.model.CameraMoveOutcome
@@ -43,7 +44,7 @@ class CameraVideoOrganizer(context: Context) {
     }
 
     fun saveTree(uri: Uri, source: Boolean) {
-        require(SafCameraVideoStorage.validTree(uri, source)) { "请选择主存储的 ${if (source) "DCIM/Camera" else "Download"} 目录" }
+        require(SafCameraVideoStorage.validTree(uri, source)) { "请选择主存储的 ${if (source) "DCIM" else "Download"} 目录" }
         context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         if (!preferences.edit().putString(if (source) "sourceTree" else "downloadTree", uri.toString()).commit()) throw IOException("无法保存目录授权")
     }
@@ -76,20 +77,27 @@ class CameraVideoOrganizer(context: Context) {
         if (!hasAccess()) throw SecurityException("请先授予目录读写权限")
         if (Build.VERSION.SDK_INT == 29) return SafCameraVideoStorage(context, tree(true)!!, tree(false)!!)
         return DirectCameraVideoStorage(
-            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Camera"),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
             File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "history"),
             mime = { file -> MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase(Locale.ROOT)) },
             access = { if (!hasAccess()) throw SecurityException("存储权限已撤回，整理已停止") },
             link = { from, to -> runCatching { Os.link(from.path, to.path); true }.getOrDefault(false) },
+            isSymbolicLink = { file ->
+                try {
+                    OsConstants.S_ISLNK(Os.lstat(file.path).st_mode)
+                } catch (e: android.system.ErrnoException) {
+                    if (e.errno == OsConstants.ENOENT) false else throw IOException("无法检查 ${file.path}", e)
+                }
+            },
         )
     }
 
     @Suppress("DEPRECATION")
-    private fun refreshMedia(sourceName: String, destination: String, moved: Boolean) {
+    private fun refreshMedia(sourcePath: String, destination: String, moved: Boolean) {
         val target = if (File(destination).isAbsolute) destination else File(Environment.getExternalStorageDirectory(), destination).path
         val paths = buildList {
             add(target)
-            if (moved) add(File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Camera/$sourceName").path)
+            if (moved) add(if (File(sourcePath).isAbsolute) sourcePath else File(Environment.getExternalStorageDirectory(), sourcePath).path)
         }
         val pending = CountDownLatch(paths.size)
         val indexed = ConcurrentHashMap<String, Boolean>()

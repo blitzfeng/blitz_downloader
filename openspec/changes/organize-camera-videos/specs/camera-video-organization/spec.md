@@ -6,7 +6,7 @@
 
 ### Requirement: 设置页手动整理入口
 
-系统 SHALL 在设置页提供「整理相机目录」入口，说明来源 `DCIM/Camera`、视频目标 `Download/history`、图片目标 `Download/history_img`；视频保留 `img`、`vid` 前缀，图片保留 `img`、`mvimg`、`pano`、`retouch` 前缀，均忽略大小写。系统 SHALL 明示仅依据文件名整理，不保证识别真实拍摄来源；进入设置页或启动应用 SHALL NOT 自动移动文件。
+系统 SHALL 在设置页提供「整理相机目录」入口，说明来源为 `DCIM` 本层及 `DCIM/Camera` 本层、视频目标 `Download/history`、图片目标 `Download/history_img`；视频保留 `img`、`vid` 前缀，图片保留 `img`、`mvimg`、`pano`、`retouch` 前缀，均忽略大小写。系统 SHALL 明示仅依据文件名整理，不保证识别真实拍摄来源；进入设置页或启动应用 SHALL NOT 自动移动文件。
 
 #### Scenario: 打开设置页
 - **WHEN** 用户进入设置页但未触发整理
@@ -14,7 +14,19 @@
 
 ### Requirement: 限定扫描范围与筛选规则
 
-系统 SHALL 仅扫描主共享存储 `DCIM/Camera` 的直接子文件，不递归、不跨存储卷、不跟随指向目录外的链接。系统 SHALL 将识别为视频且完整文件名不以 `img` 或 `vid` 开头的文件列为视频候选；将识别为图片且完整文件名不以 `img`、`mvimg`、`pano` 或 `retouch` 开头的文件列为图片候选。前缀匹配 SHALL 忽略大小写；其他媒体类型或无法识别类型的文件 SHALL NOT 成为移动候选。
+系统 SHALL 仅扫描主共享存储 `DCIM` 和 `DCIM/Camera` 两个指定目录的直接子文件，合并为同一预览批次；SHALL NOT 扫描 `DCIM` 下除 `Camera` 外的其他子目录或 `Camera` 内的子目录，不递归、不跨存储卷、不跟随指向目录外的链接。系统 SHALL 对两个来源使用相同筛选规则：将识别为视频且完整文件名不以 `img` 或 `vid` 开头的文件列为视频候选；将识别为图片且完整文件名不以 `img`、`mvimg`、`pano` 或 `retouch` 开头的文件列为图片候选。前缀匹配 SHALL 忽略大小写；其他媒体类型或无法识别类型的文件 SHALL NOT 成为移动候选。
+
+#### Scenario: 新增 DCIM 本层扫描且不扩大子目录范围
+- **WHEN** 存在 `DCIM/root.mp4`、`DCIM/photo.jpg`、`DCIM/Camera/clip.mp4`、`DCIM/Screenshots/other.mp4` 和 `DCIM/Camera/nested/other.jpg`
+- **THEN** 仅前三个文件成为候选，后两个文件所在的子目录不扫描
+
+#### Scenario: Camera 目录不存在
+- **WHEN** `DCIM/Camera` 不存在，但 `DCIM` 本层存在符合规则的文件
+- **THEN** 仍将 `DCIM` 本层的符合规则文件列为候选，不因 Camera 缺失跳过 DCIM
+
+#### Scenario: 两个来源包含同名文件
+- **WHEN** `DCIM/clip.mp4` 和 `DCIM/Camera/clip.mp4` 均符合筛选规则
+- **THEN** 两个文件分别列为候选，预览可区分来源，确认移动后按同名冲突规则保存两份文件且不覆盖
 
 #### Scenario: 文件名前缀筛选
 - **WHEN** 目录内包含视频 `IMG_001.mp4`、`img001.mp4`、`Vid_001.mov`、`video001.mp4`、`douyin_001.mp4` 和 `123.mp4`
@@ -29,22 +41,26 @@
 - **THEN** 前三张图片保留；`download_pano.jpg` 为图片候选，`pano001.mp4` 为视频候选，新增保留前缀仅适用于图片
 
 #### Scenario: 其他文件与子目录
-- **WHEN** 目录内包含 `notes.txt`、音频、无法识别类型的文件，以及子目录中的 `clip.mp4` 和 `abc.jpg`
+- **WHEN** 指定来源中包含 `notes.txt`、音频、无法识别类型的文件，以及 `DCIM` 下除 `Camera` 外的子目录或 `Camera` 内子目录中的 `clip.mp4` 和 `abc.jpg`
 - **THEN** 这些项目均不移动
 
 #### Scenario: 无可移动视频
-- **WHEN** 源目录不存在或成功扫描后候选为空
+- **WHEN** 两个源目录均不存在，或完成所有存在的源目录扫描后候选为空
 - **THEN** 显示没有符合规则的视频或图片，不创建目标目录，不显示移动确认按钮
 
 #### Scenario: 无法扫描目录
-- **WHEN** 源目录存在但无法读取
-- **THEN** 显示读取失败及原因，不把失败报告为零候选
+- **WHEN** 任一源目录存在但无法读取
+- **THEN** 显示该目录读取失败及原因，不把失败报告为零候选或完整扫描成功
 
 ### Requirement: 执行前授权与预览确认
 
-系统 SHALL 在扫描和移动前校验相应存储授权。Android 11 及以上 SHALL 复用所有文件访问权限入口；Android 6–9 SHALL 请求所需运行时存储权限；Android 10 SHALL 通过系统目录选择器获取对主共享存储 `DCIM/Camera` 及 `Download` 的访问授权并校验目录。授权拒绝、取消或目录不符时 SHALL 不执行移动。
+系统 SHALL 在扫描和移动前校验相应存储授权。Android 11 及以上 SHALL 复用所有文件访问权限入口；Android 6–9 SHALL 请求所需运行时存储权限；Android 10 SHALL 通过系统目录选择器获取对主共享存储 `DCIM` 及 `Download` 的访问授权并校验目录，来源扫描仍限制为 `DCIM` 本层及其 `Camera` 本层。授权拒绝、取消或目录不符时 SHALL 不执行移动。
 
-系统 SHALL 在扫描完成后展示候选总数、总大小、可滚动查看的完整文件名列表及每个文件的目标目录，只有用户明确确认后才移动本次预览的候选。取消预览 SHALL 不修改文件，授权返回 SHALL 只继续扫描或预览，不直接开始移动。
+系统 SHALL 在扫描完成后展示候选总数、总大小、可滚动查看的完整文件名列表及每个文件的来源目录和目标目录，只有用户明确确认后才移动本次预览的候选。取消预览 SHALL 不修改文件，授权返回 SHALL 只继续扫描或预览，不直接开始移动。
+
+#### Scenario: 旧 Camera 授权升级
+- **WHEN** Android 10 上仅保留旧版 `DCIM/Camera` 文档树授权
+- **THEN** 要求用户授权主存储 `DCIM`，不将 Camera 授权视为覆盖两个来源；授权成功后仅继续扫描预览
 
 #### Scenario: 权限拒绝或目录选错
 - **WHEN** 用户拒绝所需权限、取消目录选择或选择了不符合要求的目录

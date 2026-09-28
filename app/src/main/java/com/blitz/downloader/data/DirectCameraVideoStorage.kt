@@ -7,18 +7,20 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.util.UUID
 
-/** 不依赖 Android 的文件适配，便于用真实临时文件验证不覆盖及失败行为。 */
+/** 仅枚举传入的 DCIM 本层与 Camera 本层，便于用真实临时文件验证范围与移动行为。 */
 class DirectCameraVideoStorage(
     private val source: File,
     private val videoTarget: File,
     private val mime: (File) -> String?,
     private val access: () -> Unit = {},
     private val link: ((File, File) -> Boolean)? = null,
+    private val isSymbolicLink: (File) -> Boolean = { it.canonicalFile != it.absoluteFile },
 ) : CameraVideoStorage {
+    private val sources = listOf(source, File(source, "Camera"))
     private val imageTarget = File(videoTarget.parentFile, "history_img")
     private var target = videoTarget
     private fun validateDirectories() {
-        if (listOf(source, videoTarget, imageTarget).any { it.canonicalFile != it.absoluteFile }) {
+        if ((sources + listOf(videoTarget, imageTarget)).any { isSymbolicLink(it) || it.canonicalFile != it.absoluteFile }) {
             throw IOException("目录包含链接，无法确认整理范围")
         }
     }
@@ -26,8 +28,9 @@ class DirectCameraVideoStorage(
     private fun checked(id: String): File {
         validateDirectories()
         val file = File(id)
-        if (file.canonicalFile != file.absoluteFile ||
-            (file.parentFile != source && file.parentFile != videoTarget && file.parentFile != imageTarget)) {
+        val parent = file.parentFile ?: throw IOException("文件缺少父目录")
+        if (isSymbolicLink(file) || file.canonicalFile != file.absoluteFile ||
+            (parent !in sources && parent != videoTarget && parent != imageTarget)) {
             throw IOException("文件不在允许的直接子目录中")
         }
         return file
@@ -37,17 +40,19 @@ class DirectCameraVideoStorage(
 
     override fun scan(): List<CameraVideoCandidate> {
         checkAccess()
-        if (!source.exists()) return emptyList()
-        val files = source.listFiles() ?: throw IOException("无法读取 DCIM/Camera")
+        val files = sources.flatMap { directory ->
+            if (!directory.exists()) emptyList() else
+                directory.listFiles()?.toList() ?: throw IOException("无法读取 ${directory.absolutePath}")
+        }
         return files.mapNotNull { file ->
-            if (!file.isFile || file.canonicalFile != file.absoluteFile) null else snapshot(file.absolutePath)
+            if (!file.isFile || isSymbolicLink(file) || file.canonicalFile != file.absoluteFile) null else snapshot(file.absolutePath)
         }.filter { CameraVideoRules.isCandidate(it.name, it.mime) }.sortedBy { it.name }
     }
 
     override fun snapshot(id: String): CameraVideoCandidate? {
         val file = checked(id)
         if (!file.isFile) return null
-        return CameraVideoCandidate(id, file.name, file.length(), file.lastModified(), mime(file).orEmpty())
+        return CameraVideoCandidate(id, file.name, file.length(), file.lastModified(), mime(file).orEmpty(), requireNotNull(file.parentFile).path)
     }
 
     override fun prepareDestination(candidate: CameraVideoCandidate) {

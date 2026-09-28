@@ -158,6 +158,7 @@ class CameraOrganizationDialogFragment : ComposeDialogFragment() {
                     items(current.candidates, key = { it.id }) { item ->
                         Column {
                             Text(item.name + " · " + Formatter.formatFileSize(requireContext(), item.size.coerceAtLeast(0)), style = MaterialTheme.typography.bodyMedium)
+                            Text(stringResource(R.string.camera_organize_source, item.sourceDirectory), style = MaterialTheme.typography.bodySmall)
                             Text("→ Download/${com.blitz.downloader.model.CameraVideoRules.destinationFolder(item.mime)}", style = MaterialTheme.typography.bodySmall)
                         }
                     }

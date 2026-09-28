@@ -2,7 +2,32 @@
 
 日期：2026-09-24。
 
-## 当前行为
+## 2026-09-28 DCIM 扫描扩展实现与验证
+
+- 在既有 `DCIM/Camera` 本层扫描之外，新增主共享存储 `DCIM` 本层；不扫描 DCIM 下其他子目录或 Camera 内的子目录。
+- 两个来源复用既有图片、视频规则及目标目录，合并预览并显示来源；同名源文件分别处理且不覆盖。
+- Android 10 来源授权调整为 `DCIM`，仅有旧 Camera 授权时需重新授权；扫描仍受两个指定目录限制。
+- 已完成直接文件与 SAF 存储适配、授权检查及提示、候选来源展示；结果保留实际来源路径，媒体索引同步不再固定拼接 Camera。
+- 直接文件适配保留规范路径边界检查，并注入平台符号链接检查：Android 使用 `Os.lstat`，JVM 测试使用 `Files.isSymbolicLink`。拒绝链接目录，跳过链接文件，不进入其他子目录。
+
+执行命令：
+
+```powershell
+.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest --tests "com.blitz.downloader.data.Camera*Test"
+openspec validate organize-camera-videos --strict
+git diff --check
+```
+
+- 最终 Debug 构建成功，产物：`app/build/outputs/apk/debug/app-debug.apk`。
+- 共 24 项 JVM 测试通过，零失败、零跳过：`CameraVideoMoverTest` 12 项、`CameraOrganizationRunnerTest` 6 项、`CameraSourceDirectoriesTest` 6 项。
+- 新增覆盖两个来源共用筛选规则、子目录及越界链接排除、Camera 缺失、模拟根目录不可读、Camera 被文件占用时不返回部分扫描、两来源同名视频与图片不覆盖，以及媒体刷新和结果使用实际源路径。
+- 首轮链接测试发现 Windows 上规范路径比较无法可靠识别符号链接；补充平台显式检测后重新构建并通过全部测试。
+- OpenSpec 严格校验与差异空白检查通过。
+- 当前连接设备为 Android 16（API 36），本轮未安装或执行公共目录移动验收；Android 10 的系统目录选择、旧授权升级，以及各版本真实权限、相册与界面验收仍待完成。自动化测试不能替代这些验收，相关任务保持未勾选。
+
+使用说明见 [相机目录整理](../../../docs/camera-organization.md)。以下内容保留为原 Camera 范围的历史记录。
+
+## 2026-09-24 已实现行为
 
 - 设置页入口为「整理相机目录」，仅扫描主共享存储 `DCIM/Camera` 的直接子文件。
 - 视频：忽略大小写，保留 `img`、`vid` 开头的文件，其余进入 `Download/history`。

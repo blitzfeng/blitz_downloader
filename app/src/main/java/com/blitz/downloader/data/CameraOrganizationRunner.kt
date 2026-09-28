@@ -62,9 +62,10 @@ class CameraOrganizationRunner(
                     backend.checkAccess()
                     backend.prepareDestination(candidate)
                     mutableState.value = mutableState.value.copy(currentName = candidate.name)
-                    var result = mover.move(candidate)
+                    val sourcePath = runCatching { backend.displayPath(candidate.id) }.getOrDefault(candidate.id)
+                    var result = mover.move(candidate).copy(source = sourcePath)
                     if (result.outcome == CameraMoveOutcome.SUCCESS || result.destination != null) {
-                        val warning = runCatching { refreshMedia(candidate.name, result.destination!!, result.outcome == CameraMoveOutcome.SUCCESS) }
+                        val warning = runCatching { refreshMedia(sourcePath, result.destination!!, result.outcome == CameraMoveOutcome.SUCCESS) }
                             .exceptionOrNull()?.let { "媒体索引刷新失败：${it.message}" }
                         result = result.copy(indexWarning = warning)
                     }

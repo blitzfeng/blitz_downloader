@@ -91,4 +91,25 @@ class CameraOrganizationRunnerTest {
         assertEquals(2, runner.state.value.results.size)
         assertTrue(runner.state.value.results.all { it.outcome == CameraMoveOutcome.SUCCESS && it.indexWarning != null })
     }
+
+    @Test fun twoSourcesRefreshActualPathsAndKeepDistinctResults() {
+        val dcim = temporary.newFolder("DCIM")
+        val camera = File(dcim, "Camera").apply { mkdir() }
+        val paths = listOf(File(dcim, "clip.mp4"), File(camera, "clip.mp4"))
+        paths.forEach { it.writeText(requireNotNull(it.parentFile).name) }
+        val storage = DirectCameraVideoStorage(dcim, File(temporary.root, "history"), { "video/mp4" })
+        val refreshed = mutableListOf<String>()
+        val runner = runner(storage) { source, _, moved ->
+            assertTrue(moved)
+            assertFalse(File(source).exists())
+            refreshed += source
+        }
+        runner.scan()
+        assertEquals(2, runner.state.value.candidates.size)
+        assertTrue(refreshed.isEmpty())
+        runner.confirm(runner.state.value.batchId)
+        assertEquals(paths.map { it.path }.toSet(), refreshed.toSet())
+        assertEquals(refreshed.toSet(), runner.state.value.results.map { it.source }.toSet())
+        assertTrue(runner.state.value.results.all { it.outcome == CameraMoveOutcome.SUCCESS && it.indexWarning == null })
+    }
 }

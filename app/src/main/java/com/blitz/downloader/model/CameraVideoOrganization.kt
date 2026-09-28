@@ -6,6 +6,7 @@ data class CameraVideoCandidate(
     val size: Long,
     val modified: Long,
     val mime: String,
+    val sourceDirectory: String = "",
 )
 
 object CameraVideoRules {

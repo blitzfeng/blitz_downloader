@@ -23,7 +23,7 @@ class SafCameraVideoStorage(
         const val AUTHORITY = "com.android.externalstorage.documents"
         fun validTree(uri: Uri, source: Boolean): Boolean = runCatching {
             uri.authority == AUTHORITY && DocumentsContract.isTreeUri(uri) &&
-                DocumentsContract.getTreeDocumentId(uri) == if (source) "primary:DCIM/Camera" else "primary:Download"
+                DocumentsContract.getTreeDocumentId(uri) == if (source) "primary:DCIM" else "primary:Download"
         }.getOrDefault(false)
 
         private fun document(tree: Uri) = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
@@ -51,17 +51,18 @@ class SafCameraVideoStorage(
                         DocumentsContract.buildDocumentUriUsingTree(parent, id).toString(),
                         cursor.getString(1), if (cursor.isNull(2)) -1 else cursor.getLong(2),
                         if (cursor.isNull(3)) -1 else cursor.getLong(3), cursor.getString(4).orEmpty(),
+                        DocumentsContract.getDocumentId(parent).removePrefix("primary:"),
                     ))
                 }
             }
-        } ?: throw IOException("无法读取授权目录")
+        } ?: throw IOException("无法读取 ${DocumentsContract.getDocumentId(parent).removePrefix("primary:")}")
     }
 
     private fun checked(id: String): Uri {
         val uri = Uri.parse(id)
         val doc = DocumentsContract.getDocumentId(uri)
         val parent = doc.substringBeforeLast('/')
-        if (uri.authority != AUTHORITY || parent !in listOf("primary:DCIM/Camera", "primary:Download/history", "primary:Download/history_img") ||
+        if (uri.authority != AUTHORITY || parent !in listOf("primary:DCIM", "primary:DCIM/Camera", "primary:Download/history", "primary:Download/history_img") ||
             doc.substringAfterLast('/') in listOf(".", "..")
         ) throw IOException("文件不在允许的目录内")
         return uri
@@ -69,12 +70,20 @@ class SafCameraVideoStorage(
 
     override fun scan(): List<CameraVideoCandidate> {
         checkAccess()
-        return children(source).filter { CameraVideoRules.isCandidate(it.name, it.mime) }.sortedBy { it.name }
+        val rootChildren = children(source)
+        val camera = rootChildren.find { DocumentsContract.getDocumentId(Uri.parse(it.id)) == "primary:DCIM/Camera" }
+        if (camera != null && camera.mime != DocumentsContract.Document.MIME_TYPE_DIR) {
+            throw IOException("无法读取 DCIM/Camera：该路径不是目录")
+        }
+        val cameraChildren = camera?.let { children(Uri.parse(it.id)) }.orEmpty()
+        return (rootChildren + cameraChildren).filter { CameraVideoRules.isCandidate(it.name, it.mime) }.sortedBy { it.name }
     }
 
     override fun snapshot(id: String): CameraVideoCandidate? {
         val uri = checked(id)
-        val parent = if (DocumentsContract.getDocumentId(uri).startsWith("primary:DCIM/Camera/")) source else target ?: return null
+        val parentId = DocumentsContract.getDocumentId(uri).substringBeforeLast('/')
+        val tree = if (parentId in listOf("primary:DCIM", "primary:DCIM/Camera")) sourceTree else downloadTree
+        val parent = DocumentsContract.buildDocumentUriUsingTree(tree, parentId)
         return children(parent).find { it.id == id }
     }
 

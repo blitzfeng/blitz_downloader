@@ -385,6 +385,10 @@ owner 为 NULL 的全变 `ic_video_placeholder`——所以**不能**把可用�
 
 选中状态的权威是 `ListDownloadViewModel` 的 `selectedIds` / `imageSelections`；`VideoItemUiModel.isSelected` 与 `selectedImageIndices` 只在 `compose()` 里合成出来——一份给 Adapter 渲染，一份喂给 `BatchDownloadCoordinator`（它靠 `isSelected` 筛选待下载项）。这样 `download/` 无需任何改动。
 
+### 相机目录整理
+
+设置页「整理相机目录」仅扫描主共享存储 `DCIM` 本层及 `DCIM/Camera` 本层，不递归扫描其他子目录。两来源共用视频、图片前缀规则，预览显示来源，媒体索引刷新使用实际源路径。Android 10 的 SAF 来源授权为 `DCIM`，旧 Camera 授权需重新选择。实现位于 `CameraVideoOrganizer`、`CameraOrganizationRunner` 与两个存储适配中；使用说明见 [相机目录整理](docs/camera-organization.md)。
+
 ### 导出管道（管理页「导出选中」）
 
 多选后有两条导出路径，共用 `MediaExportManager.resolveExportFiles(...)` 把选中记录解析成磁盘文件：
