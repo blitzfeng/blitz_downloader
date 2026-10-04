@@ -11,6 +11,20 @@ import com.blitz.downloader.viewmodel.TagReviewGroup
  */
 object BatchReviewLogic {
 
+    /** 仅检查互斥父标签的直属子项；不推断祖先，也不按 AI 参与状态过滤。 */
+    fun findConflictingVideos(
+        tags: List<com.blitz.downloader.data.db.TagEntity>,
+        videoTags: Map<String, Set<String>>,
+    ): Set<String> {
+        val exclusiveParents = tags.filter { it.isExclusive }.map { it.tagName }.toSet()
+        val exclusiveChildren = tags.filter { it.parentTagName in exclusiveParents }
+            .groupBy({ it.parentTagName }, { it.tagName }).values.map { it.toSet() }
+        return videoTags.filterValues { selected ->
+            exclusiveChildren.any { children -> selected.count { it in children } > 1 }
+        }.keys.toSet()
+    }
+
+
     /** 会话来源按最新批次、上一批次保存；新批次不能复用旧会话的结果。 */
     fun matchesLatestBatch(sourceBatchIds: String, latestBatchId: Long?): Boolean =
         latestBatchId != null && sourceBatchIds.substringBefore('|').toLongOrNull() == latestBatchId

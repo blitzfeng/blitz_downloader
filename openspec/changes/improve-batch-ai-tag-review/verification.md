@@ -1,6 +1,8 @@
 # 验证记录
 
-日期：2026-09-27。变更任务 18/18 已完成（包含新批次回归修复及全量编辑滚动优化）。
+日期：2026-09-27。原有变更任务 18/18 已完成（包含新批次回归修复及全量编辑滚动优化）。
+
+2026-10-03 补充：新增“完成后的标签冲突校验”已实现并验收，全部 23/23 项任务完成，第 8 节的验证结果见本文末尾。下方 2026-09-27 的构建、测试与截图记录仅覆盖原有功能。
 
 ## 构建与规范
 
@@ -65,3 +67,31 @@ adb shell am instrument -w -r \
 - 已处理分组保留状态、渲染和撤销实现，但不加入列表；审核中显示“未处理 > 失败”，完成后显示“全部 > 失败”。
 - 保存标签时不再因 busyAction 临时移除“全部”区域，保持列表项及 key 稳定。
 - Debug 与 androidTest 构建通过，独立 Android 15 模拟器上 10 项设备测试通过。新增测试通过占用数据库事务延迟保存，确认保存前、保存中、保存后的滚动位置一致，且已处理分组不展示。
+
+
+## 2026-10-03：完成后标签冲突校验
+
+实现：预览后增加校验入口，复用完成状态与保存防重；事务读取完整标签规则和本次去重成员的实际标签；冲突项在全部/失败区域同步使用整体红色背景，保存后再次校验通过恢复。校验失败保留冲突，新会话/批次清除旧结果。
+
+已执行：
+
+- `./gradlew :app:testDebugUnitTest --tests com.blitz.downloader.model.BatchReviewLogicTest :app:assembleDebug :app:assembleDebugAndroidTest`：通过，28 项逻辑测试无失败，debug APK 与设备测试 APK 构建成功。
+- 新增逻辑测试覆盖互斥直属子项、多层关系、父子共存、仅选子标签、非互斥多选、禁用 AI 的标签、空标签集合、修改规则与标签后的重新计算，以及按钮加载/分析/保存/校验状态。
+- `openspec validate improve-batch-ai-tag-review --strict` 与 `git diff --check`：通过。
+
+新增设备测试覆盖：审核完成前禁用、筛选不绕过完成判定、成功及失败项同步标红、修改后复校恢复、重读互斥规则、不增加编辑次数/反馈、排队期间新批次变化、校验防重及阻止同时保存、真实数据库读取异常后保留结果并重试。已在独立 Android 15 / API 35 arm64 模拟器执行完整 `BatchTagReviewIntegrationTest`，12 项全部通过，其中 3 项为新增校验集成测试。
+
+设备命令：
+
+```sh
+adb -s emulator-5580 shell am instrument -w -r \
+  -e class com.blitz.downloader.data.BatchTagReviewIntegrationTest \
+  com.blitz.downloader.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+已检查 `batch-review-validation-conflicts.png` 与 `batch-review-validation-corrected.png`：校验紧邻预览；成功与失败两个视频均为整体红色背景，无冲突视频正常；修改成功视频后复校，其背景恢复，仍冲突的失败视频保持红色，结果提示数量从 2 变为 1。按钮、作者与标签内容可读，布局正常。模拟器与样例数据库独立创建，测试未发起真实 AI 请求。
+
+
+## 2026-10-04：移除 toolbar 校验入口
+
+按用户要求移除顶部 toolbar 的校验按钮，仅保留页面内容区“预览”后的校验入口。同步需求、设计、任务与项目说明；校验逻辑不变。`./gradlew :app:compileDebugKotlin`、OpenSpec 严格校验及 `git diff --check` 通过。本次未重跑设备测试，前述截图属于调整前的验收记录。

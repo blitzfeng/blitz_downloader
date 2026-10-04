@@ -3,6 +3,8 @@ package com.blitz.downloader.model
 import com.blitz.downloader.data.AiTagFeedbackKind
 import com.blitz.downloader.data.db.AiTagSuggestionPendingEntity
 import com.blitz.downloader.data.db.DownloadedVideoEntity
+import com.blitz.downloader.data.db.TagEntity
+import com.blitz.downloader.viewmodel.BatchTagReviewUiState
 import com.blitz.downloader.viewmodel.TagEditFilter
 import com.blitz.downloader.viewmodel.TagReviewGroup
 import org.junit.Assert.assertEquals
@@ -11,6 +13,56 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BatchReviewLogicTest {
+
+    @Test fun validation_checksDirectSiblingsWithoutInferringAncestorsOrFilteringAiTags() {
+        val tags = listOf(
+            TagEntity("P", isExclusive = true),
+            TagEntity("A", parentTagName = "P", isExclusive = true),
+            TagEntity("B", parentTagName = "P", enableAi = false),
+            TagEntity("A1", parentTagName = "A"),
+            TagEntity("A2", parentTagName = "A"),
+            TagEntity("Q"), TagEntity("C", parentTagName = "Q"), TagEntity("D", parentTagName = "Q"),
+        )
+        val videos = mapOf(
+            "siblings" to setOf("A", "B"),
+            "nested" to setOf("A1", "A2"),
+            "parentAndSiblings" to setOf("P", "A", "B"),
+            "parentAndChild" to setOf("P", "A"),
+            "childOnly" to setOf("B"),
+            "differentLevels" to setOf("A1", "B"),
+            "nonExclusive" to setOf("C", "D"),
+            "empty" to emptySet(),
+        )
+        assertEquals(setOf("siblings", "nested", "parentAndSiblings"),
+            BatchReviewLogic.findConflictingVideos(tags, videos))
+        assertTrue(BatchReviewLogic.findConflictingVideos(emptyList(), videos).isEmpty())
+    }
+
+    @Test fun validation_recomputesFromChangedRulesAndTags() {
+        val tags = listOf(TagEntity("P", isExclusive = true),
+            TagEntity("A", parentTagName = "P"), TagEntity("B", parentTagName = "P"))
+        val conflicting = mapOf("video" to setOf("A", "B"))
+        assertEquals(setOf("video"), BatchReviewLogic.findConflictingVideos(tags, conflicting))
+        assertTrue(BatchReviewLogic.findConflictingVideos(tags, mapOf("video" to setOf("A"))).isEmpty())
+        assertTrue(BatchReviewLogic.findConflictingVideos(tags.map { it.copy(isExclusive = false) }, conflicting).isEmpty())
+        assertTrue(BatchReviewLogic.findConflictingVideos(tags.map {
+            if (it.tagName == "B") it.copy(parentTagName = "") else it
+        }, conflicting).isEmpty())
+    }
+
+    @Test fun validation_isEnabledOnlyForCompletedNonemptyIdleSession() {
+        val completed = BatchTagReviewUiState(isLoading = false, isReviewCompleted = true,
+            sessionVideos = listOf(createFakeVideo("video")))
+        assertTrue(completed.canValidateTags)
+        assertFalse(completed.copy(isReviewCompleted = false).canValidateTags)
+        assertFalse(completed.copy(sessionVideos = emptyList()).canValidateTags)
+        assertFalse(completed.copy(isLoading = true).canValidateTags)
+        assertFalse(completed.copy(isAnalyzing = true).canValidateTags)
+        for (action in listOf("save", "confirm", "skip", "validate", "start")) {
+            assertFalse(completed.copy(busyAction = action).canValidateTags)
+        }
+    }
+
 
     private fun createFakeVideo(awemeId: String, tagEditCount: Int = 0): DownloadedVideoEntity {
         return DownloadedVideoEntity(

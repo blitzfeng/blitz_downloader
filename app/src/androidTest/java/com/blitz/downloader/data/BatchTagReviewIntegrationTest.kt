@@ -78,6 +78,106 @@ class BatchTagReviewIntegrationTest {
         compose.waitForIdle()
     }
 
+    private fun seedExclusiveRules() = runBlocking {
+        db.tagDao().insert(TagEntity("exclusive", id = 903, isExclusive = true))
+        db.tagDao().updateParentTagName("review-a", "exclusive")
+        db.tagDao().updateParentTagName("review-b", "exclusive")
+        db.tagDao().updateEnableAi("review-b", false)
+    }
+
+    @Test fun validation_marksWholeItemsAndClearsOnlyAfterSuccessfulRecheck() {
+        seed(); seedExclusiveRules(); open()
+        compose.onNodeWithTag("review_validate").assertIsNotEnabled()
+        act { it.setEditFilter(com.blitz.downloader.viewmodel.TagEditFilter.EDITED) }
+        compose.waitUntil(10_000) { vm.uiState.value.groups.isEmpty() }
+        assertFalse(vm.uiState.value.canValidateTags)
+        act { it.validateTags() }
+        assertTrue(vm.uiState.value.conflictingVideoIds.isEmpty())
+        act { it.setEditFilter(com.blitz.downloader.viewmodel.TagEditFilter.ALL) }
+        compose.waitUntil(10_000) { vm.uiState.value.groups.size == 2 }
+        act { it.confirmGroup("review-a") }
+        act { it.confirmGroup("review-b") }
+        act { it.saveSingleVideoTags("failure", listOf("review-a", "review-b")) }
+        compose.onNodeWithTag("review_validate").assertIsEnabled().performClick()
+        compose.waitUntil(10_000) { vm.uiState.value.busyAction == null && vm.uiState.value.conflictingVideoIds.size == 2 }
+        assertEquals(setOf("success", "failure"), vm.uiState.value.conflictingVideoIds)
+        val conflict = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "标签冲突")
+        compose.onNodeWithTag("review_list").performScrollToNode(hasTestTag("review_all"))
+        compose.onNodeWithTag("review_all_success").assert(conflict)
+        compose.onNodeWithTag("review_all_failure").assert(conflict)
+        screenshot("validation-conflicts")
+        compose.onNodeWithTag("review_list").performScrollToNode(hasTestTag("review_failed"))
+        compose.onNodeWithTag("review_failed_failure").assert(conflict)
+        val editCount = runBlocking { db.downloadedVideoDao().getByAwemeId("success")!!.tagEditCount }
+        val feedbackCount = runBlocking { db.videoTagFeedbackDao().countByAwemeId("success") }
+        act { it.validateTags(); it.validateTags() }
+        runBlocking {
+            assertEquals(editCount, db.downloadedVideoDao().getByAwemeId("success")!!.tagEditCount)
+            assertEquals(feedbackCount, db.videoTagFeedbackDao().countByAwemeId("success"))
+        }
+        act { it.saveSingleVideoTags("success", listOf("review-a")) }
+        assertTrue("保存不等同于重新校验通过", "success" in vm.uiState.value.conflictingVideoIds)
+        act { it.validateTags() }
+        assertEquals(setOf("failure"), vm.uiState.value.conflictingVideoIds)
+        compose.onNodeWithTag("review_list").performScrollToNode(hasTestTag("review_all"))
+        compose.onNodeWithTag("review_all_success").assert(conflict.not())
+        screenshot("validation-corrected")
+        // 标签配置变更也必须重新读取，且不受修改次数显示筛选影响。
+        runBlocking { db.tagDao().updateIsExclusive("exclusive", false) }
+        act { it.setEditFilter(com.blitz.downloader.viewmodel.TagEditFilter.UNEDITED) }
+        act { it.validateTags() }
+        assertTrue(vm.uiState.value.conflictingVideoIds.isEmpty())
+    }
+
+    @Test fun validation_serializesEditsAndRejectsOldSessionAfterQueuedBatchChange() {
+        seed(allFailed = true); seedExclusiveRules(); open()
+        act { it.saveSingleVideoTags("failure", listOf("review-a", "review-b")) }
+        act { it.validateTags() }
+        assertEquals(setOf("failure"), vm.uiState.value.conflictingVideoIds)
+        val locked = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val blocker = CoroutineScope(Dispatchers.IO).launch {
+            db.withTransaction {
+                locked.complete(Unit)
+                release.await()
+                db.downloadedVideoDao().insert(video("new-video"))
+                db.downloadBatchDao().insert(DownloadBatchEntity(createdAtMillis = 2, awemeIds = "new-video"))
+            }
+        }
+        runBlocking { locked.await() }
+        try {
+            scenario!!.onActivity { vm.validateTags(); vm.validateTags(); vm.saveSingleVideoTags("failure", emptyList()) }
+            compose.waitUntil(10_000) { vm.uiState.value.busyAction == "validate" }
+            compose.onNodeWithTag("review_validate").assertIsNotEnabled()
+        } finally {
+            release.complete(Unit)
+            runBlocking { blocker.join() }
+        }
+        compose.waitUntil(10_000) { vm.uiState.value.busyAction == null && vm.uiState.value.analysisItems.isEmpty() }
+        assertTrue(vm.uiState.value.conflictingVideoIds.isEmpty())
+        assertFalse(vm.uiState.value.canValidateTags)
+        runBlocking { assertEquals(setOf("review-a", "review-b"), db.videoTagDao().getTagsForVideo("failure").toSet()) }
+    }
+
+    @Test fun validation_readFailureKeepsConflictAndAllowsRetry() {
+        seed(allFailed = true); seedExclusiveRules(); open()
+        act { it.saveSingleVideoTags("failure", listOf("review-a", "review-b")) }
+        act { it.validateTags() }
+        assertEquals(setOf("failure"), vm.uiState.value.conflictingVideoIds)
+        // 专用测试数据库短暂隐藏标签表，注入真实的读取错误。
+        db.openHelper.writableDatabase.execSQL("ALTER TABLE tags RENAME TO validation_hidden_tags")
+        try {
+            act { it.validateTags() }
+            assertEquals(setOf("failure"), vm.uiState.value.conflictingVideoIds)
+            assertTrue(vm.uiState.value.canValidateTags)
+        } finally {
+            db.openHelper.writableDatabase.execSQL("ALTER TABLE validation_hidden_tags RENAME TO tags")
+        }
+        act { it.saveSingleVideoTags("failure", listOf("review-a")) }
+        act { it.validateTags() }
+        assertTrue(vm.uiState.value.conflictingVideoIds.isEmpty())
+    }
+
     @Test fun mixedResults_reviewEditRestoreAndOrdering() {
         seed(); open()
         assertEquals(setOf("success", "failure", "empty"), vm.uiState.value.allVideos.map { it.awemeId }.toSet())

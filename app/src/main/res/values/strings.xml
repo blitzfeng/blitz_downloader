@@ -451,4 +451,10 @@
     <string name="batch_review_undone">已撤销处理</string>
     <string name="batch_review_saved">标签已保存</string>
     <string name="batch_review_action_failed">操作失败，可重试：%1$s</string>
+    <string name="batch_review_validate">校验</string>
+    <string name="batch_review_validating">校验中…</string>
+    <string name="batch_review_validation_passed">校验通过，未发现标签冲突</string>
+    <string name="batch_review_validation_conflicts">发现 %1$d 个视频存在标签冲突，已标红</string>
+    <string name="batch_review_validation_outdated">本次分析状态已变化，请在处理完成后重新校验</string>
+    <string name="batch_review_tag_conflict">标签冲突</string>
 </resources>

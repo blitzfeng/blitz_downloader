@@ -57,15 +57,21 @@ data class BatchTagReviewUiState(
     val analysisProgress: AiBatchProgress = AiBatchProgress(),
     val excludedAwemeIds: Set<String> = emptySet(),
     val isReviewCompleted: Boolean = false,
+    val conflictingVideoIds: Set<String> = emptySet(),
     val allTags: List<String> = emptyList(),
     val parentMap: Map<String, String> = emptyMap(),
     val videoExistingTags: Map<String, Set<String>> = emptyMap(),
     val videoSuggestedTags: Map<String, Set<String>> = emptyMap(),
     val logs: List<com.blitz.downloader.llm.AiAnalysisLogEntry> = emptyList(),
     val isLogSheetVisible: Boolean = false,
-)
+) {
+    val canValidateTags: Boolean
+        get() = isReviewCompleted && sessionVideos.isNotEmpty() && !isLoading && !isAnalyzing && busyAction == null
+}
 
 sealed interface BatchTagReviewEvent {
+    data class ValidationCompleted(val conflictCount: Int) : BatchTagReviewEvent
+    data object ValidationOutdated : BatchTagReviewEvent
     data object ShowAiDisabledHint : BatchTagReviewEvent
     data class ShowToast(val message: String) : BatchTagReviewEvent
     data class ActionDone(val action: String, val count: Int = 0) : BatchTagReviewEvent
@@ -264,7 +270,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
         loadedSourceBatchIds = batches.joinToString("|") { it.id.toString() }
         if (latestBatchId != loadedLatestBatchId) {
             loadedLatestBatchId = latestBatchId
-            _uiState.value = _uiState.value.copy(excludedAwemeIds = emptySet(), editFilter = TagEditFilter.ALL)
+            _uiState.value = _uiState.value.copy(excludedAwemeIds = emptySet(), editFilter = TagEditFilter.ALL, conflictingVideoIds = emptySet())
         }
         val batchVideos = withContext(Dispatchers.IO) {
             batches.map { batch ->
@@ -306,6 +312,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
             session = interrupted.copy(finished = true)
         }
         if (session?.id != currentSession?.id) {
+            _uiState.value = _uiState.value.copy(conflictingVideoIds = emptySet())
             restoreReview(session?.let { gson.fromJson(it.reviewJson, ReviewState::class.java) } ?: ReviewState())
         }
         currentSession = session
@@ -367,6 +374,56 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
             videoSuggestedTags = items.associate { it.awemeId to it.suggestedTags.split('|').filter(String::isNotBlank).toSet() },
             isReviewCompleted = session?.isLegacy != true && BatchReviewLogic.isSessionReviewCompleted(items, session?.finished == true, allGroups),
         )
+    }
+
+    /** 只读校验；与审核/保存共用互斥锁和 busy 状态，不产生标签写入或 AI 反馈。 */
+    fun validateTags() {
+        if (!_uiState.value.canValidateTags) return
+        val expectedSession = currentSession ?: return
+        _uiState.value = _uiState.value.copy(busyAction = "validate")
+        viewModelScope.launch {
+            stateMutex.withLock {
+                try {
+                    val conflictCount = db.withTransaction {
+                        val session = sessionDao.latestSession()
+                        val latestBatchId = batchDao.getRecentBatches(1).firstOrNull()?.id
+                        val items = sessionDao.items(expectedSession.id)
+                        // 排队期间可能有新下载、迟到的分析结果或其他页面改动审核状态。
+                        if (session == null || session != expectedSession || !session.finished || session.isLegacy ||
+                            !BatchReviewLogic.matchesLatestBatch(session.sourceBatchIds, latestBatchId) ||
+                            items != _uiState.value.analysisItems || items.isEmpty() || items.any { !it.isTerminal }
+                        ) return@withTransaction null
+
+                        val tags = tagRepo.getAvailableTagEntities()
+                        val actualTags = videoTagDao.getTagsForVideos(items.map { it.awemeId }.distinct())
+                            .groupBy({ it.awemeId }, { it.tagName }).mapValues { it.value.toSet() }
+                        val conflicts = BatchReviewLogic.findConflictingVideos(tags, actualTags)
+                        // 事务内发布，避免读取完成到结果生效之间夹入标签或规则写入。
+                        withContext(Dispatchers.Main.immediate) {
+                            _uiState.value = _uiState.value.copy(
+                                conflictingVideoIds = conflicts,
+                                videoExistingTags = actualTags,
+                                allTags = tags.map { it.tagName },
+                                parentMap = tags.filter { it.parentTagName.isNotBlank() }
+                                    .associate { it.tagName to it.parentTagName },
+                            )
+                        }
+                        conflicts.size
+                    }
+                    if (conflictCount == null) {
+                        reloadLocked()
+                        _events.emit(BatchTagReviewEvent.ValidationOutdated)
+                    } else {
+                        _events.emit(BatchTagReviewEvent.ValidationCompleted(conflictCount))
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    _events.emit(BatchTagReviewEvent.ActionFailed(e.message.orEmpty()))
+                } finally {
+                    _uiState.value = _uiState.value.copy(busyAction = null)
+                }
+            }
+        }
     }
 
     /** Preference summarization can call the network; never hold the review transaction for it. */

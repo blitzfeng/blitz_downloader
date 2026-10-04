@@ -83,6 +83,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.colorResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -175,6 +177,14 @@ fun BatchTagReviewScreen(
                         .setMessage(R.string.batch_tag_review_ai_disabled_hint)
                         .setPositiveButton(android.R.string.ok, null)
                         .show()
+                }
+                is BatchTagReviewEvent.ValidationCompleted -> {
+                    snackbarHostState.showSnackbar(if (event.conflictCount == 0)
+                        context.getString(R.string.batch_review_validation_passed)
+                    else context.getString(R.string.batch_review_validation_conflicts, event.conflictCount))
+                }
+                is BatchTagReviewEvent.ValidationOutdated -> {
+                    snackbarHostState.showSnackbar(context.getString(R.string.batch_review_validation_outdated))
                 }
                 is BatchTagReviewEvent.ActionDone -> {
                     val message = when (event.action) {
@@ -342,6 +352,7 @@ fun BatchTagReviewScreen(
                     uiState = uiState,
                     onStartLlm = { viewModel.startBatchAnalysis() },
                     onOpenPreview = { showPreviewSheet = true },
+                    onValidate = viewModel::validateTags,
                     onFilterChange = { viewModel.setEditFilter(it) },
                 )
 
@@ -361,10 +372,20 @@ fun BatchTagReviewScreen(
 }
 
 @Composable
+private fun ValidateTagsButton(uiState: BatchTagReviewUiState, onValidate: () -> Unit, modifier: Modifier) {
+    OutlinedButton(onClick = onValidate, enabled = uiState.canValidateTags, modifier = modifier) {
+        Text(stringResource(if (uiState.busyAction == "validate")
+            R.string.batch_review_validating else R.string.batch_review_validate))
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun BatchHeaderSection(
     uiState: BatchTagReviewUiState,
     onStartLlm: () -> Unit,
     onOpenPreview: () -> Unit,
+    onValidate: () -> Unit,
     onFilterChange: (TagEditFilter) -> Unit,
 ) {
     val totalCount = uiState.allVideos.size
@@ -414,9 +435,9 @@ private fun BatchHeaderSection(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Button(
                     onClick = onStartLlm,
@@ -443,6 +464,7 @@ private fun BatchHeaderSection(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(text = stringResource(R.string.batch_tag_review_btn_preview))
                 }
+                ValidateTagsButton(uiState, onValidate, Modifier.testTag("review_validate"))
             }
 
             if (uiState.isAnalyzing && uiState.analysisProgress.total > 0) {
@@ -795,7 +817,14 @@ private fun ResultVideosCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     row.forEach { video ->
                         val result = results[video.awemeId]
-                        Column(modifier = Modifier.weight(1f)) {
+                        val hasConflict = video.awemeId in uiState.conflictingVideoIds
+                        val conflictDescription = stringResource(R.string.batch_review_tag_conflict)
+                        Column(modifier = Modifier.weight(1f)
+                            .testTag("review_${sectionKey}_${video.awemeId}")
+                            .background(if (hasConflict) MaterialTheme.colorScheme.errorContainer else Color.Transparent,
+                                RoundedCornerShape(8.dp))
+                            .semantics { if (hasConflict) stateDescription = conflictDescription }
+                            .padding(4.dp)) {
                             VideoItemThumbnail(video, false, true, video.tagEditCount > 0,
                                 onToggle = {}, onPlay = { onPlayVideo(video) },
                                 onEdit = { if (uiState.busyAction == null) onEditVideo(video) },
@@ -815,7 +844,11 @@ private fun ResultVideosCard(
                                 stringResource(if (result?.status == BatchAnalysisItemEntity.FAILED)
                                     R.string.batch_review_status_failed else R.string.batch_review_status_succeeded),
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (result?.status == BatchAnalysisItemEntity.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                color = when {
+                                    hasConflict -> MaterialTheme.colorScheme.onErrorContainer
+                                    result?.status == BatchAnalysisItemEntity.FAILED -> MaterialTheme.colorScheme.error
+                                    else -> MaterialTheme.colorScheme.primary
+                                },
                             )
                             if (!result?.error.isNullOrBlank()) Text(result!!.error, maxLines = 2,
                                 overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
