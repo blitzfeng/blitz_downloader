@@ -102,27 +102,27 @@ data class GeminiResponseCandidate(
  * 解析 [GeminiResponseCandidate.content] 里 `parts[0].text`（这段文本本身就是一份 JSON）得到。
  */
 data class GeminiTagSuggestionPayload(
-    val visualFeatureProfile: GeminiVisualFeatureProfilePayload,
-    val candidates: List<GeminiTagCandidatePayload> = emptyList(),
+    val visualFeatureProfile: GeminiVisualFeatureProfilePayload? = null,
+    val candidates: List<GeminiTagCandidatePayload?>? = null,
 )
 
 data class GeminiVisualFeatureProfilePayload(
-    val face: GeminiVisualDimensionPayload,
-    val expression: GeminiVisualDimensionPayload,
-    val bodyAndStyling: GeminiVisualDimensionPayload,
-    val clothing: GeminiVisualDimensionPayload,
-    val action: GeminiVisualDimensionPayload,
+    val face: GeminiVisualDimensionPayload? = null,
+    val expression: GeminiVisualDimensionPayload? = null,
+    val bodyAndStyling: GeminiVisualDimensionPayload? = null,
+    val clothing: GeminiVisualDimensionPayload? = null,
+    val action: GeminiVisualDimensionPayload? = null,
 )
 
 data class GeminiVisualDimensionPayload(
-    val visibility: String,
-    val observableTraits: List<String> = emptyList(),
-    val evidenceFrames: List<Int> = emptyList(),
+    val visibility: String? = null,
+    val observableTraits: List<String?>? = null,
+    val evidenceFrames: List<Int?>? = null,
 )
 
 data class GeminiTagCandidatePayload(
-    val tagName: String = "",
+    val tagName: String? = null,
     val tagId: Long = 0L,
     val confidence: Float = 1.0f,
-    val evidenceFrames: List<Int> = emptyList(),
+    val evidenceFrames: List<Int?>? = null,
 )

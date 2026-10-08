@@ -517,6 +517,8 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 
 ### AI 建议标签（`ai-tag-suggestions`）
 
+- **无人脸响应的空值处理**：Gemini 的 JSON 由 `GeminiResponseMapper` 转为领域模型。不可见或缺失的视觉维度归为 `visibility = "none"`，省略或显式为 `null` 的特征/证据列表转为空列表；身体、服饰等有效维度继续保留。Gson 不保证 Kotlin 非空约束或带参构造器的默认值，不能直接将响应字段传给非空领域模型。缺失顶层 `visualFeatureProfile` / `candidates` 仍作为结构化输出错误处理，不能伪装成分析成功；`candidates = []` 是合法的无标签结果。
+
 单条记录标签编辑弹窗（`TagEditDialogFragment`）新增了「AI 建议」按钮，用视频封面/关键帧 + 文案 +
 标签词表 + 作者历史 + 个人偏好摘要，调用 Gemini 多模态模型生成候选标签，作为对纯统计式
 `author_tag_frequency` 预勾选的补充（能看懂新内容，不止复用作者自己的历史）。**默认关闭**，
