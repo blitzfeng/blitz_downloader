@@ -9,13 +9,10 @@ import com.blitz.downloader.llm.FewShotExample
 import com.blitz.downloader.llm.ImagePart
 import com.blitz.downloader.llm.LlmProvider
 import com.blitz.downloader.llm.PreferenceSummaryRequest
-import com.blitz.downloader.llm.TagCandidate
 import com.blitz.downloader.llm.TagSuggestionRequest
 import com.blitz.downloader.llm.TagSuggestionResponse
 import com.blitz.downloader.llm.TagSuggestionRequestBuilder
 import com.blitz.downloader.llm.TagWordEntry
-import com.blitz.downloader.llm.VisualDimension
-import com.blitz.downloader.llm.VisualFeatureProfile
 import com.google.gson.Gson
 import java.util.concurrent.TimeUnit
 import okhttp3.Interceptor
@@ -198,27 +195,6 @@ class GeminiProvider(private val context: Context) : LlmProvider {
             appendLine("- 文案：${sample.desc}；标签：${sample.confirmedTagNames.joinToString("、")}")
         }
     }
-
-    private fun GeminiTagSuggestionPayload.toDomain(): TagSuggestionResponse = TagSuggestionResponse(
-        visualFeatureProfile = VisualFeatureProfile(
-            face = visualFeatureProfile.face.toDomain(),
-            expression = visualFeatureProfile.expression.toDomain(),
-            bodyAndStyling = visualFeatureProfile.bodyAndStyling.toDomain(),
-            clothing = visualFeatureProfile.clothing.toDomain(),
-            action = visualFeatureProfile.action.toDomain(),
-        ),
-        candidates = candidates.map {
-            TagCandidate(
-                tagId = it.tagId,
-                confidence = it.confidence,
-                evidenceFrames = it.evidenceFrames,
-                tagName = it.tagName,
-            )
-        },
-    )
-
-    private fun GeminiVisualDimensionPayload.toDomain(): VisualDimension =
-        VisualDimension(visibility, observableTraits, evidenceFrames)
 
     /**
      * 完整打印请求体与响应体，用于排查「HTTP 200 但结构化输出解析失败」这类问题。
