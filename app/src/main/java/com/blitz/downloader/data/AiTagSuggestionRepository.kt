@@ -10,6 +10,7 @@ import com.blitz.downloader.data.db.PreferenceProfileEntity
 import com.blitz.downloader.data.db.VideoAiAnalysisEntity
 import com.blitz.downloader.data.db.VideoTagFeedbackEntity
 import com.blitz.downloader.data.db.VideoVisualFeatureEntity
+import com.blitz.downloader.llm.withFailure
 import com.blitz.downloader.llm.AiAnalysisLogEntry
 import com.blitz.downloader.llm.AiAnalysisLogFormatter
 import com.blitz.downloader.llm.AiAnalysisLogStatus
@@ -44,6 +45,7 @@ class AiTagSuggestionRepository(context: Context) {
     private val videoTagFeedbackDao = db.videoTagFeedbackDao()
     private val tagPreferenceDao = db.tagPreferenceDao()
     private val preferenceProfileDao = db.preferenceProfileDao()
+    private val aiReferenceDao = db.aiReferenceDao()
 
     private val videoTagRepository = VideoTagRepository(appContext)
     private val llmProvider: LlmProvider = GeminiProvider(appContext)
@@ -51,6 +53,15 @@ class AiTagSuggestionRepository(context: Context) {
 
     /** 设置页「测试连接」按钮用：只验证 Key/网络/模型可用，不组装标签词表、不落库。 */
     suspend fun testConnection(): Result<String> = llmProvider.testConnection()
+
+    fun observeReferenceRows() = aiReferenceDao.observeReferenceRows()
+
+    suspend fun referenceAuthor(awemeId: String) = db.downloadedVideoDao().getByAwemeId(awemeId)
+
+    /** 参考资格与旧摘要在同一事务内变更，真实反馈和标签统计保持原样。 */
+    suspend fun setReferencesExcluded(awemeIds: Collection<String>, excluded: Boolean) {
+        aiReferenceDao.setExcluded(awemeIds.toList(), excluded, System.currentTimeMillis())
+    }
 
     data class SuggestionOutcome(
         val analysisId: Long,
@@ -250,11 +261,7 @@ class AiTagSuggestionRepository(context: Context) {
         val response = llmProvider.generateTagSuggestion(request).getOrElse { err ->
             val durationMs = System.currentTimeMillis() - startTime
             AiAnalysisLogStore.updateEntry(logId) {
-                it.copy(
-                    status = AiAnalysisLogStatus.FAILED,
-                    durationMs = durationMs,
-                    errorMessage = err.message ?: err.javaClass.simpleName,
-                )
+                it.withFailure(err, durationMs)
             }
             return Result.failure(err)
         }
@@ -307,7 +314,9 @@ class AiTagSuggestionRepository(context: Context) {
                 durationMs = durationMs,
                 suggestedTags = deduplicatedCandidates,
                 visualFeatureProfile = response.visualFeatureProfile,
-                rawResponseBody = AiAnalysisLogFormatter.formatJson(gson.toJson(response)),
+                rawResponseBody = response.diagnostics?.rawResponseBody
+                    ?: AiAnalysisLogFormatter.formatJson(gson.toJson(response)),
+                tokenUsage = response.diagnostics?.tokenUsage,
             )
         }
 
@@ -398,22 +407,28 @@ class AiTagSuggestionRepository(context: Context) {
         val lastSampleCount = preferenceProfileDao.getLatestSampleCount() ?: 0
         if (currentTotal - lastSampleCount < PREFERENCE_REFRESH_THRESHOLD) return
 
-        val rows = videoTagFeedbackDao.getRecentConfirmedGlobal(PREFERENCE_SUMMARY_ROW_LIMIT)
+        val (exclusions, rows) = db.withTransaction {
+            aiReferenceDao.excludedVideoIds() to videoTagFeedbackDao.getRecentConfirmedGlobal(PREFERENCE_SUMMARY_ROW_LIMIT)
+        }
         val examples = groupIntoFewShotExamples(rows, videoAllTagNameMap())
         if (examples.isEmpty()) return
 
         val summaryResult = llmProvider.summarizePreference(PreferenceSummaryRequest(examples))
         val summaryText = summaryResult.getOrNull() ?: return
 
-        val latestVersion = preferenceProfileDao.getLatest()?.version ?: 0
-        preferenceProfileDao.insert(
-            PreferenceProfileEntity(
-                version = latestVersion + 1,
-                profileText = summaryText,
-                sampleCount = currentTotal,
-                updatedAtMillis = System.currentTimeMillis(),
-            ),
-        )
+        db.withTransaction {
+            // 用户管理参考期间生成的旧摘要不能重新带入已移除案例。
+            if (aiReferenceDao.excludedVideoIds() != exclusions) return@withTransaction
+            val latestVersion = preferenceProfileDao.getLatest()?.version ?: 0
+            preferenceProfileDao.insert(
+                PreferenceProfileEntity(
+                    version = latestVersion + 1,
+                    profileText = summaryText,
+                    sampleCount = currentTotal,
+                    updatedAtMillis = System.currentTimeMillis(),
+                ),
+            )
+        }
     }
 
     private suspend fun getMultimodalEvidenceSamplesForAuthor(

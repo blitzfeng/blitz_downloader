@@ -78,6 +78,7 @@ data class TagCandidate(
 data class TagSuggestionResponse(
     val visualFeatureProfile: VisualFeatureProfile,
     val candidates: List<TagCandidate>,
+    val diagnostics: LlmResponseDiagnostics? = null,
 )
 
 /** 生成个人偏好摘要的输入：最近一批已确认的反馈样例（纯文本，不带图片）。 */

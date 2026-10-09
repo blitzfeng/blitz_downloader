@@ -519,6 +519,12 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 
 - **无人脸响应的空值处理**：Gemini 的 JSON 由 `GeminiResponseMapper` 转为领域模型。不可见或缺失的视觉维度归为 `visibility = "none"`，省略或显式为 `null` 的特征/证据列表转为空列表；身体、服饰等有效维度继续保留。Gson 不保证 Kotlin 非空约束或带参构造器的默认值，不能直接将响应字段传给非空领域模型。缺失顶层 `visualFeatureProfile` / `candidates` 仍作为结构化输出错误处理，不能伪装成分析成功；`candidates = []` 是合法的无标签结果。
 
+- **历史参考管理**：设置页「管理历史参考案例」和每条 AI 日志都可进入 `AiReferenceManageActivity`。日志入口默认按该视频作者筛选，支持文案/作者搜索、多选移除、查看参考图及恢复。移除按视频 ID 排除其全部历史案例，保留下载文件、标签、审核反馈与统计；对同一视频新增反馈也不会自动恢复参考资格。
+- **参考排除的一致性**：`ai_reference_exclusion`（v30）由 `AiReferenceDao.setExcluded` 在事务中更新，同时清除旧 `preference_profile` 摘要。`VideoTagFeedbackDao` 的六条历史参考查询均在 LIMIT 之前应用排除条件；真实反馈计数与准确率统计不受影响。异步生成偏好摘要保存前核对排除 ID 快照，避免旧请求结果重新引入被移除案例。当前已发出的 AI 请求及历史日志保持快照语义。
+
+- **AI 分析日志**：批量页与单视频打标签弹窗共用 `ui/AiAnalysisLogSheet.kt` 的无窗口日志内容。单视频日志由 `AiVideoLogDialogFragment` 展示，复用父 `TagEditDialogViewModel`，按 `awemeId` 订阅/清空；查看日志不重新请求 AI，关闭日志不影响标签勾选或正在运行的请求。日志只保存在 `AiAnalysisLogStore` 内存中，最多 100 条。
+- **Gemini 失败诊断**：`GeminiApiService` 返回 `ResponseBody`，由 `GeminiResponseParser` 保留脱敏响应并先检查 `promptFeedback.blockReason` 和异常 `finishReason`，再读取文本。`LlmResponseException` 将响应和 token 统计随调用带回 Repository；成功调用通过 `TagSuggestionResponse.diagnostics` 携带同样的信息。失败详情和复制日志都包含具体原因及响应中的模型版本/响应标识，不能以 HTTP 200 或缺少 candidates 直接归类为成功/通用空结果。
+
 单条记录标签编辑弹窗（`TagEditDialogFragment`）新增了「AI 建议」按钮，用视频封面/关键帧 + 文案 +
 标签词表 + 作者历史 + 个人偏好摘要，调用 Gemini 多模态模型生成候选标签，作为对纯统计式
 `author_tag_frequency` 预勾选的补充（能看懂新内容，不止复用作者自己的历史）。**默认关闭**，
@@ -675,7 +681,7 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 
 **数据库结构的权威文档是 `.cursor/rules/db-schema.md`，改 `data/db/` 之前先读它。** 要点：
 
-- `AppDatabase` 当前 **version = 29**：v29 增量增加 `batch_analysis_session` 与 `batch_analysis_item`，保留批量 AI 分析结果和审核状态；v23–v28 已包含点赞列表索引相关迁移。Room schema 导出到 `app/schemas/`，迁移测试验证 v28→v29 保留下载记录、标签及 pending 数据。
+- `AppDatabase` 当前 **version = 30**：v30 新增 `ai_reference_exclusion`，持久保存历史参考排除规则；v29 增量增加 `batch_analysis_session` 与 `batch_analysis_item`，保留批量 AI 分析结果和审核状态；v23–v28 已包含点赞列表索引相关迁移。Room schema 导出到 `app/schemas/`，迁移测试验证 v28→v29 保留下载记录、标签及 pending 数据。
 - 所有迁移 `MIGRATION_1_2 .. MIGRATION_19_20` 都在 `AppDatabase` 里显式列出。builder 上虽然还挂着 `fallbackToDestructiveMigration()` 作兜底，但**不要**依赖它来"对付过去"——漏写迁移 = 用户数据被清空。新增字段时：写下一版 `MIGRATION_x_y` → `version` 递增 → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。**新建表**（区别于 `ALTER TABLE` 加列）：迁移 SQL 里不要写 `DEFAULT` 子句，除非对应 Entity 字段有 `@ColumnInfo(defaultValue = ...)`——两边对不上会在 Room 运行时 schema 校验时报错，`video_ai_analysis` 等 5 张新表与 `download_batch` 等新表的迁移已经踩过这条、按"新建表不写 DEFAULT"的规则改对，新增表照抄这个模式。
 - `hasLivePhoto`（v15）标记「实况图（动图）图集」（图集里至少一张带 mp4），下载时算出（`imageVideoUrls` 有非空项）写入，供下载页 / 管理页列表显示动图角标（左上角小播放图标，透明背景，与「已下载」/「已导出」徽标并排在同一水平容器里，谁 gone 谁不占位）。**下载页不读它**（内存里 `VideoItemUiModel.hasLivePhoto` 现算），只有管理页读。旧记录默认 false，不做历史回填。
 - `watched`（是否已看过）只由**管理页进入视频播放页**置位：`ManageVideoViewModel.openVideoPlayer` 把 `awemeIds` 随 `createListFileIntent` 传给播放页，播放页每加载一条就写库（含上下滑动切到的）。列表侧「未看过」标记的刷新分两条路：点开那条就地标掉，滑动看过的靠 `ManageVideoFragment.onResume` → `refreshWatchedFlags()` 回查——**别把其中一条删掉当冗余**，也别指望 ViewModel 的 `init` 或 StateFlow 自动收集能替代 `onResume` 那条（ViewModel 不随 `onResume` 重建）。

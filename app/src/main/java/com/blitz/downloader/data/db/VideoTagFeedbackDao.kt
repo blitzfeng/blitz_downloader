@@ -36,7 +36,8 @@ interface VideoTagFeedbackDao {
         """
         SELECT f.* FROM video_tag_feedback f
         INNER JOIN downloaded_videos v ON v.awemeId = f.awemeId
-        WHERE v.videoAuthorSecUserId = :secUserId
+        WHERE NOT EXISTS (SELECT 1 FROM ai_reference_exclusion e WHERE e.awemeId = f.awemeId)
+          AND v.videoAuthorSecUserId = :secUserId
         ORDER BY f.createdAtMillis DESC
         LIMIT :limit
         """,
@@ -44,7 +45,7 @@ interface VideoTagFeedbackDao {
     suspend fun getRecentByAuthor(secUserId: String, limit: Int): List<VideoTagFeedbackEntity>
 
     /** 全局最近 [limit] 条反馈样例，按时间倒序——同作者样例不足时补齐用。 */
-    @Query("SELECT * FROM video_tag_feedback ORDER BY createdAtMillis DESC LIMIT :limit")
+    @Query("SELECT f.* FROM video_tag_feedback f WHERE NOT EXISTS (SELECT 1 FROM ai_reference_exclusion e WHERE e.awemeId = f.awemeId) ORDER BY f.createdAtMillis DESC LIMIT :limit")
     suspend fun getRecentGlobal(limit: Int): List<VideoTagFeedbackEntity>
 
     /** 反馈总行数，供 [com.blitz.downloader.data.AiTagSuggestionRepository] 判断是否达到 PreferenceProfile 重算阈值。 */
@@ -61,7 +62,8 @@ interface VideoTagFeedbackDao {
         SELECT f.awemeId AS awemeId, v.desc AS `desc`, f.tagId AS tagId
         FROM video_tag_feedback f
         INNER JOIN downloaded_videos v ON v.awemeId = f.awemeId
-        WHERE v.videoAuthorSecUserId = :secUserId AND f.kind IN ('ACCEPTED', 'MISSED')
+        WHERE NOT EXISTS (SELECT 1 FROM ai_reference_exclusion e WHERE e.awemeId = f.awemeId)
+          AND v.videoAuthorSecUserId = :secUserId AND f.kind IN ('ACCEPTED', 'MISSED')
         ORDER BY f.createdAtMillis DESC
         LIMIT :limit
         """,
@@ -74,7 +76,8 @@ interface VideoTagFeedbackDao {
         SELECT f.awemeId AS awemeId, v.desc AS `desc`, f.tagId AS tagId
         FROM video_tag_feedback f
         INNER JOIN downloaded_videos v ON v.awemeId = f.awemeId
-        WHERE f.kind IN ('ACCEPTED', 'MISSED')
+        WHERE NOT EXISTS (SELECT 1 FROM ai_reference_exclusion e WHERE e.awemeId = f.awemeId)
+          AND f.kind IN ('ACCEPTED', 'MISSED')
         ORDER BY f.createdAtMillis DESC
         LIMIT :limit
         """,
@@ -89,7 +92,8 @@ interface VideoTagFeedbackDao {
         SELECT f.awemeId AS awemeId, v.desc AS `desc`, f.tagId AS tagId, f.kind AS kind, f.evidenceImagePath AS evidenceImagePath
         FROM video_tag_feedback f
         INNER JOIN downloaded_videos v ON v.awemeId = f.awemeId
-        WHERE v.videoAuthorSecUserId = :secUserId
+        WHERE NOT EXISTS (SELECT 1 FROM ai_reference_exclusion e WHERE e.awemeId = f.awemeId)
+          AND v.videoAuthorSecUserId = :secUserId
           AND f.kind = :kind
           AND f.evidenceImagePath IS NOT NULL
           AND f.evidenceImagePath != ''
@@ -105,7 +109,8 @@ interface VideoTagFeedbackDao {
         SELECT f.awemeId AS awemeId, v.desc AS `desc`, f.tagId AS tagId, f.kind AS kind, f.evidenceImagePath AS evidenceImagePath
         FROM video_tag_feedback f
         INNER JOIN downloaded_videos v ON v.awemeId = f.awemeId
-        WHERE f.kind = :kind
+        WHERE NOT EXISTS (SELECT 1 FROM ai_reference_exclusion e WHERE e.awemeId = f.awemeId)
+          AND f.kind = :kind
           AND f.evidenceImagePath IS NOT NULL
           AND f.evidenceImagePath != ''
         ORDER BY f.createdAtMillis DESC

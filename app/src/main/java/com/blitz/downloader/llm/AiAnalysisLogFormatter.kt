@@ -47,6 +47,17 @@ object AiAnalysisLogFormatter {
         return sb.toString()
     }
 
+    /** 响应可能包含服务端回显的图片或凭证，展示和复制使用同一份脱敏文本。 */
+    fun sanitizeResponse(raw: String): String {
+        val sensitive = Regex("""(?i)("(?:data|api[_-]?key|x-goog-api-key|authorization|cookie|msToken)"\s*:\s*)"(?:\\.|[^"\\])*"""")
+        val redacted = sensitive.replace(raw) { match ->
+            "${match.groupValues[1]}\"[已脱敏]\""
+        }
+        return if (redacted.trimStart().startsWith("{") || redacted.trimStart().startsWith("[")) {
+            formatJson(redacted)
+        } else redacted
+    }
+
     /**
      * 格式化 JSON 字符串为带缩进与空格的 Pretty Print 格式。
      */
@@ -168,9 +179,15 @@ object AiAnalysisLogFormatter {
                 appendLine("• 视觉证据维度分析:")
                 appendLine(formatVisualProfile(entry.visualFeatureProfile))
             }
-            if (!entry.tokenUsage.isNullOrBlank()) {
-                appendLine("• Token 消耗统计: ${entry.tokenUsage}")
-            }
+        }
+        if (!entry.tokenUsage.isNullOrBlank()) appendLine("• Token 消耗统计: ${entry.tokenUsage}")
+        if (entry.rawRequestBody.isNotBlank()) {
+            appendLine("【请求 JSON（已脱敏）】")
+            appendLine(entry.rawRequestBody)
+        }
+        if (entry.rawResponseBody.isNotBlank()) {
+            appendLine("【接口返回 JSON】")
+            appendLine(entry.rawResponseBody)
         }
         appendLine("==================================================")
     }

@@ -4,6 +4,9 @@ import android.app.Application
 import android.os.Environment
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.blitz.downloader.llm.AiAnalysisLogStore
+import com.blitz.downloader.llm.AiAnalysisLogEntry
+import com.blitz.downloader.llm.AiAnalysisLogStatus
 import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.util.VideoFrameExtractor
 import java.io.File
@@ -30,6 +33,10 @@ class TagEditDialogViewModel(app: Application) : AndroidViewModel(app) {
     private val _aiState = MutableStateFlow<AiSuggestionState>(AiSuggestionState.Idle)
     val aiState: StateFlow<AiSuggestionState> = _aiState.asStateFlow()
 
+    fun logsForVideo(awemeId: String) = AiAnalysisLogStore.logsForVideo(awemeId)
+
+    fun clearVideoLogs(awemeId: String) = AiAnalysisLogStore.clearVideo(awemeId)
+
     /**
      * 发起一次 AI 建议请求。[coverPath]/[videoFilePath] 与 `downloaded_videos.coverPath`/`filePath`
      * 同一套约定——**相对 `Environment.getExternalStorageDirectory()` 的路径，不是绝对路径**
@@ -53,7 +60,16 @@ class TagEditDialogViewModel(app: Application) : AndroidViewModel(app) {
                 val coverBytes = VideoFrameExtractor.compressCoverImage(coverFile)
                     ?: runCatching { coverFile.readBytes() }.getOrNull()
                 if (coverBytes == null) {
-                    Result.failure(IllegalStateException("封面图片不存在"))
+                    val error = IllegalStateException("封面图片不存在，尚未发送 AI 请求")
+                    AiAnalysisLogStore.addEntry(
+                        AiAnalysisLogEntry(
+                            id = java.util.UUID.randomUUID().toString(), awemeId = awemeId,
+                            videoTitle = desc, videoDesc = desc,
+                            status = AiAnalysisLogStatus.FAILED,
+                            errorMessage = error.message,
+                        ),
+                    )
+                    Result.failure(error)
                 } else {
                     val videoFile = videoFilePath.takeIf { it.isNotBlank() }?.let { File(storageRoot, it) }
                     repo.requestSuggestion(awemeId, secUserId, desc, coverBytes, videoFile)

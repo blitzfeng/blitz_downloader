@@ -18,6 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         VideoAiAnalysisEntity::class,
         VideoVisualFeatureEntity::class,
         VideoTagFeedbackEntity::class,
+        AiReferenceExclusionEntity::class,
         TagPreferenceEntity::class,
         PreferenceProfileEntity::class,
         DownloadBatchEntity::class,
@@ -25,7 +26,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         LikedListIndexSessionEntity::class,
         LikedListIndexItemEntity::class,
     ],
-    version = 29,
+    version = 30,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -43,6 +44,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun videoAiAnalysisDao(): VideoAiAnalysisDao
 
     abstract fun videoVisualFeatureDao(): VideoVisualFeatureDao
+
+    abstract fun aiReferenceDao(): AiReferenceDao
 
     abstract fun videoTagFeedbackDao(): VideoTagFeedbackDao
 
@@ -573,6 +576,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v29 → v30：保存用户手动移除的历史参考视频，不删除审核反馈。 */
+        val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS ai_reference_exclusion (
+                    awemeId TEXT NOT NULL PRIMARY KEY, excludedAtMillis INTEGER NOT NULL)""")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -590,7 +601,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16,
                         MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
                         MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
-                        MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29,
+                        MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30,
                     )
                     .fallbackToDestructiveMigration()
                     .build()

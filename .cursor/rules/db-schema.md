@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v20**
+> **当前版本：v30**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -17,6 +17,7 @@
 | `author_tag_frequency` | `AuthorTagFrequencyEntity` | 作者-标签出现次数缓存，服务批量打标签弹窗自动预勾选 |
 | `video_ai_analysis` | `VideoAiAnalysisEntity` | 一次 AI 建议分析的元数据（`ai-tag-suggestions`，v19） |
 | `video_visual_feature` | `VideoVisualFeatureEntity` | 结构化视觉证据 VisualFeatureProfile（v19） |
+| `ai_reference_exclusion` | `AiReferenceExclusionEntity` | 用户按视频手动排除的 AI 历史参考（v30） |
 | `video_tag_feedback` | `VideoTagFeedbackEntity` | 按标签逐行的 AI 建议反馈（v19） |
 | `tag_preference` | `TagPreferenceEntity` | 按标签物化的建议准确率统计（v19） |
 | `preference_profile` | `PreferenceProfileEntity` | 压缩后的个人偏好自然语言摘要（v19） |
@@ -29,6 +30,7 @@
 
 | 版本 | 关键变更 |
 |------|---------|
+| v30 | 新增 `ai_reference_exclusion(awemeId TEXT PRIMARY KEY NOT NULL, excludedAtMillis INTEGER NOT NULL)`，排除规则随数据库备份；v29→v30 为纯新增表迁移 |
 | v1 | 初始表：`id`、`awemeId`、`downloadType`、`userName`、`createdAtMillis` |
 | v2 | 新增 `mediaType`、`filePath` |
 | v3 | 新增 `coverPath` |
@@ -471,3 +473,9 @@ tags(tagName)          video_tags(awemeId, tagName)
 - **下载写入时**：调用 `DownloadedVideoRepository.recordSuccessfulDownload()`，`like` 场景传 `buildUserRelationFromLike(aweme.collectStat)`，`collects` 场景传 `buildUserRelationFromCollection(aweme.userDigged, folderName)`。
 - **标签功能**：通过 `VideoTagRepository` 操作，视频删除时标签自动级联删除，无需手动清理。
 - **新增数据库字段**：当前版本为 **v20**，下次变更需在 `AppDatabase` 中新增 `MIGRATION_20_21` 并将 version 改为 21。
+
+## AI 历史参考排除（v30）
+
+`ai_reference_exclusion` 不设置外键，保存用户明确排除的视频 ID 及操作时间；不因反馈被重建或同一视频重新下载而自动恢复。恢复参考资格时仅删除对应排除规则。
+
+`AiReferenceDao.setExcluded` 在同一事务修改规则并使旧偏好摘要失效。六条历史参考采样查询（同作者/全局的原始反馈、确认反馈与证据图反馈）均先过滤排除 ID，再排序和 LIMIT；反馈计数、作者标签频率、标签准确率等真实统计保持原有口径。管理页的查询刻意不过滤，以供用户查看与恢复已移除案例。

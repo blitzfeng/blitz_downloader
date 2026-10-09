@@ -82,6 +82,10 @@
             android:label="@string/image_viewer_title"
             android:parentActivityName=".activity.MainActivity" />
         <activity
+            android:name=".activity.AiReferenceManageActivity"
+            android:exported="false"
+            android:label="@string/ai_reference_title" />
+        <activity
             android:name=".activity.BatchTagReviewActivity"
             android:exported="false"
             android:label="@string/batch_tag_review_title"

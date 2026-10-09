@@ -123,10 +123,12 @@ class GeminiProvider(private val context: Context) : LlmProvider {
         )
         return runCatching {
             val response = service.generateContent(MODEL, apiKey, body)
-            val text = extractText(response)
-            val payload = gson.fromJson(text, GeminiTagSuggestionPayload::class.java)
-                ?: error("Gemini 结构化输出解析结果为空")
-            payload.toDomain()
+            val parsed = GeminiResponseParser.parse(response)
+            parsed.decode { text ->
+                val payload = gson.fromJson(text, GeminiTagSuggestionPayload::class.java)
+                    ?: error("Gemini 结构化输出解析结果为空")
+                payload.toDomain().copy(diagnostics = parsed.diagnostics)
+            }
         }
     }
 
@@ -165,15 +167,8 @@ class GeminiProvider(private val context: Context) : LlmProvider {
         }
     }
 
-    /** 从 Gemini 响应里取出第一个 candidate 的文本；非 2xx 或结构缺失时抛错，交给外层 `runCatching`。 */
-    private fun extractText(response: retrofit2.Response<GeminiGenerateContentResponse>): String {
-        if (!response.isSuccessful) {
-            val errorSnippet = response.errorBody()?.string().orEmpty().take(300)
-            error("Gemini HTTP ${response.code()}: $errorSnippet")
-        }
-        return response.body()?.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-            ?: error("Gemini 返回结果为空")
-    }
+    private fun extractText(response: retrofit2.Response<okhttp3.ResponseBody>): String =
+        GeminiResponseParser.parse(response).text
 
     private fun toGeminiPart(image: ImagePart, resolution: String): GeminiPart = GeminiPart(
         inlineData = GeminiInlineData(

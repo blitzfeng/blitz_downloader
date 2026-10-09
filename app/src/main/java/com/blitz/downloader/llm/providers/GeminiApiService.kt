@@ -17,5 +17,5 @@ interface GeminiApiService {
         @Path("model") model: String,
         @Header("x-goog-api-key") apiKey: String,
         @Body body: GeminiGenerateContentRequest,
-    ): Response<GeminiGenerateContentResponse>
+    ): Response<okhttp3.ResponseBody>
 }

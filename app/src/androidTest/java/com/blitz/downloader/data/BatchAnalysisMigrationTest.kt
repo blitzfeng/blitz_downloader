@@ -44,7 +44,7 @@ class BatchAnalysisMigrationTest {
         helper.writableDatabase
         helper.close()
         val db = Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(AppDatabase.MIGRATION_28_29).build()
+            .addMigrations(AppDatabase.MIGRATION_28_29, AppDatabase.MIGRATION_29_30).build()
         try {
             assertEquals(2, db.downloadedVideoDao().getByAwemeId("video")!!.tagEditCount)
             assertEquals("migration", db.tagDao().getAll().single())

@@ -126,6 +126,9 @@ class SettingsFragment : Fragment() {
             GeminiApiKeyDialogFragment.show(this, AppSettings.getGeminiApiKey(requireContext()))
         }
         refreshGeminiApiKeySummary()
+        binding.itemAiReferenceManage.setOnClickListener {
+            startActivity(com.blitz.downloader.activity.AiReferenceManageActivity.createIntent(requireContext()))
+        }
         binding.itemGeminiTestConnection.setOnClickListener { viewModel.testGeminiConnection() }
         childFragmentManager.setFragmentResultListener(
             GeminiApiKeyDialogFragment.REQUEST_KEY,

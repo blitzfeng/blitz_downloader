@@ -1,5 +1,7 @@
 package com.blitz.downloader.llm
 
+import kotlinx.coroutines.flow.first
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
@@ -68,5 +70,22 @@ class AiAnalysisLogStoreTest {
         assertEquals(1, AiAnalysisLogStore.getEntries().size)
         AiAnalysisLogStore.clear()
         assertEquals(0, AiAnalysisLogStore.getEntries().size)
+    }
+
+    @Test
+    fun videoScopeKeepsRetriesAndUpdatesWithoutMixingIdenticalTitles() = kotlinx.coroutines.runBlocking {
+        val flow = AiAnalysisLogStore.logsForVideo("a")
+        assertEquals(emptyList<AiAnalysisLogEntry>(), flow.first())
+        AiAnalysisLogStore.addEntry(AiAnalysisLogEntry("a1", "a", videoTitle = "相同文案"))
+        AiAnalysisLogStore.addEntry(AiAnalysisLogEntry("b1", "b", videoTitle = "相同文案"))
+        AiAnalysisLogStore.addEntry(AiAnalysisLogEntry("a2", "a", videoTitle = "相同文案"))
+        assertEquals(listOf("a1", "a2"), flow.first().map { it.id })
+        AiAnalysisLogStore.updateEntry("a2") { it.copy(status = AiAnalysisLogStatus.FAILED, errorMessage = "PROHIBITED_CONTENT") }
+        assertEquals("PROHIBITED_CONTENT", flow.first().last().errorMessage)
+        val exported = AiAnalysisLogFormatter.formatAllEntriesToPlainText(flow.first())
+        assertTrue(exported.contains("PROHIBITED_CONTENT"))
+        AiAnalysisLogStore.clearVideo("a")
+        assertEquals(emptyList<AiAnalysisLogEntry>(), flow.first())
+        assertEquals(listOf("b1"), AiAnalysisLogStore.getEntries().map { it.id })
     }
 }

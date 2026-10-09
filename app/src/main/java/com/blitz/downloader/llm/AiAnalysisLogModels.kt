@@ -36,3 +36,15 @@ data class AiAnalysisLogEntry(
     val tokenUsage: String? = null,
     val errorMessage: String? = null,
 )
+
+/** 所有调用失败共用的日志更新逻辑；没有收到响应时不伪造返回报文。 */
+fun AiAnalysisLogEntry.withFailure(error: Throwable, elapsedMs: Long): AiAnalysisLogEntry {
+    val diagnostics = (error as? LlmResponseException)?.diagnostics
+    return copy(
+        status = AiAnalysisLogStatus.FAILED,
+        durationMs = elapsedMs,
+        errorMessage = AiAnalysisLogFormatter.sanitizeResponse(error.message ?: error.javaClass.simpleName),
+        rawResponseBody = diagnostics?.rawResponseBody.orEmpty(),
+        tokenUsage = diagnostics?.tokenUsage,
+    )
+}

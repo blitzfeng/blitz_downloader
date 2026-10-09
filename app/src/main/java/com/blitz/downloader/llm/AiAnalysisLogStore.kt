@@ -1,5 +1,8 @@
 package com.blitz.downloader.llm
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,6 +47,17 @@ object AiAnalysisLogStore {
                 entries[index] = updater(entries[index])
                 _logs.value = entries.toList()
             }
+        }
+    }
+
+    /** 当前视频的日志与清空操作均按稳定的视频标识隔离。 */
+    fun logsForVideo(awemeId: String): Flow<List<AiAnalysisLogEntry>> =
+        logs.map { entries -> entries.filter { it.awemeId == awemeId } }.distinctUntilChanged()
+
+    fun clearVideo(awemeId: String) {
+        lock.withLock {
+            entries.removeAll { it.awemeId == awemeId }
+            _logs.value = entries.toList()
         }
     }
 

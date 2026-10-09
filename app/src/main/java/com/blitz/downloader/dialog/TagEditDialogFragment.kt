@@ -90,6 +90,11 @@ class TagEditDialogFragment : ComposeDialogFragment() {
             onRequestAiSuggestion = {
                 viewModel.requestSuggestion(awemeId, secUserId, desc, coverPath, videoFilePath)
             },
+            onShowLogs = {
+                if (childFragmentManager.findFragmentByTag("AiVideoLogs") == null) {
+                    AiVideoLogDialogFragment.newInstance(awemeId).show(childFragmentManager, "AiVideoLogs")
+                }
+            },
             onPreviewVideo = { startActivity(VideoPlayerActivity.createFileIntent(requireContext(), videoFilePath)) },
             onConfirm = { tags, aiAnalysisId -> finishWith(tags, aiAnalysisId) },
             onCancel = { dismiss() },
@@ -179,6 +184,7 @@ private fun TagEditDialogContent(
     onPreviewVideo: () -> Unit,
     onConfirm: (tags: List<String>, aiAnalysisId: Long?) -> Unit,
     onCancel: () -> Unit,
+    onShowLogs: () -> Unit = {},
 ) {
     val checked = rememberCheckedTags(currentTags)
     var usedAiAnalysisId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -205,6 +211,9 @@ private fun TagEditDialogContent(
                     enabled = aiState !is TagEditDialogViewModel.AiSuggestionState.Loading,
                 ) {
                     Text(stringResource(R.string.tag_edit_ai_suggest_button))
+                }
+                TextButton(onClick = onShowLogs) {
+                    Text(stringResource(R.string.tag_edit_ai_logs))
                 }
                 if (aiState is TagEditDialogViewModel.AiSuggestionState.Loading) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp))

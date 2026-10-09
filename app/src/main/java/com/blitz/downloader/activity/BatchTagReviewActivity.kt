@@ -1,5 +1,6 @@
 package com.blitz.downloader.activity
 
+import com.blitz.downloader.ui.AiAnalysisLogSheet
 import android.os.Bundle
 import android.os.Environment
 import android.widget.Toast

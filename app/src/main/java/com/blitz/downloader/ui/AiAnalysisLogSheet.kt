@@ -1,4 +1,4 @@
-package com.blitz.downloader.activity
+package com.blitz.downloader.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -46,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -71,7 +72,6 @@ fun AiAnalysisLogSheet(
     onClearLogs: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val context = LocalContext.current
     var showPromptTemplateDialog by remember { mutableStateOf(false) }
 
     if (showPromptTemplateDialog) {
@@ -85,100 +85,119 @@ fun AiAnalysisLogSheet(
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
-        Column(
+        AiAnalysisLogContent(logs, onClearLogs, onShowPromptTemplate = { showPromptTemplateDialog = true })
+    }
+}
+
+/** 无独立窗口的共享日志内容，供批量页和单视频 DialogFragment 复用。 */
+@Composable
+fun AiAnalysisLogContent(
+    logs: List<AiAnalysisLogEntry>,
+    onClearLogs: () -> Unit,
+    emptyMessage: String = stringResource(R.string.batch_tag_review_log_empty),
+    onShowPromptTemplate: (() -> Unit)? = null,
+) {
+    val context = LocalContext.current
+    // 为标题、操作与宿主的返回按钮留出空间，横屏时列表仍可滚动。
+    val listHeight = (LocalConfiguration.current.screenHeightDp - 260).coerceIn(100, 560).dp
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 24.dp),
+    ) {
+        // 顶栏：标题、统计与批量操作
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 24.dp),
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 顶栏：标题、统计与批量操作
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = stringResource(R.string.batch_tag_review_log_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
                     Text(
-                        text = stringResource(R.string.batch_tag_review_log_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
+                        text = "${logs.size} 条",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(12.dp),
-                    ) {
-                        Text(
-                            text = "${logs.size} 条",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                        )
-                    }
+                }
+            }
+
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (onShowPromptTemplate != null) TextButton(onClick = onShowPromptTemplate) {
+                    Text(
+                        text = "Prompt 模板",
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { showPromptTemplateDialog = true }) {
+                if (logs.isNotEmpty()) {
+                    TextButton(
+                        onClick = {
+                            val text = AiAnalysisLogFormatter.formatAllEntriesToPlainText(logs)
+                            copyToClipboard(context, "AiAnalysisLogs", text)
+                            Toast.makeText(context, R.string.batch_tag_review_log_copied, Toast.LENGTH_SHORT).show()
+                        },
+                    ) {
                         Text(
-                            text = "Prompt 模板",
+                            text = stringResource(R.string.batch_tag_review_log_copy_all),
                             style = MaterialTheme.typography.labelLarge,
                         )
                     }
 
-                    if (logs.isNotEmpty()) {
-                        TextButton(
-                            onClick = {
-                                val text = AiAnalysisLogFormatter.formatAllEntriesToPlainText(logs)
-                                copyToClipboard(context, "AiAnalysisLogs", text)
-                                Toast.makeText(context, R.string.batch_tag_review_log_copied, Toast.LENGTH_SHORT).show()
-                            },
-                        ) {
-                            Text(
-                                text = stringResource(R.string.batch_tag_review_log_copy_all),
-                                style = MaterialTheme.typography.labelLarge,
-                            )
-                        }
-
-                        TextButton(onClick = onClearLogs) {
-                            Text(
-                                text = stringResource(R.string.batch_tag_review_log_clear),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
+                    TextButton(onClick = onClearLogs) {
+                        Text(
+                            text = stringResource(R.string.batch_tag_review_log_clear),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             }
+        }
 
-            HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
+        HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
 
-            if (logs.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(260.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = stringResource(R.string.batch_tag_review_log_empty),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 32.dp),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    )
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 560.dp),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    items(logs.reversed(), key = { it.id }) { entry ->
-                        AiAnalysisLogCard(entry = entry)
-                    }
+        if (logs.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(listHeight.coerceAtMost(260.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = emptyMessage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 32.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = listHeight),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                items(logs.reversed(), key = { it.id }) { entry ->
+                    AiAnalysisLogCard(entry = entry)
                 }
             }
         }
@@ -299,6 +318,12 @@ fun AiAnalysisLogCard(entry: AiAnalysisLogEntry) {
             }
 
             // 展开详情区域
+            TextButton(onClick = {
+                context.startActivity(com.blitz.downloader.activity.AiReferenceManageActivity.createIntent(context, entry.awemeId))
+            }) {
+                Text(stringResource(R.string.ai_reference_manage))
+            }
+
             AnimatedVisibility(visible = expanded) {
                 Column(
                     modifier = Modifier
@@ -397,24 +422,24 @@ fun AiAnalysisLogCard(entry: AiAnalysisLogEntry) {
                                 content = AiAnalysisLogFormatter.formatVisualProfile(entry.visualFeatureProfile),
                             )
                         }
-                        if (!entry.tokenUsage.isNullOrBlank()) {
-                            DetailField(label = "Token 统计", content = entry.tokenUsage)
+                    }
+                    if (!entry.tokenUsage.isNullOrBlank()) {
+                        DetailField(label = "Token 统计", content = entry.tokenUsage)
+                    }
+                    if (entry.rawResponseBody.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.clickable { showRawResponse = !showRawResponse },
+                        ) {
+                            Text(
+                                text = if (showRawResponse) "▼ 隐藏原始返回 JSON" else "▶ 查看原始返回 JSON",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                         }
-                        if (entry.rawResponseBody.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.clickable { showRawResponse = !showRawResponse },
-                            ) {
-                                Text(
-                                    text = if (showRawResponse) "▼ 隐藏原始返回 JSON" else "▶ 查看原始返回 JSON",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                            if (showRawResponse) {
-                                JsonBox(json = entry.rawResponseBody)
-                            }
+                        if (showRawResponse) {
+                            JsonBox(json = entry.rawResponseBody)
                         }
                     }
                 }
