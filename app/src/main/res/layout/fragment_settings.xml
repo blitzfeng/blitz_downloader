@@ -489,6 +489,17 @@
                         android:layout_marginEnd="16dp"
                         android:background="@color/color_divider" />
 
+                    <androidx.compose.ui.platform.ComposeView
+                        android:id="@+id/vertexAiSettings"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginHorizontal="16dp"
+                        android:background="@color/color_divider" />
+
                     <LinearLayout
                         android:id="@+id/itemAiReferenceManage"
                         android:layout_width="match_parent"
@@ -544,6 +555,7 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
+                            android:id="@+id/tvAiTestConnectionSummary"
                             android:text="@string/settings_gemini_test_connection_summary"
                             android:textColor="@color/text_color_secondary"
                             android:textSize="13sp" />

@@ -308,7 +308,7 @@ class AiBatchAnalysisService : Service() {
         /** 检查 AI 建议标签功能是否启用且配置了 API Key */
         fun isConfigured(context: Context): Boolean {
             return AppSettings.isAiSuggestionEnabled(context) &&
-                AppSettings.getGeminiApiKey(context).isNotBlank()
+                AppSettings.getAiConnectionConfig(context).validationError == null
         }
 
         /** 启动批量分析服务 */

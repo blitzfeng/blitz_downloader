@@ -1,10 +1,6 @@
 package com.blitz.downloader.llm
 
-/**
- * LLM 供应商的可插拔接口。V1 只有一个真实实现（[com.blitz.downloader.llm.providers.GeminiProvider]）——
- * 供应商已经因为现实原因（Claude/OpenAI 支付渠道受阻）实际更换过一次，保留这层薄接口隔离
- * "业务逻辑"与"具体厂商协议细节"，不为假设的第三个供应商预先设计任何东西。
- */
+/** LLM 业务接口。Gemini Developer API 与 Vertex AI 复用 GeminiProvider 的协议实现。 */
 interface LlmProvider {
 
     /** 供应商标识，写入 `video_ai_analysis.provider`，如 `"gemini"`。 */

@@ -37,6 +37,9 @@ object AppSettings {
      * 里打印这个值，遵循项目"日志不打印 Cookie/msToken"的既有基调。
      */
     private const val KEY_GEMINI_API_KEY = "gemini_api_key"
+    private const val KEY_AI_SERVICE = "ai_service"
+    private const val KEY_VERTEX_API_KEY = "vertex_api_key"
+    private const val KEY_VERTEX_MODEL = "vertex_model"
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -101,5 +104,35 @@ object AppSettings {
 
     fun setGeminiApiKey(context: Context, apiKey: String) {
         prefs(context).edit().putString(KEY_GEMINI_API_KEY, apiKey.trim()).apply()
+    }
+    fun getAiService(context: Context): AiService =
+        AiService.fromId(prefs(context).getString(KEY_AI_SERVICE, null))
+
+    fun getVertexApiKey(context: Context): String =
+        prefs(context).getString(KEY_VERTEX_API_KEY, "").orEmpty()
+
+    fun getVertexModel(context: Context): String =
+        prefs(context).getString(KEY_VERTEX_MODEL, AiConnectionConfig.DEFAULT_MODEL).orEmpty()
+
+    /** Key 与模型一起保存；清空 Key 是有效的重置操作。 */
+    fun setVertexConfig(context: Context, apiKey: String, model: String, service: AiService) {
+        prefs(context).edit()
+            .putString(KEY_AI_SERVICE, service.id)
+            .putString(KEY_VERTEX_API_KEY, apiKey.trim())
+            .putString(KEY_VERTEX_MODEL, model.trim())
+            .apply()
+    }
+
+    /** 一次读取完整偏好快照，避免后台分析与设置保存并发时混用旧服务和新密钥。 */
+    fun getAiConnectionConfig(context: Context): AiConnectionConfig {
+        val snapshot = prefs(context).all
+        val service = AiService.fromId(snapshot[KEY_AI_SERVICE] as? String)
+        return when (service) {
+            AiService.GEMINI -> AiConnectionConfig(service, snapshot[KEY_GEMINI_API_KEY] as? String ?: "")
+            AiService.VERTEX_AI -> AiConnectionConfig(
+                service, snapshot[KEY_VERTEX_API_KEY] as? String ?: "",
+                snapshot[KEY_VERTEX_MODEL] as? String ?: AiConnectionConfig.DEFAULT_MODEL,
+            )
+        }
     }
 }

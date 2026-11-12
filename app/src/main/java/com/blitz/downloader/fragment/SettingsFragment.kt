@@ -29,6 +29,11 @@ import com.blitz.downloader.data.db.DatabaseBackupManager
 import com.blitz.downloader.databinding.FragmentSettingsBinding
 import com.blitz.downloader.dialog.AllFilesAccessDialogFragment
 import com.blitz.downloader.dialog.GeminiApiKeyDialogFragment
+import com.blitz.downloader.dialog.VertexAiDialogFragment
+import com.blitz.downloader.dialog.VertexAiSettingsRow
+import com.blitz.downloader.config.AiService
+import com.blitz.downloader.ui.theme.BlitzTheme
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import com.blitz.downloader.util.MediaVisibilityManager
 import com.blitz.downloader.util.MediaVisibilityManager.MediaFolder
 import com.blitz.downloader.viewmodel.SettingsEvent
@@ -129,7 +134,18 @@ class SettingsFragment : Fragment() {
         binding.itemAiReferenceManage.setOnClickListener {
             startActivity(com.blitz.downloader.activity.AiReferenceManageActivity.createIntent(requireContext()))
         }
-        binding.itemGeminiTestConnection.setOnClickListener { viewModel.testGeminiConnection() }
+        binding.vertexAiSettings.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        refreshVertexAiSummary()
+        childFragmentManager.setFragmentResultListener(VertexAiDialogFragment.REQUEST_KEY, viewLifecycleOwner) { _, result ->
+            AppSettings.setVertexConfig(
+                requireContext(), result.getString(VertexAiDialogFragment.KEY).orEmpty(),
+                result.getString(VertexAiDialogFragment.MODEL).orEmpty(),
+                AiService.fromId(result.getString(VertexAiDialogFragment.SERVICE)),
+            )
+            refreshVertexAiSummary()
+            toast(getString(R.string.settings_gemini_api_key_saved))
+        }
+        binding.itemGeminiTestConnection.setOnClickListener { viewModel.testAiConnection() }
         childFragmentManager.setFragmentResultListener(
             GeminiApiKeyDialogFragment.REQUEST_KEY,
             viewLifecycleOwner,
@@ -180,7 +196,7 @@ class SettingsFragment : Fragment() {
                         SettingsViewModel.BusyKind.RESTORE -> R.string.manage_restore_doing
                         SettingsViewModel.BusyKind.TAG_ANALYSIS -> R.string.manage_tag_analysis_doing
                         SettingsViewModel.BusyKind.TAG_ID_BACKFILL -> R.string.settings_backfill_tag_ids_doing
-                        SettingsViewModel.BusyKind.GEMINI_TEST -> R.string.settings_gemini_test_doing
+                        SettingsViewModel.BusyKind.AI_TEST -> R.string.settings_gemini_test_doing
                     },
                 ),
             )
@@ -225,9 +241,9 @@ class SettingsFragment : Fragment() {
                 toast(getString(R.string.settings_backfill_tag_ids_done))
             is SettingsEvent.TagIdBackfillFailed ->
                 toast(getString(R.string.settings_backfill_tag_ids_failed, event.message))
-            is SettingsEvent.GeminiTestSucceeded ->
+            is SettingsEvent.AiTestSucceeded ->
                 toast(event.message)
-            is SettingsEvent.GeminiTestFailed ->
+            is SettingsEvent.AiTestFailed ->
                 toast(getString(R.string.settings_gemini_test_failed, event.message))
         }
     }
@@ -351,6 +367,26 @@ class SettingsFragment : Fragment() {
             val formatted = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(lastAnalyzedAt))
             getString(R.string.settings_analyze_tag_frequency_last, formatted)
         }
+    }
+
+    private fun refreshVertexAiSummary() {
+        val context = requireContext()
+        val config = AppSettings.getAiConnectionConfig(context)
+        val vertexState = if (AppSettings.getVertexApiKey(context).isBlank()) {
+            getString(R.string.settings_gemini_api_key_not_set)
+        } else getString(R.string.settings_vertex_configured, AppSettings.getVertexModel(context))
+        val summary = getString(R.string.settings_vertex_summary, config.service.displayName, vertexState)
+        binding.vertexAiSettings.setContent {
+            BlitzTheme {
+                VertexAiSettingsRow(summary) {
+                    VertexAiDialogFragment.show(this, AppSettings.getVertexApiKey(context),
+                        AppSettings.getVertexModel(context), AppSettings.getAiService(context))
+                }
+            }
+        }
+        binding.tvAiTestConnectionSummary.text = getString(
+            R.string.settings_ai_test_summary, config.service.displayName, config.model,
+        )
     }
 
     /**

@@ -34,7 +34,7 @@ import java.util.UUID
  * 视觉证据 → （用户确认后）写入逐标签反馈 → 触发 [com.blitz.downloader.data.db.TagPreferenceDao]
  * 重算 → 视情况刷新 [com.blitz.downloader.data.db.PreferenceProfileEntity]。
  *
- * V1 只接 Gemini，持有类型是接口 [LlmProvider] 而不是具体实现——换供应商只改这一处构造。
+ * 每次操作捕获所选服务配置，通过 [LlmProvider] 复用 Gemini / Vertex AI 协议实现。
  */
 class AiTagSuggestionRepository(context: Context) {
 
@@ -48,11 +48,11 @@ class AiTagSuggestionRepository(context: Context) {
     private val aiReferenceDao = db.aiReferenceDao()
 
     private val videoTagRepository = VideoTagRepository(appContext)
-    private val llmProvider: LlmProvider = GeminiProvider(appContext)
+    private fun currentProvider(): LlmProvider = GeminiProvider(AppSettings.getAiConnectionConfig(appContext))
     private val gson = Gson()
 
     /** 设置页「测试连接」按钮用：只验证 Key/网络/模型可用，不组装标签词表、不落库。 */
-    suspend fun testConnection(): Result<String> = llmProvider.testConnection()
+    suspend fun testConnection(): Result<String> = currentProvider().testConnection()
 
     fun observeReferenceRows() = aiReferenceDao.observeReferenceRows()
 
@@ -85,6 +85,7 @@ class AiTagSuggestionRepository(context: Context) {
         videoFile: File?,
         authorName: String = "",
     ): Result<SuggestionOutcome> {
+        val llmProvider = currentProvider()
         val logId = UUID.randomUUID().toString()
         val startTime = System.currentTimeMillis()
 
@@ -413,7 +414,7 @@ class AiTagSuggestionRepository(context: Context) {
         val examples = groupIntoFewShotExamples(rows, videoAllTagNameMap())
         if (examples.isEmpty()) return
 
-        val summaryResult = llmProvider.summarizePreference(PreferenceSummaryRequest(examples))
+        val summaryResult = currentProvider().summarizePreference(PreferenceSummaryRequest(examples))
         val summaryText = summaryResult.getOrNull() ?: return
 
         db.withTransaction {

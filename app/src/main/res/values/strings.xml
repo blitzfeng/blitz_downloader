@@ -127,7 +127,7 @@
     <string name="settings_gemini_api_key_dialog_placeholder">粘贴你的 Gemini API Key</string>
     <string name="settings_gemini_api_key_saved">已保存</string>
     <string name="settings_gemini_test_connection">测试连接</string>
-    <string name="settings_gemini_test_connection_summary">只验证 Key/网络/模型是否可用，不组装真实标签建议请求</string>
+    <string name="settings_gemini_test_connection_summary">测试当前所选服务的 Key、网络和模型，不生成标签建议</string>
     <string name="settings_gemini_test_doing">测试连接中…</string>
     <string name="settings_gemini_test_failed">连接失败：%1$s</string>
     <!-- 相册可见性：往目录里加/删 .nomedia，封面目录无开关、由权限自动维护 -->
@@ -238,7 +238,7 @@
     <string name="batch_tag_review_filter_all">全部</string>
     <string name="batch_tag_review_filter_unlabeled">未打标</string>
     <string name="batch_tag_review_filter_labeled">已打标</string>
-    <string name="batch_tag_review_ai_disabled_hint">请先在「设置」中开启 AI 建议标签并配置有效的 Gemini API Key</string>
+    <string name="batch_tag_review_ai_disabled_hint">请先在「设置」中开启 AI 建议标签并配置当前 AI 服务的有效 API Key</string>
     <string name="batch_tag_review_channel_name">AI 批量分析</string>
     <string name="batch_tag_review_channel_desc">显示 AI 建议标签批量分析进度</string>
     <string name="batch_tag_review_notif_title">AI 批量分析中</string>
@@ -492,4 +492,12 @@
     <string name="ai_reference_image_title">参考依据图</string>
     <string name="ai_reference_back">返回</string>
     <string name="ai_reference_close">关闭</string>
+    <string name="settings_vertex_title">Vertex AI 与服务选择</string>
+    <string name="settings_ai_service">当前 AI 服务</string>
+    <string name="settings_vertex_hint">Vertex AI 密钥独立保存在本机，仅发送给 Google 进行认证。保存后点击设置页「测试连接」。清空密钥可重置配置。</string>
+    <string name="settings_vertex_model">Vertex AI 模型 ID</string>
+    <string name="settings_vertex_model_hint">填写支持图片分析的 Gemini 3 系列模型，例如 gemini-3.8-flash</string>
+    <string name="settings_vertex_summary">当前服务：%1$s；Vertex AI：%2$s</string>
+    <string name="settings_vertex_configured">已配置 · %1$s</string>
+    <string name="settings_ai_test_summary">测试 %1$s · %2$s；不生成标签建议</string>
 </resources>

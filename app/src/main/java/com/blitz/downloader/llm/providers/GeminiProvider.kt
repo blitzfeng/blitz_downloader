@@ -1,9 +1,10 @@
 package com.blitz.downloader.llm.providers
 
-import android.content.Context
 import android.util.Base64
 import android.util.Log
-import com.blitz.downloader.config.AppSettings
+import com.blitz.downloader.config.AiConnectionConfig
+import com.blitz.downloader.config.AiService
+import kotlinx.coroutines.CancellationException
 import com.blitz.downloader.llm.AuthorProfileContext
 import com.blitz.downloader.llm.FewShotExample
 import com.blitz.downloader.llm.ImagePart
@@ -23,60 +24,51 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
 /**
- * [LlmProvider] 的 Gemini 实现，对接 Google Generative Language API。鉴权走 `x-goog-api-key`
+ * [LlmProvider] 的 Gemini 实现，复用 Gemini Developer API 与 Vertex AI 的生成协议。鉴权走 `x-goog-api-key`
  * 请求头（不用 URL query 参数，避免 Key 出现在日志/代理记录的 URL 里）。结构化输出用
  * `responseSchema` 强制模型按 [TAG_SUGGESTION_SCHEMA] 返回 JSON，对应评审文档"必须使用严格
  * JSON/Structured Output 思路"的要求，不需要"提示词里要求返回 JSON 再自己兜底解析"这种脆弱方案。
  *
- * API Key 每次调用时从 [AppSettings] 现读（不缓存，符合项目既有约定），未配置时直接返回失败，
+ * 每次操作使用 [AiConnectionConfig] 快照，客户端跨操作复用；未配置时直接返回失败，
  * 不发起网络请求。
  */
-class GeminiProvider(private val context: Context) : LlmProvider {
-
-    override val providerId: String = "gemini"
-    override val modelId: String = MODEL
-
+class GeminiProvider(
+    private val config: AiConnectionConfig,
+    private val service: GeminiApiService = sharedService,
+    private val testService: GeminiApiService = sharedTestService,
+) : LlmProvider {
+    override val providerId: String = config.service.id
+    override val modelId: String = config.model
     private val gson = Gson()
 
-    private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS) // 多图 + 结构化输出，比抖音接口耗时更长
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .addInterceptor(LoggingInterceptor())
-        .build()
-
-    private val retrofit = Retrofit.Builder()
-        .baseUrl("https://generativelanguage.googleapis.com/")
-        .client(okHttpClient)
-        .addConverterFactory(GsonConverterFactory.create())
-        .build()
-
-    private val service = retrofit.create(GeminiApiService::class.java)
-
-    /**
-     * [testConnection] 专用的短超时 client：正式建议请求要传多图 + 等结构化输出，超时故意放宽到
-     * 60s；连接测试只是一次纯文本探测，用同一套超时会让用户在网络差时空转到 90s 才看到失败。
-     * 复用同一个 [okHttpClient] 的连接池没有意义（不同 Retrofit client 各自独立连接池），
-     * 索性单独建一个更"没耐心"的 client，让排查问题时更快拿到结果。
-     */
-    private val testService: GeminiApiService by lazy {
-        val client = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .writeTimeout(15, TimeUnit.SECONDS)
-            .addInterceptor(LoggingInterceptor())
-            .build()
-        Retrofit.Builder()
-            .baseUrl("https://generativelanguage.googleapis.com/")
-            .client(client)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(GeminiApiService::class.java)
+    private suspend fun <T> requestResult(block: suspend () -> T): Result<T> {
+        config.validationError?.let { return Result.failure(IllegalStateException(it)) }
+        return try {
+            Result.success(block())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            // 服务端错误也可能回显凭据，保留诊断信息但删除当前密钥。
+            val message = (error.message ?: error.javaClass.simpleName).replace(config.apiKey, "[REDACTED]")
+            if (error is com.blitz.downloader.llm.LlmResponseException) {
+                val diagnostics = error.diagnostics.copy(
+                    rawResponseBody = error.diagnostics.rawResponseBody.replace(config.apiKey, "[REDACTED]"),
+                    tokenUsage = error.diagnostics.tokenUsage?.replace(config.apiKey, "[REDACTED]"),
+                )
+                Result.failure(com.blitz.downloader.llm.LlmResponseException("${config.service.displayName}：$message", diagnostics))
+            } else {
+                Result.failure(IllegalStateException("${config.service.displayName}：$message"))
+            }
+        }
     }
 
+    private fun requestBody(body: GeminiGenerateContentRequest): GeminiGenerateContentRequest =
+        if (config.service == AiService.VERTEX_AI) body.copy(
+            safetySettings = body.safetySettings?.filterNot { it.category == "HARM_CATEGORY_CIVIC_INTEGRITY" },
+        ) else body
+
     override suspend fun generateTagSuggestion(request: TagSuggestionRequest): Result<TagSuggestionResponse> {
-        val apiKey = AppSettings.getGeminiApiKey(context)
-        if (apiKey.isBlank()) return Result.failure(IllegalStateException("Gemini API Key 未配置"))
+        config.validationError?.let { return Result.failure(IllegalStateException(it)) }
 
         val parts = buildList {
             add(GeminiPart(text = buildTagSuggestionPrompt(request)))
@@ -121,8 +113,8 @@ class GeminiProvider(private val context: Context) : LlmProvider {
                 thinkingConfig = GeminiThinkingConfig(thinkingLevel = THINKING_LEVEL),
             ),
         )
-        return runCatching {
-            val response = service.generateContent(MODEL, apiKey, body)
+        return requestResult {
+            val response = service.generateContent(config.generateContentUrl, config.apiKey, requestBody(body))
             val parsed = GeminiResponseParser.parse(response)
             parsed.decode { text ->
                 val payload = gson.fromJson(text, GeminiTagSuggestionPayload::class.java)
@@ -133,8 +125,7 @@ class GeminiProvider(private val context: Context) : LlmProvider {
     }
 
     override suspend fun summarizePreference(request: PreferenceSummaryRequest): Result<String> {
-        val apiKey = AppSettings.getGeminiApiKey(context)
-        if (apiKey.isBlank()) return Result.failure(IllegalStateException("Gemini API Key 未配置"))
+        config.validationError?.let { return Result.failure(IllegalStateException(it)) }
 
         val body = GeminiGenerateContentRequest(
             contents = listOf(
@@ -143,15 +134,14 @@ class GeminiProvider(private val context: Context) : LlmProvider {
             // 纯文本摘要不需要结构化输出（responseMimeType/responseSchema 留空），仍带 thinkingConfig
             generationConfig = GeminiGenerationConfig(thinkingConfig = GeminiThinkingConfig(thinkingLevel = THINKING_LEVEL)),
         )
-        return runCatching {
-            val response = service.generateContent(MODEL, apiKey, body)
+        return requestResult {
+            val response = service.generateContent(config.generateContentUrl, config.apiKey, requestBody(body))
             extractText(response).trim()
         }
     }
 
     override suspend fun testConnection(): Result<String> {
-        val apiKey = AppSettings.getGeminiApiKey(context)
-        if (apiKey.isBlank()) return Result.failure(IllegalStateException("Gemini API Key 未配置"))
+        config.validationError?.let { return Result.failure(IllegalStateException(it)) }
 
         val body = GeminiGenerateContentRequest(
             contents = listOf(
@@ -160,10 +150,10 @@ class GeminiProvider(private val context: Context) : LlmProvider {
             // 不需要结构化输出，但带上 thinkingConfig 让连接测试也验证这个字段没被网关/模型拒绝
             generationConfig = GeminiGenerationConfig(thinkingConfig = GeminiThinkingConfig(thinkingLevel = THINKING_LEVEL)),
         )
-        return runCatching {
-            val response = testService.generateContent(MODEL, apiKey, body)
+        return requestResult {
+            val response = testService.generateContent(config.generateContentUrl, config.apiKey, requestBody(body))
             extractText(response)
-            "连接成功（模型 $MODEL）"
+            "连接成功（${config.service.displayName} · ${config.model}）"
         }
     }
 
@@ -204,23 +194,25 @@ class GeminiProvider(private val context: Context) : LlmProvider {
     private class LoggingInterceptor : Interceptor {
         override fun intercept(chain: Interceptor.Chain): OkResponse {
             val request = chain.request()
+            val key = request.header("x-goog-api-key").orEmpty()
+            fun redact(value: String): String = if (key.isEmpty()) value else value.replace(key, "[REDACTED]")
             Log.d(TAG, "→ ${request.method} ${request.url.encodedPath}")
             val requestBody = request.body?.let { body ->
                 val buffer = Buffer()
                 body.writeTo(buffer)
                 buffer.readUtf8()
             }
-            logChunked("→ body", redactImageData(requestBody ?: "(empty)"))
+            logChunked("→ body", redact(redactImageData(requestBody ?: "(empty)")))
 
             val response = chain.proceed(request)
             Log.d(TAG, "← ${response.code} ${request.url.encodedPath}")
-            val headersText = response.headers.toString().trimEnd()
+            val headersText = redact(response.headers.toString().trimEnd())
             if (headersText.isNotEmpty()) {
                 Log.d(TAG, "← headers:\n$headersText")
             }
             // peekBody 只读一份拷贝，不消费原始响应体，Retrofit 之后仍能正常解析
             val responseBody = response.peekBody(Long.MAX_VALUE).string()
-            logChunked("← body", redactImageData(responseBody))
+            logChunked("← body", redact(redactImageData(responseBody)))
             return response
         }
 
@@ -275,11 +267,21 @@ class GeminiProvider(private val context: Context) : LlmProvider {
     companion object {
         private const val TAG = "GeminiProvider"
 
-        /**
-         * 具体模型版本号留到实现阶段按当时可用的模型直接定，不影响本类的行为契约——
-         * 之后要换型号只改这一个常量。选用 flash 档位控制成本。
-         */
-        private const val MODEL = "gemini-3.8-flash"
+        /** 客户端跨配置快照共享，连接测试独立使用较短超时。 */
+        private val sharedService: GeminiApiService by lazy { createService(30, 60) }
+        private val sharedTestService: GeminiApiService by lazy { createService(10, 15) }
+
+        private fun createService(connectSeconds: Long, ioSeconds: Long): GeminiApiService =
+            Retrofit.Builder()
+                .baseUrl("https://generativelanguage.googleapis.com/")
+                .client(OkHttpClient.Builder()
+                    .connectTimeout(connectSeconds, TimeUnit.SECONDS)
+                    .readTimeout(ioSeconds, TimeUnit.SECONDS)
+                    .writeTimeout(ioSeconds, TimeUnit.SECONDS)
+                    .addInterceptor(LoggingInterceptor())
+                    .build())
+                .addConverterFactory(GsonConverterFactory.create())
+                .build().create(GeminiApiService::class.java)
 
         /**
          * Gemini 3.x 系列新增的 `thinkingLevel`（`LOW`/`MEDIUM`/`HIGH`，省略时后端按 `MEDIUM` 处理）。

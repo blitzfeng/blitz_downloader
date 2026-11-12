@@ -23,7 +23,7 @@ class BlitzApp : Application() {
 
     val likedListIndexRepository: LikedListIndexRepository by lazy { LikedListIndexRepository(this) }
 
-    /** 持有它是为了让 `GeminiProvider` 的 OkHttp 客户端等只构造一次，不随每次弹窗新建。 */
+    /** 复用 AI repository；Gemini/Vertex 的 HTTP 客户端由 provider 内部共享。 */
     val aiTagSuggestionRepository: AiTagSuggestionRepository by lazy {
         AiTagSuggestionRepository(this)
     }
