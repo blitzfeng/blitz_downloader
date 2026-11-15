@@ -60,7 +60,9 @@ class VideoPlayerActivity : AppCompatActivity() {
     private var videoFile: File? = null
     private var networkUrl: String? = null
     private var savedPosition: Int = 0
-    private var wasPlaying = false
+    private var playWhenReady = true
+    private var isPlayerPrepared = false
+    private var isActivityResumed = false
     private var videoDuration: Int = 0
     private var isUserSeeking = false
 
@@ -93,8 +95,10 @@ class VideoPlayerActivity : AppCompatActivity() {
     // ── 手势检测 ──────────────────────────────────────────────────────────────
     private val gestureDetector by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                toggleControls()
+            override fun onDown(e: MotionEvent): Boolean = true
+
+            override fun onSingleTapUp(e: MotionEvent): Boolean {
+                handleVideoTap()
                 return true
             }
 
@@ -117,7 +121,10 @@ class VideoPlayerActivity : AppCompatActivity() {
                     true
                 }
             }
-        })
+        }).apply {
+            // 连续两次点击都需生效，不等待双击判定或吞掉第二次点击。
+            setOnDoubleTapListener(null)
+        }
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -147,7 +154,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         val listFilePaths = intent.getStringArrayListExtra(EXTRA_LIST_FILE_PATHS)
         val listTitles = intent.getStringArrayListExtra(EXTRA_LIST_TITLES) ?: arrayListOf()
         val listSubtitles = intent.getStringArrayListExtra(EXTRA_LIST_SUBTITLES) ?: arrayListOf()
-        val listPosition = intent.getIntExtra(EXTRA_LIST_POSITION, 0)
+        val listPosition = savedInstanceState?.getInt(KEY_INDEX) ?: intent.getIntExtra(EXTRA_LIST_POSITION, 0)
         intent.getStringArrayListExtra(EXTRA_LIST_AWEME_IDS)?.let { previewAwemeIds.addAll(it) }
 
         when {
@@ -206,6 +213,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         updatePositionBadge()
 
         savedPosition = savedInstanceState?.getInt(KEY_POSITION, 0) ?: 0
+        playWhenReady = savedInstanceState?.getBoolean(KEY_PLAY_WHEN_READY, true) ?: true
 
         setupSeekBar()
         setupGestureDetector()
@@ -216,7 +224,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 val mp = mediaPlayer
                 if (mp != null) {
                     mp.setSurface(surface)
-                    if (wasPlaying) mp.start()
+                    if (isPlayerPrepared && isActivityResumed && playWhenReady) mp.start()
                 } else {
                     initPlayer(surface)
                 }
@@ -237,7 +245,8 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (wasPlaying) {
+        isActivityResumed = true
+        if (isPlayerPrepared && playWhenReady) {
             mediaPlayer?.start()
             startProgressUpdates()
         }
@@ -246,9 +255,9 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        mediaPlayer?.let {
+        isActivityResumed = false
+        if (isPlayerPrepared) mediaPlayer?.let {
             savedPosition = it.currentPosition
-            wasPlaying = it.isPlaying
             if (it.isPlaying) it.pause()
         }
         stopProgressUpdates()
@@ -257,8 +266,9 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putInt(KEY_POSITION, mediaPlayer?.currentPosition ?: savedPosition)
+        outState.putInt(KEY_POSITION, if (isPlayerPrepared) mediaPlayer?.currentPosition ?: savedPosition else savedPosition)
         outState.putInt(KEY_INDEX, currentIndex)
+        outState.putBoolean(KEY_PLAY_WHEN_READY, playWhenReady)
     }
 
     override fun onDestroy() {
@@ -267,6 +277,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         hideHandler.removeCallbacksAndMessages(null)
         mediaPlayer?.release()
         mediaPlayer = null
+        isPlayerPrepared = false
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -293,7 +304,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             v.alpha = 1f
         }
         WindowInsetsControllerCompat(window, binding.root).isAppearanceLightStatusBars = true
-        hideHandler.postDelayed(hideRunnable, AUTO_HIDE_DELAY_MS)
+        if (playWhenReady) hideHandler.postDelayed(hideRunnable, AUTO_HIDE_DELAY_MS)
     }
 
     private fun hideControls() {
@@ -307,13 +318,22 @@ class VideoPlayerActivity : AppCompatActivity() {
         WindowInsetsControllerCompat(window, binding.root).isAppearanceLightStatusBars = false
     }
 
-    private fun toggleControls() {
-        if (binding.topControls.visibility == View.VISIBLE && binding.topControls.alpha > 0f) {
-            hideHandler.removeCallbacks(hideRunnable)
-            hideControls()
-        } else {
-            showControls()
+    /** 标题隐藏时只唤出控制栏；标题可见时切换暂停/继续，暂停时保留控制栏。 */
+    private fun handleVideoTap() {
+        val controlsVisible = binding.topControls.visibility == View.VISIBLE && binding.topControls.alpha > 0f
+        val player = mediaPlayer
+        if (controlsVisible && isPlayerPrepared && !isSwitchingVideo && player != null) {
+            playWhenReady = !playWhenReady
+            if (playWhenReady && isActivityResumed) {
+                player.start()
+                startProgressUpdates()
+            } else {
+                player.pause()
+                stopProgressUpdates()
+                updateProgress()
+            }
         }
+        showControls()
     }
 
     // ── 进度条 ────────────────────────────────────────────────────────────────
@@ -334,7 +354,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 if (videoDuration > 0) {
                     mediaPlayer?.seekTo((sb.progress.toLong() * videoDuration / 1000).toInt())
                 }
-                hideHandler.postDelayed(hideRunnable, AUTO_HIDE_DELAY_MS)
+                if (playWhenReady) hideHandler.postDelayed(hideRunnable, AUTO_HIDE_DELAY_MS)
             }
         })
     }
@@ -350,7 +370,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
     private fun updateProgress() {
         val mp = mediaPlayer ?: return
-        if (!mp.isPlaying || isUserSeeking) return
+        if (!isPlayerPrepared || isUserSeeking) return
         val current = mp.currentPosition
         if (videoDuration > 0) binding.seekBar.progress = (current.toLong() * 1000 / videoDuration).toInt()
         binding.tvCurrentTime.text = formatMs(current)
@@ -399,6 +419,7 @@ class VideoPlayerActivity : AppCompatActivity() {
                 // 释放旧播放器
                 mediaPlayer?.release()
                 mediaPlayer = null
+                isPlayerPrepared = false
 
                 // TextureView 移到对侧（屏幕外），开始新播放器
                 binding.textureView.translationY = direction * containerH
@@ -435,6 +456,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
         videoDuration = 0
         savedPosition = 0
+        playWhenReady = true
         isUserSeeking = false
         binding.seekBar.progress = 0
         binding.tvCurrentTime.text = formatMs(0)
@@ -482,6 +504,7 @@ class VideoPlayerActivity : AppCompatActivity() {
         if (url == null && file == null) return
 
         mediaPlayer?.release()
+        isPlayerPrepared = false
         mediaPlayer = MediaPlayer().apply {
             setSurface(surface)
             setAudioAttributes(
@@ -507,12 +530,16 @@ class VideoPlayerActivity : AppCompatActivity() {
                 if (w > 0 && h > 0) binding.textureView.post { fitVideoInContainer(w, h) }
             }
             setOnPreparedListener { mp ->
+                isPlayerPrepared = true
                 videoDuration = mp.duration
                 binding.tvTotalTime.text = formatMs(videoDuration)
                 binding.seekBar.progress = 0
                 if (savedPosition > 0) mp.seekTo(savedPosition)
-                mp.start()
-                startProgressUpdates()
+                if (playWhenReady && isActivityResumed) {
+                    mp.start()
+                    startProgressUpdates()
+                }
+                showControls()
                 // 播放就绪后淡出切换遮罩
                 if (binding.vSwitchOverlay.visibility == View.VISIBLE) {
                     binding.vSwitchOverlay.animate()
@@ -522,7 +549,10 @@ class VideoPlayerActivity : AppCompatActivity() {
                         .start()
                 }
             }
+            setOnSeekCompleteListener { updateProgress() }
             setOnErrorListener { _, _, _ ->
+                isPlayerPrepared = false
+                stopProgressUpdates()
                 Toast.makeText(this@VideoPlayerActivity, R.string.player_play_error, Toast.LENGTH_SHORT).show()
                 if (previewSources.isEmpty()) finish()
                 else { isSwitchingVideo = false }
@@ -575,6 +605,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
         private const val KEY_POSITION = "key_position"
         private const val KEY_INDEX = "key_index"
+        private const val KEY_PLAY_WHEN_READY = "key_play_when_ready"
         private const val AUTO_HIDE_DELAY_MS = 3000L
         private const val FADE_DURATION_MS = 300L
         private const val PROGRESS_INTERVAL_MS = 500L

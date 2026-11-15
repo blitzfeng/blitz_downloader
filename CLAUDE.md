@@ -664,6 +664,12 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
   正则性能坑。剩余内容仍可能有几十 KB，Logcat 单行 ~4000 字符会截断，所以按 3000 字符分行输出，
   排查时去 `adb logcat` 搜 TAG 而不是看单条日志。
 
+### 视频播放页点击暂停
+
+`VideoPlayerActivity` 的标题与进度条隐藏时，点击画面仅显示控制栏；控制栏可见期间再次点击切换暂停/继续。暂停时控制栏保持显示，恢复播放后 3 秒自动隐藏。连续快速点击的两次抬手分别处理，不能让双击判定吞掉第二次点击；上下滑动仍用于切换列表视频，新视频自动播放。播放器就绪前或切换动画中点击只显示控制栏，不调用非法状态下的播放方法。用户暂停意图与 Activity 前后台状态分别保存，后台恢复或页面重建不解除手动暂停，页面重建保留当前列表索引与进度。
+
+回归测试 `VideoPlayerInteractionTest` 使用 `androidTest/assets/video-tap.mp4`（合成的 3 秒无声渐变视频），覆盖两次点击暂停/继续、快速连点、后台及重建保持暂停、暂停时滑动切换与恢复列表索引。2026-10-04 在独立 Android 15 / API 35 模拟器上 3 项通过，Debug 与 androidTest APK 构建通过。
+
 ### 批量下载后标签整理（batch-ai-tag-review）
 
 批量分析页面使用 Compose + Material 3，规范与实施记录见 `openspec/changes/improve-batch-ai-tag-review/`。
