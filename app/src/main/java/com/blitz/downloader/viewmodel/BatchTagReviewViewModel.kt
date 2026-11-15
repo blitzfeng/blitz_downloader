@@ -376,7 +376,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    /** 只读校验；与审核/保存共用互斥锁和 busy 状态，不产生标签写入或 AI 反馈。 */
+    /** 手动入口保留；校验与标签保存共用锁，防止交错读取。 */
     fun validateTags() {
         if (!_uiState.value.canValidateTags) return
         val expectedSession = currentSession ?: return
@@ -384,45 +384,52 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             stateMutex.withLock {
                 try {
-                    val conflictCount = db.withTransaction {
-                        val session = sessionDao.latestSession()
-                        val latestBatchId = batchDao.getRecentBatches(1).firstOrNull()?.id
-                        val items = sessionDao.items(expectedSession.id)
-                        // 排队期间可能有新下载、迟到的分析结果或其他页面改动审核状态。
-                        if (session == null || session != expectedSession || !session.finished || session.isLegacy ||
-                            !BatchReviewLogic.matchesLatestBatch(session.sourceBatchIds, latestBatchId) ||
-                            items != _uiState.value.analysisItems || items.isEmpty() || items.any { !it.isTerminal }
-                        ) return@withTransaction null
-
-                        val tags = tagRepo.getAvailableTagEntities()
-                        val actualTags = videoTagDao.getTagsForVideos(items.map { it.awemeId }.distinct())
-                            .groupBy({ it.awemeId }, { it.tagName }).mapValues { it.value.toSet() }
-                        val conflicts = BatchReviewLogic.findConflictingVideos(tags, actualTags)
-                        // 事务内发布，避免读取完成到结果生效之间夹入标签或规则写入。
-                        withContext(Dispatchers.Main.immediate) {
-                            _uiState.value = _uiState.value.copy(
-                                conflictingVideoIds = conflicts,
-                                videoExistingTags = actualTags,
-                                allTags = tags.map { it.tagName },
-                                parentMap = tags.filter { it.parentTagName.isNotBlank() }
-                                    .associate { it.tagName to it.parentTagName },
-                            )
-                        }
-                        conflicts.size
-                    }
-                    if (conflictCount == null) {
-                        reloadLocked()
-                        _events.emit(BatchTagReviewEvent.ValidationOutdated)
-                    } else {
-                        _events.emit(BatchTagReviewEvent.ValidationCompleted(conflictCount))
-                    }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    _events.emit(BatchTagReviewEvent.ActionFailed(e.message.orEmpty()))
+                    validateTagsLocked(expectedSession)
                 } finally {
                     _uiState.value = _uiState.value.copy(busyAction = null)
                 }
             }
+        }
+    }
+
+    /** 调用方持有 stateMutex；失败只提示，不回滚之前已提交的人工编辑。 */
+    private suspend fun validateTagsLocked(expectedSession: BatchAnalysisSessionEntity) {
+        try {
+            val conflictCount = db.withTransaction {
+                val session = sessionDao.latestSession()
+                val latestBatchId = batchDao.getRecentBatches(1).firstOrNull()?.id
+                val items = sessionDao.items(expectedSession.id)
+                // 排队期间可能有新下载、迟到的分析结果或其他页面改动审核状态。
+                if (session == null || session != expectedSession || !session.finished || session.isLegacy ||
+                    !BatchReviewLogic.matchesLatestBatch(session.sourceBatchIds, latestBatchId) ||
+                    items != _uiState.value.analysisItems || items.isEmpty() || items.any { !it.isTerminal }
+                ) return@withTransaction null
+
+                val tags = tagRepo.getAvailableTagEntities()
+                val actualTags = videoTagDao.getTagsForVideos(items.map { it.awemeId }.distinct())
+                    .groupBy({ it.awemeId }, { it.tagName }).mapValues { it.value.toSet() }
+                val conflicts = BatchReviewLogic.findConflictingVideos(tags, actualTags)
+                // 事务内发布，避免读取完成到结果生效之间夹入标签或规则写入。
+                withContext(Dispatchers.Main.immediate) {
+                    _uiState.value = _uiState.value.copy(
+                        conflictingVideoIds = conflicts,
+                        videoExistingTags = actualTags,
+                        allTags = tags.map { it.tagName },
+                        parentMap = tags.filter { it.parentTagName.isNotBlank() }
+                            .associate { it.tagName to it.parentTagName },
+                    )
+                }
+                conflicts.size
+            }
+            if (conflictCount == null) {
+                reloadLocked()
+                _events.emit(BatchTagReviewEvent.ValidationOutdated)
+            } else {
+                _events.emit(BatchTagReviewEvent.ValidationCompleted(conflictCount))
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            _events.emit(BatchTagReviewEvent.ActionFailed(e.message.orEmpty()))
         }
     }
 
@@ -445,19 +452,37 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                 val before = reviewState()
                 val oldRows = sessionPendingRows.toMap()
                 val oldSession = currentSession
+                var committed = false
                 try {
                     db.withTransaction { block(); persistReview() }
+                    committed = true
                     // Once committed, a refresh failure must not roll back the in-memory decision.
-                    try { reloadLocked() } catch (e: Exception) {
+                    val refreshed = try {
+                        reloadLocked()
+                        true
+                    } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         _events.emit(BatchTagReviewEvent.ActionFailed(e.message.orEmpty()))
+                        false
                     }
                     _events.emit(BatchTagReviewEvent.ActionDone(action, count()))
                     if (action == "confirm" || action == "skip") refreshPreferenceProfile()
+                    // 保存与校验在同一把锁内串行，但校验不属于写入事务。
+                    // 只忽略本次编辑占用的 busy，其他完成条件与手动入口一致。
+                    if (refreshed && action in setOf("confirm", "skip", "save") &&
+                        _uiState.value.copy(busyAction = null).canValidateTags
+                    ) {
+                        currentSession?.let { session ->
+                            _uiState.value = _uiState.value.copy(busyAction = "validate")
+                            validateTagsLocked(session)
+                        }
+                    }
                 } catch (e: Exception) {
-                    restoreReview(before)
-                    currentSession = oldSession
-                    sessionPendingRows.clear(); sessionPendingRows.putAll(oldRows)
+                    if (!committed) {
+                        restoreReview(before)
+                        currentSession = oldSession
+                        sessionPendingRows.clear(); sessionPendingRows.putAll(oldRows)
+                    }
                     if (e is CancellationException) throw e
                     _events.emit(BatchTagReviewEvent.ActionFailed(e.message.orEmpty()))
                 } finally {

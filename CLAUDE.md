@@ -745,3 +745,8 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 `AppSettings.getAiConnectionConfig` 从一次 SharedPreferences 快照读取所选服务及凭据；repository 在每次分析开始时固定该配置，分析记录的 provider/model 取同一个实例。`GeminiProvider` 的 HTTP 客户端跨实例共享，Vertex 走 `https://aiplatform.googleapis.com/v1/publishers/google/models/{model}:generateContent`，Developer API 保持原路径。密钥只通过 `x-goog-api-key` 请求头传递；测试连接、批量入口、偏好摘要都使用当前选择。Vertex 不发送已弃用的 CIVIC_INTEGRITY 安全类别。无需项目 ID、区域或 JSON 文件，本次不接入 OAuth/ADC。
 
 使用步骤与验证限制见 `docs/vertex-ai.md`。JVM 回归测试 `VertexAiConnectionTest` 使用 OkHttp 拦截器验证真实 Retrofit 请求编码，不访问云端。macOS 单元测试使用 `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/private/tmp ./gradlew testDebugUnitTest`，避免相机目录测试将系统临时路径的符号链接判为非法。
+
+
+### AI 分析页自动校验
+
+`BatchTagReviewViewModel` 在分组确认/跳过或单条标签保存成功、刷新后满足完整会话审核完成条件时，自动执行与手动「校验」相同的冲突检查。自动与手动复用 `validateTagsLocked`，在 `stateMutex` 内串行执行，写入事务先提交、校验另行只读；校验结束前保持 busy，不能重复保存或校验。未完成审核不自动触发；保存成功后的读取异常不会回滚已提交的标签和审核状态，也不误清冲突标记。冲突仍在全部/失败区域整体标红，修正保存后自动恢复，无需再点校验；手动入口保留。

@@ -85,7 +85,7 @@ class BatchTagReviewIntegrationTest {
         db.tagDao().updateEnableAi("review-b", false)
     }
 
-    @Test fun validation_marksWholeItemsAndClearsOnlyAfterSuccessfulRecheck() {
+    @Test fun validation_automaticallyMarksAfterConfirmationAndRechecksAfterSave() {
         seed(); seedExclusiveRules(); open()
         compose.onNodeWithTag("review_validate").assertIsNotEnabled()
         act { it.setEditFilter(com.blitz.downloader.viewmodel.TagEditFilter.EDITED) }
@@ -96,9 +96,12 @@ class BatchTagReviewIntegrationTest {
         act { it.setEditFilter(com.blitz.downloader.viewmodel.TagEditFilter.ALL) }
         compose.waitUntil(10_000) { vm.uiState.value.groups.size == 2 }
         act { it.confirmGroup("review-a") }
+        assertFalse(vm.uiState.value.isReviewCompleted)
+        assertTrue(vm.uiState.value.conflictingVideoIds.isEmpty())
         act { it.confirmGroup("review-b") }
+        assertEquals(setOf("success"), vm.uiState.value.conflictingVideoIds)
         act { it.saveSingleVideoTags("failure", listOf("review-a", "review-b")) }
-        compose.onNodeWithTag("review_validate").assertIsEnabled().performClick()
+        compose.onNodeWithTag("review_validate").assertIsEnabled()
         compose.waitUntil(10_000) { vm.uiState.value.busyAction == null && vm.uiState.value.conflictingVideoIds.size == 2 }
         assertEquals(setOf("success", "failure"), vm.uiState.value.conflictingVideoIds)
         val conflict = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "标签冲突")
@@ -116,9 +119,7 @@ class BatchTagReviewIntegrationTest {
             assertEquals(feedbackCount, db.videoTagFeedbackDao().countByAwemeId("success"))
         }
         act { it.saveSingleVideoTags("success", listOf("review-a")) }
-        assertTrue("保存不等同于重新校验通过", "success" in vm.uiState.value.conflictingVideoIds)
-        act { it.validateTags() }
-        assertEquals(setOf("failure"), vm.uiState.value.conflictingVideoIds)
+        assertEquals("保存成功后自动重新校验", setOf("failure"), vm.uiState.value.conflictingVideoIds)
         compose.onNodeWithTag("review_list").performScrollToNode(hasTestTag("review_all"))
         compose.onNodeWithTag("review_all_success").assert(conflict.not())
         screenshot("validation-corrected")
@@ -127,6 +128,27 @@ class BatchTagReviewIntegrationTest {
         act { it.setEditFilter(com.blitz.downloader.viewmodel.TagEditFilter.UNEDITED) }
         act { it.validateTags() }
         assertTrue(vm.uiState.value.conflictingVideoIds.isEmpty())
+    }
+
+    @Test fun validation_waitsForFinalSkippedGroupAndDoesNotMutateTags() {
+        seed(); seedExclusiveRules(); open()
+        act { it.saveSingleVideoTags("failure", listOf("review-a", "review-b")) }
+        assertFalse(vm.uiState.value.isReviewCompleted)
+        assertTrue("尚有待处理组时不提前自动校验", vm.uiState.value.conflictingVideoIds.isEmpty())
+        val edits = runBlocking { db.downloadedVideoDao().getByAwemeId("failure")!!.tagEditCount }
+        act { it.confirmGroup("review-a") }
+        assertTrue(vm.uiState.value.conflictingVideoIds.isEmpty())
+        act { it.skipGroup("review-b") }
+        assertTrue(vm.uiState.value.isReviewCompleted)
+        assertEquals(setOf("failure"), vm.uiState.value.conflictingVideoIds)
+        runBlocking {
+            assertEquals(edits, db.downloadedVideoDao().getByAwemeId("failure")!!.tagEditCount)
+            assertEquals(setOf("review-a", "review-b"), db.videoTagDao().getTagsForVideo("failure").toSet())
+        }
+        // 保存失败不应触发新校验或清除已有结果。
+        act { it.saveSingleVideoTags("missing-video", listOf("review-a")) }
+        assertEquals(setOf("failure"), vm.uiState.value.conflictingVideoIds)
+        assertTrue(vm.uiState.value.canValidateTags)
     }
 
     @Test fun validation_serializesEditsAndRejectsOldSessionAfterQueuedBatchChange() {
