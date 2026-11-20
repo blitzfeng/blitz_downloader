@@ -9,7 +9,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -19,33 +18,32 @@ import androidx.fragment.app.Fragment
 import com.blitz.downloader.R
 import com.blitz.downloader.config.AiConnectionConfig
 import com.blitz.downloader.config.AiService
+import com.blitz.downloader.config.AppSettings
 
-/** 配置通过 FragmentResult 返回，取消与转屏不会提前改写偏好。 */
-class VertexAiDialogFragment : ComposeDialogFragment() {
+/** 密钥编辑值仅保存在组合内存中，确认后才写入应用偏好。 */
+class AiProviderDialogFragment : ComposeDialogFragment() {
     @Composable
     override fun DialogContent() {
-        var apiKey by rememberSaveable { mutableStateOf(requireArguments().getString(KEY).orEmpty()) }
-        var model by rememberSaveable { mutableStateOf(requireArguments().getString(MODEL).orEmpty()) }
-        var selected by rememberSaveable { mutableStateOf(requireArguments().getString(SERVICE).orEmpty()) }
-        val modelValid = AiConnectionConfig.isSupportedModel(model.trim())
-        DialogHeadline(stringResource(R.string.settings_vertex_title))
+        val service = AiService.fromId(requireArguments().getString(SERVICE))
+        val openAi = service == AiService.OPENAI
+        val config = remember { AppSettings.getAiConnections(requireContext()).first { it.service == service } }
+        var apiKey by remember { mutableStateOf(config.apiKey) }
+        var model by rememberSaveable { mutableStateOf(config.model) }
+        val cleanKey = apiKey.trim()
+        val modelValid = AiConnectionConfig.isSupportedModel(model.trim(), service)
+        val keyValid = cleanKey.all { it.code in 33..126 }
+        DialogHeadline(stringResource(if (openAi) R.string.settings_openai_title else R.string.settings_vertex_title))
         Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
-            Text(stringResource(R.string.settings_ai_service), style = MaterialTheme.typography.labelLarge)
-            AiService.entries.forEach { service ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { selected = service.id },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(selected == service.id, onClick = { selected = service.id })
-                    Text(service.displayName)
-                }
-            }
-            Text(stringResource(R.string.settings_vertex_hint), style = MaterialTheme.typography.bodySmall)
+            Text(
+                stringResource(if (openAi) R.string.settings_openai_hint else R.string.settings_vertex_hint),
+                style = MaterialTheme.typography.bodySmall,
+            )
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = apiKey,
                 onValueChange = { apiKey = it },
-                label = { Text("Vertex AI API Key") },
+                label = { Text(stringResource(R.string.settings_ai_key_label, service.displayName)) },
+                isError = !keyValid,
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
@@ -55,8 +53,10 @@ class VertexAiDialogFragment : ComposeDialogFragment() {
             OutlinedTextField(
                 value = model,
                 onValueChange = { model = it },
-                label = { Text(stringResource(R.string.settings_vertex_model)) },
-                supportingText = { Text(stringResource(R.string.settings_vertex_model_hint)) },
+                label = { Text(stringResource(R.string.settings_ai_model_label, service.displayName)) },
+                supportingText = {
+                    Text(stringResource(if (openAi) R.string.settings_openai_model_hint else R.string.settings_vertex_model_hint))
+                },
                 isError = !modelValid,
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
@@ -65,28 +65,26 @@ class VertexAiDialogFragment : ComposeDialogFragment() {
         }
         DialogActions(trailing = {
             TextButton(onClick = { dismiss() }) { Text(stringResource(android.R.string.cancel)) }
-            TextButton(enabled = modelValid, onClick = {
-                parentFragmentManager.setFragmentResult(REQUEST_KEY, Bundle().apply {
-                    putString(KEY, apiKey.trim())
-                    putString(MODEL, model.trim())
-                    putString(SERVICE, selected)
-                })
+            TextButton(enabled = keyValid && (modelValid || cleanKey.isEmpty()), onClick = {
+                val savedModel = if (modelValid) model.trim() else config.model
+                if (openAi) {
+                    AppSettings.setOpenAiConfig(requireContext(), cleanKey, savedModel)
+                } else {
+                    AppSettings.setVertexConfig(requireContext(), cleanKey, savedModel)
+                }
+                parentFragmentManager.setFragmentResult(REQUEST_KEY, Bundle())
                 dismiss()
             }) { Text(stringResource(android.R.string.ok)) }
         })
     }
 
     companion object {
-        const val REQUEST_KEY = "VertexAiConfig"
-        const val KEY = "apiKey"
-        const val MODEL = "model"
-        const val SERVICE = "service"
-        fun show(host: Fragment, key: String, model: String, service: AiService) {
+        const val REQUEST_KEY = "AiProviderConfig"
+        private const val SERVICE = "service"
+        fun show(host: Fragment, service: AiService) {
             if (host.childFragmentManager.findFragmentByTag(REQUEST_KEY) != null) return
-            VertexAiDialogFragment().apply {
+            AiProviderDialogFragment().apply {
                 arguments = Bundle().apply {
-                    putString(KEY, key)
-                    putString(MODEL, model)
                     putString(SERVICE, service.id)
                 }
             }.show(host.childFragmentManager, REQUEST_KEY)
@@ -95,9 +93,9 @@ class VertexAiDialogFragment : ComposeDialogFragment() {
 }
 
 @Composable
-fun VertexAiSettingsRow(summary: String, onClick: () -> Unit) {
+fun AiSettingsRow(title: String, summary: String, onClick: () -> Unit) {
     Column(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp)) {
-        Text(stringResource(R.string.settings_vertex_title), style = MaterialTheme.typography.bodyLarge)
+        Text(title, style = MaterialTheme.typography.bodyLarge)
         Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

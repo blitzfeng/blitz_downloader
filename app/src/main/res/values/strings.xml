@@ -492,12 +492,20 @@
     <string name="ai_reference_image_title">参考依据图</string>
     <string name="ai_reference_back">返回</string>
     <string name="ai_reference_close">关闭</string>
-    <string name="settings_vertex_title">Vertex AI 与服务选择</string>
-    <string name="settings_ai_service">当前 AI 服务</string>
+    <string name="settings_vertex_title">Vertex AI API Key</string>
     <string name="settings_vertex_hint">Vertex AI 密钥独立保存在本机，仅发送给 Google 进行认证。保存后点击设置页「测试连接」。清空密钥可重置配置。</string>
-    <string name="settings_vertex_model">Vertex AI 模型 ID</string>
     <string name="settings_vertex_model_hint">填写支持图片分析的 Gemini 3 系列模型，例如 gemini-3.8-flash</string>
-    <string name="settings_vertex_summary">当前服务：%1$s；Vertex AI：%2$s</string>
-    <string name="settings_vertex_configured">已配置 · %1$s</string>
+    <string name="settings_openai_title">OpenAI API Key</string>
+    <string name="settings_openai_hint">密钥保存在本机，供应用直连 OpenAI。清空并保存可停用该服务。</string>
+    <string name="settings_openai_model_hint">填写支持图片分析和结构化输出的 GPT 模型 ID，例如 gpt-6-astra</string>
+    <string name="settings_ai_key_label">%1$s API Key</string>
+    <string name="settings_ai_model_label">%1$s 模型 ID</string>
+    <string name="settings_ai_model_configured">已配置 · %1$s</string>
+    <string name="settings_ai_priority_title">AI 服务优先级</string>
+    <string name="settings_ai_priority_need_keys">配置至少两个 AI 服务后可调整优先级。</string>
+    <string name="settings_ai_priority_hint">按从上到下的顺序调用。遇到网络故障、限流或服务错误时，分析数据可能会发送给下一项服务。</string>
+    <string name="settings_ai_priority_up">上移</string>
+    <string name="settings_ai_priority_down">下移</string>
+    <string name="settings_ai_test_no_key">请先配置一个 AI 服务</string>
     <string name="settings_ai_test_summary">测试 %1$s · %2$s；不生成标签建议</string>
 </resources>

@@ -16,6 +16,7 @@ import com.blitz.downloader.llm.TagSuggestionRequestBuilder
 import com.blitz.downloader.llm.TagWordEntry
 import com.google.gson.Gson
 import java.util.concurrent.TimeUnit
+import java.io.IOException
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response as OkResponse
@@ -55,7 +56,11 @@ class GeminiProvider(
                     rawResponseBody = error.diagnostics.rawResponseBody.replace(config.apiKey, "[REDACTED]"),
                     tokenUsage = error.diagnostics.tokenUsage?.replace(config.apiKey, "[REDACTED]"),
                 )
-                Result.failure(com.blitz.downloader.llm.LlmResponseException("${config.service.displayName}：$message", diagnostics))
+                Result.failure(com.blitz.downloader.llm.LlmResponseException(
+                    "${config.service.displayName}：$message", diagnostics, retryable = error.retryable,
+                ))
+            } else if (error is IOException) {
+                Result.failure(IOException("${config.service.displayName}：$message"))
             } else {
                 Result.failure(IllegalStateException("${config.service.displayName}：$message"))
             }
@@ -329,7 +334,7 @@ class GeminiProvider(
             required = listOf("visibility"),
         )
 
-        private val TAG_SUGGESTION_SCHEMA = GeminiSchema(
+        internal val TAG_SUGGESTION_SCHEMA = GeminiSchema(
             type = "OBJECT",
             properties = mapOf(
                 "visualFeatureProfile" to GeminiSchema(

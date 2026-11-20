@@ -744,11 +744,11 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 - 新的ui页面、dialog等采用compose实现
 
 
-### Vertex AI 服务配置（add-vertex-ai-provider）
+### AI 服务配置
 
-设置页新增「Vertex AI 与服务选择」，通过 ComposeDialogFragment 编辑当前服务、Vertex API Key 与模型 ID。默认仍使用 Gemini Developer API；Gemini Key 与 Vertex Key 独立保存，清空所选服务 Key 不会自动回退。Vertex 默认模型为 `gemini-3.8-flash`，当前模型输入限定支持图片分析的 Gemini 3 系列，以兼容既有 thinkingLevel 和逐图 mediaResolution。
+设置页分别配置 Gemini、Vertex AI 和 OpenAI 的 Key，并通过「AI 服务优先级」排序。Vertex 默认使用 `gemini-3.8-flash`，OpenAI 默认使用 `gpt-6-astra`。已有的服务选择用作初始优先级，未配置的服务不参与调用。
 
-`AppSettings.getAiConnectionConfig` 从一次 SharedPreferences 快照读取所选服务及凭据；repository 在每次分析开始时固定该配置，分析记录的 provider/model 取同一个实例。`GeminiProvider` 的 HTTP 客户端跨实例共享，Vertex 走 `https://aiplatform.googleapis.com/v1/publishers/google/models/{model}:generateContent`，Developer API 保持原路径。密钥只通过 `x-goog-api-key` 请求头传递；测试连接、批量入口、偏好摘要都使用当前选择。Vertex 不发送已弃用的 CIVIC_INTEGRITY 安全类别。无需项目 ID、区域或 JSON 文件，本次不接入 OAuth/ADC。
+`AppSettings.getAiConnections` 读取有序配置，repository 在每次分析开始时固定顺序，分析记录保存实际成功的 provider/model。标签分析和偏好摘要遇到网络异常、408、429 或 5xx 时尝试下一项。「测试连接」只调用首选项。Gemini 与 Vertex AI 通过 `x-goog-api-key` 传输密钥，Vertex 使用全局生成端点。OpenAI 通过 Authorization 请求头直连 Responses API，复用现有封面、关键帧、历史案例和标签建议模型。
 
 使用步骤与验证限制见 `docs/vertex-ai.md`。JVM 回归测试 `VertexAiConnectionTest` 使用 OkHttp 拦截器验证真实 Retrofit 请求编码，不访问云端。macOS 单元测试使用 `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/private/tmp ./gradlew testDebugUnitTest`，避免相机目录测试将系统临时路径的符号链接判为非法。
 

@@ -23,6 +23,9 @@ import com.blitz.downloader.llm.PreferenceSummaryRequest
 import com.blitz.downloader.llm.TagSuggestionRequestBuilder
 import com.blitz.downloader.llm.VisualFeatureProfile
 import com.blitz.downloader.llm.providers.GeminiProvider
+import com.blitz.downloader.llm.providers.OpenAiProvider
+import com.blitz.downloader.llm.requestInPriorityOrder
+import com.blitz.downloader.config.AiService
 import com.blitz.downloader.util.EvidenceFileManager
 import com.blitz.downloader.util.VideoFrameExtractor
 import com.google.gson.Gson
@@ -48,11 +51,14 @@ class AiTagSuggestionRepository(context: Context) {
     private val aiReferenceDao = db.aiReferenceDao()
 
     private val videoTagRepository = VideoTagRepository(appContext)
-    private fun currentProvider(): LlmProvider = GeminiProvider(AppSettings.getAiConnectionConfig(appContext))
+    private fun configuredProviders(): List<LlmProvider> = AppSettings.getAiConnections(appContext)
+        .filter { it.validationError == null }
+        .map { if (it.service == AiService.OPENAI) OpenAiProvider(it) else GeminiProvider(it) }
     private val gson = Gson()
 
     /** 设置页「测试连接」按钮用：只验证 Key/网络/模型可用，不组装标签词表、不落库。 */
-    suspend fun testConnection(): Result<String> = currentProvider().testConnection()
+    suspend fun testConnection(): Result<String> = configuredProviders().firstOrNull()?.testConnection()
+        ?: Result.failure(IllegalStateException("请先在设置中配置 AI 服务"))
 
     fun observeReferenceRows() = aiReferenceDao.observeReferenceRows()
 
@@ -85,7 +91,7 @@ class AiTagSuggestionRepository(context: Context) {
         videoFile: File?,
         authorName: String = "",
     ): Result<SuggestionOutcome> {
-        val llmProvider = currentProvider()
+        val providers = configuredProviders()
         val logId = UUID.randomUUID().toString()
         val startTime = System.currentTimeMillis()
 
@@ -259,7 +265,7 @@ class AiTagSuggestionRepository(context: Context) {
             ),
         )
 
-        val response = llmProvider.generateTagSuggestion(request).getOrElse { err ->
+        val (llmProvider, response) = providers.requestInPriorityOrder { it.generateTagSuggestion(request) }.getOrElse { err ->
             val durationMs = System.currentTimeMillis() - startTime
             AiAnalysisLogStore.updateEntry(logId) {
                 it.withFailure(err, durationMs)
@@ -414,8 +420,9 @@ class AiTagSuggestionRepository(context: Context) {
         val examples = groupIntoFewShotExamples(rows, videoAllTagNameMap())
         if (examples.isEmpty()) return
 
-        val summaryResult = currentProvider().summarizePreference(PreferenceSummaryRequest(examples))
-        val summaryText = summaryResult.getOrNull() ?: return
+        val request = PreferenceSummaryRequest(examples)
+        val summaryText = configuredProviders()
+            .requestInPriorityOrder { it.summarizePreference(request) }.getOrNull()?.second ?: return
 
         db.withTransaction {
             // 用户管理参考期间生成的旧摘要不能重新带入已移除案例。

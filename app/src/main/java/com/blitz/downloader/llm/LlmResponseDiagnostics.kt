@@ -10,4 +10,7 @@ class LlmResponseException(
     message: String,
     val diagnostics: LlmResponseDiagnostics,
     cause: Throwable? = null,
+    val retryable: Boolean = false,
 ) : IllegalStateException(message, cause)
+
+internal fun isRetryableLlmStatus(code: Int): Boolean = code == 408 || code == 429 || code in 500..599

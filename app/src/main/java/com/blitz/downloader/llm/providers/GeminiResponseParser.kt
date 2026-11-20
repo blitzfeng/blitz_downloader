@@ -3,6 +3,7 @@ package com.blitz.downloader.llm.providers
 import com.blitz.downloader.llm.AiAnalysisLogFormatter
 import com.blitz.downloader.llm.LlmResponseDiagnostics
 import com.blitz.downloader.llm.LlmResponseException
+import com.blitz.downloader.llm.isRetryableLlmStatus
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import okhttp3.ResponseBody
@@ -31,11 +32,11 @@ internal object GeminiResponseParser {
                 AiAnalysisLogFormatter.sanitizeResponse(it.toString())
             },
         )
-        fun fail(message: String): Nothing = throw LlmResponseException(
-            AiAnalysisLogFormatter.sanitizeResponse(message), diagnostics,
+        fun fail(message: String, retryable: Boolean = false): Nothing = throw LlmResponseException(
+            AiAnalysisLogFormatter.sanitizeResponse(message), diagnostics, retryable = retryable,
         )
         if (!response.isSuccessful) {
-            fail("Gemini HTTP ${response.code()}: $safeBody")
+            fail("Gemini HTTP ${response.code()}: $safeBody", isRetryableLlmStatus(response.code()))
         }
         if (root == null) fail("Gemini 响应 JSON 解析失败")
         val feedback = root.get("promptFeedback")?.takeIf { it.isJsonObject }?.asJsonObject

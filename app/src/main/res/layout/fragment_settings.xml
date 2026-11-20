@@ -490,7 +490,7 @@
                         android:background="@color/color_divider" />
 
                     <androidx.compose.ui.platform.ComposeView
-                        android:id="@+id/vertexAiSettings"
+                        android:id="@+id/aiProviderSettings"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content" />
 

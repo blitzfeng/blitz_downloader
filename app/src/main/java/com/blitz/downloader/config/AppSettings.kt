@@ -40,6 +40,10 @@ object AppSettings {
     private const val KEY_AI_SERVICE = "ai_service"
     private const val KEY_VERTEX_API_KEY = "vertex_api_key"
     private const val KEY_VERTEX_MODEL = "vertex_model"
+    private const val KEY_AI_PRIORITY = "ai_service_priority"
+    private const val OPENAI_PREFS = "blitz_openai_settings"
+    private const val KEY_OPENAI_API_KEY = "openai_api_key"
+    private const val KEY_OPENAI_MODEL = "openai_model"
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -105,34 +109,42 @@ object AppSettings {
     fun setGeminiApiKey(context: Context, apiKey: String) {
         prefs(context).edit().putString(KEY_GEMINI_API_KEY, apiKey.trim()).apply()
     }
-    fun getAiService(context: Context): AiService =
-        AiService.fromId(prefs(context).getString(KEY_AI_SERVICE, null))
-
-    fun getVertexApiKey(context: Context): String =
-        prefs(context).getString(KEY_VERTEX_API_KEY, "").orEmpty()
-
-    fun getVertexModel(context: Context): String =
-        prefs(context).getString(KEY_VERTEX_MODEL, AiConnectionConfig.DEFAULT_MODEL).orEmpty()
-
     /** Key 与模型一起保存；清空 Key 是有效的重置操作。 */
-    fun setVertexConfig(context: Context, apiKey: String, model: String, service: AiService) {
+    fun setVertexConfig(context: Context, apiKey: String, model: String) {
         prefs(context).edit()
-            .putString(KEY_AI_SERVICE, service.id)
             .putString(KEY_VERTEX_API_KEY, apiKey.trim())
             .putString(KEY_VERTEX_MODEL, model.trim())
             .apply()
     }
 
-    /** 一次读取完整偏好快照，避免后台分析与设置保存并发时混用旧服务和新密钥。 */
-    fun getAiConnectionConfig(context: Context): AiConnectionConfig {
+    fun setOpenAiConfig(context: Context, apiKey: String, model: String) {
+        context.getSharedPreferences(OPENAI_PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_OPENAI_API_KEY, apiKey.trim())
+            .putString(KEY_OPENAI_MODEL, model.trim())
+            .apply()
+    }
+
+    fun setAiPriority(context: Context, order: List<AiService>) {
+        prefs(context).edit().putString(KEY_AI_PRIORITY, order.joinToString(",") { it.id }).apply()
+    }
+
+    /** 每个服务的模型与密钥从同一份快照读取。 */
+    fun getAiConnections(context: Context): List<AiConnectionConfig> {
         val snapshot = prefs(context).all
-        val service = AiService.fromId(snapshot[KEY_AI_SERVICE] as? String)
-        return when (service) {
-            AiService.GEMINI -> AiConnectionConfig(service, snapshot[KEY_GEMINI_API_KEY] as? String ?: "")
-            AiService.VERTEX_AI -> AiConnectionConfig(
-                service, snapshot[KEY_VERTEX_API_KEY] as? String ?: "",
-                snapshot[KEY_VERTEX_MODEL] as? String ?: AiConnectionConfig.DEFAULT_MODEL,
-            )
-        }
+        val openAi = context.getSharedPreferences(OPENAI_PREFS, Context.MODE_PRIVATE).all
+        return AiService.priority(snapshot[KEY_AI_PRIORITY] as? String, snapshot[KEY_AI_SERVICE] as? String)
+            .map { service ->
+                when (service) {
+                    AiService.GEMINI -> AiConnectionConfig(service, snapshot[KEY_GEMINI_API_KEY] as? String ?: "")
+                    AiService.VERTEX_AI -> AiConnectionConfig(
+                        service, snapshot[KEY_VERTEX_API_KEY] as? String ?: "",
+                        snapshot[KEY_VERTEX_MODEL] as? String ?: AiConnectionConfig.DEFAULT_MODEL,
+                    )
+                    AiService.OPENAI -> AiConnectionConfig(
+                        service, openAi[KEY_OPENAI_API_KEY] as? String ?: "",
+                        openAi[KEY_OPENAI_MODEL] as? String ?: AiConnectionConfig.DEFAULT_OPENAI_MODEL,
+                    )
+                }
+            }
     }
 }
