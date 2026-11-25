@@ -405,7 +405,7 @@ SELECT COUNT(*) FROM tags WHERE tagName = '美腿'
 
 | 表名 | 对应 Entity | 用途 |
 |------|-------------|------|
-| `download_batch` | `DownloadBatchEntity` | 批量下载批次记录（仅记录入库数 > 2 的批次） |
+| `download_batch` | `DownloadBatchEntity` | 下载批次记录（成功入库至少一条即记录） |
 | `ai_tag_suggestion_pending` | `AiTagSuggestionPendingEntity` | 待处理 AI 建议暂存表（分析完成写入，全部确认/跳过后删除） |
 
 ### `download_batch` 字段说明
@@ -416,7 +416,7 @@ SELECT COUNT(*) FROM tags WHERE tagName = '美腿'
 | `createdAtMillis` | INTEGER | 批次生成时间戳（毫秒） |
 | `awemeIds` | TEXT | 本批次包含的视频 awemeId 列表，`\|` 分隔（对齐 `userRelation` 约定） |
 
-**写入规则**：`DownloadService.processJob` 在单次批量下载成功入库后，判断 `recordedIds.size > 2`，是则写入一条记录；≤ 2 条不记录。
+**写入规则**：`DownloadService.processJob` 在单次下载成功入库后，判断 `recordedIds.isNotEmpty()`，有成功项就写入一条记录；没有成功项时不记录。
 **读取规则**：`DownloadBatchDao.getRecentBatches(2)` 取出最近两条批次。批量标签整理页加载「最近批次全部视频」并合并「上一批次中 `tagEditCount == 0` 的未打标视频」。
 
 ### `ai_tag_suggestion_pending` 字段说明

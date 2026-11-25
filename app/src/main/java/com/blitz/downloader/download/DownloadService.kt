@@ -167,8 +167,8 @@ class DownloadService : Service() {
                 AppSettings.setTagFrequencyLastAnalyzedAtMillis(applicationContext, System.currentTimeMillis())
             }
 
-            // 批量下载成功入库数 > 2 时，记录一条下载批次，供批量标签整理页面加载；≤ 2 条不记录
-            if (recordedIds.size > 2) {
+            // 下载成功入库至少一条就记录批次，让单条视频也能进入批量标签整理页面。
+            if (recordedIds.isNotEmpty()) {
                 val db = AppDatabase.getInstance(applicationContext)
                 db.downloadBatchDao().insert(
                     DownloadBatchEntity(

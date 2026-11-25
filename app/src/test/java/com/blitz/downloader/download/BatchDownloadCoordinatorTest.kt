@@ -17,7 +17,7 @@ class BatchDownloadCoordinatorTest {
             downloadUrl = "https://x",
             isSelected = true,
         )
-        assertEquals("作者A_四选一 到了.mp4", BatchDownloadCoordinator.buildFileName(item))
+        assertEquals("作者A_四选一 到了_7123456789012345678.mp4", BatchDownloadCoordinator.buildFileName(item))
     }
 
     @Test
@@ -59,7 +59,7 @@ class BatchDownloadCoordinatorTest {
             downloadUrl = "https://x",
             isSelected = true,
         )
-        assertEquals("a_b_c_d.mp4", BatchDownloadCoordinator.buildFileName(item))
+        assertEquals("a_b_c_d_1.mp4", BatchDownloadCoordinator.buildFileName(item))
     }
 
     @Test
@@ -86,7 +86,7 @@ class BatchDownloadCoordinatorTest {
             isSelected = true,
             isPhoto = true,
         )
-        assertEquals("摄影师_春日写真", BatchDownloadCoordinator.buildFileNameBase(item))
+        assertEquals("摄影师_春日写真_7123", BatchDownloadCoordinator.buildFileNameBase(item))
     }
 
     @Test
@@ -134,5 +134,53 @@ class BatchDownloadCoordinatorTest {
         val base = BatchDownloadCoordinator.buildFileNameBase(item)
         val byteSize = base.toByteArray(Charsets.UTF_8).size
         org.junit.Assert.assertTrue("Base byte size should be <= 200, was $byteSize", byteSize <= 200)
+        org.junit.Assert.assertTrue(base.endsWith("_7999888777"))
+    }
+
+    @Test
+    fun sameAuthorAndDescriptionKeepDifferentVideoAndCoverNames() {
+        val original = VideoItemUiModel(
+            id = "1001", title = "相同标题", authorNickname = "相同作者",
+            descRaw = "相同描述 #话题", coverUrl = null, downloadUrl = "https://x", isSelected = true,
+        )
+        val names = (1001..1004).map { id ->
+            BatchDownloadCoordinator.buildFileNameBase(original.copy(id = id.toString()))
+        }
+        assertEquals(4, names.toSet().size)
+        assertEquals(4, names.map { "$it.mp4" }.toSet().size)
+        assertEquals(4, names.map { "$it.jpg" }.toSet().size)
+        assertEquals(names.first(), BatchDownloadCoordinator.buildFileNameBase(original))
+    }
+
+    @Test
+    fun truncatedDescriptionsCannotRemoveUniqueIdOrMergePhotoGalleries() {
+        val item = VideoItemUiModel(
+            id = "1001", title = "长标题", authorNickname = "作者".repeat(30),
+            descRaw = "相同的很长描述😀".repeat(30), coverUrl = null, downloadUrl = null,
+            isSelected = true, isPhoto = true,
+        )
+        val first = BatchDownloadCoordinator.buildFileNameBase(item)
+        val second = BatchDownloadCoordinator.buildFileNameBase(item.copy(id = "1002"))
+        org.junit.Assert.assertNotEquals(first, second)
+        org.junit.Assert.assertTrue(first.endsWith("_1001"))
+        org.junit.Assert.assertTrue(second.endsWith("_1002"))
+        org.junit.Assert.assertTrue(first.toByteArray(Charsets.UTF_8).size <= 200)
+        val baseFromFirstImage = "${first}_01".replace(Regex("_\\d+$"), "")
+        val group = Regex("^${Regex.escape(baseFromFirstImage)}_\\d+$")
+        org.junit.Assert.assertTrue("${first}_02".matches(group))
+        org.junit.Assert.assertFalse("${second}_01".matches(group))
+    }
+
+    @Test
+    fun nonNumericIdsRemainDistinctAfterFilenameSanitization() {
+        val item = VideoItemUiModel(
+            id = "a/b", title = "标题", authorNickname = "作者", descRaw = "描述",
+            coverUrl = null, downloadUrl = "https://x", isSelected = true,
+        )
+        val first = BatchDownloadCoordinator.buildFileNameBase(item)
+        val second = BatchDownloadCoordinator.buildFileNameBase(item.copy(id = "a:b"))
+        org.junit.Assert.assertNotEquals(first, second)
+        org.junit.Assert.assertFalse(first.contains('/'))
+        assertEquals(first, BatchDownloadCoordinator.buildFileNameBase(item))
     }
 }

@@ -9,6 +9,8 @@ import com.blitz.downloader.llm.AuthorProfileContext
 import com.blitz.downloader.llm.FewShotExample
 import com.blitz.downloader.llm.ImagePart
 import com.blitz.downloader.llm.LlmProvider
+import com.blitz.downloader.llm.LlmNetworkTrace
+import com.blitz.downloader.llm.LlmNetworkEvents
 import com.blitz.downloader.llm.PreferenceSummaryRequest
 import com.blitz.downloader.llm.TagSuggestionRequest
 import com.blitz.downloader.llm.TagSuggestionResponse
@@ -119,7 +121,8 @@ class GeminiProvider(
             ),
         )
         return requestResult {
-            val response = service.generateContent(config.generateContentUrl, config.apiKey, requestBody(body))
+            val trace = request.onNetworkUpdate?.let { LlmNetworkTrace(config.service.displayName, modelId, it) }
+            val response = service.generateContent(config.generateContentUrl, config.apiKey, requestBody(body), trace)
             val parsed = GeminiResponseParser.parse(response)
             parsed.decode { text ->
                 val payload = gson.fromJson(text, GeminiTagSuggestionPayload::class.java)
@@ -284,6 +287,7 @@ class GeminiProvider(
                     .readTimeout(ioSeconds, TimeUnit.SECONDS)
                     .writeTimeout(ioSeconds, TimeUnit.SECONDS)
                     .addInterceptor(LoggingInterceptor())
+                    .eventListenerFactory(LlmNetworkEvents)
                     .build())
                 .addConverterFactory(GsonConverterFactory.create())
                 .build().create(GeminiApiService::class.java)

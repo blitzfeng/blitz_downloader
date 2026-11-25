@@ -21,6 +21,7 @@ data class AiAnalysisLogEntry(
     val timestamp: Long = System.currentTimeMillis(),
     val status: AiAnalysisLogStatus = AiAnalysisLogStatus.RUNNING,
     val durationMs: Long = 0L,
+    val networkRequests: List<LlmNetworkMetrics> = emptyList(),
     // 请求数据
     val requestPrompt: String = "",
     val fullPrompt: String = "",

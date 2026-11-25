@@ -4,6 +4,8 @@ import com.blitz.downloader.config.AiConnectionConfig
 import com.blitz.downloader.llm.AiAnalysisLogFormatter
 import com.blitz.downloader.llm.ImagePart
 import com.blitz.downloader.llm.LlmProvider
+import com.blitz.downloader.llm.LlmNetworkTrace
+import com.blitz.downloader.llm.LlmNetworkEvents
 import com.blitz.downloader.llm.LlmResponseDiagnostics
 import com.blitz.downloader.llm.LlmResponseException
 import com.blitz.downloader.llm.PreferenceSummaryRequest
@@ -26,12 +28,14 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.Tag
 
 internal interface OpenAiResponsesApi {
     @POST("v1/responses")
     suspend fun create(
         @Header("Authorization") authorization: String,
         @Body body: Map<String, @JvmSuppressWildcards Any>,
+        @Tag trace: LlmNetworkTrace? = null,
     ): Response<ResponseBody>
 }
 
@@ -61,7 +65,8 @@ internal class OpenAiProvider(
                 add(imagePart(frame, if (frame.hasFace) "high" else "low"))
             }
         }
-        val response = create(api, listOf(mapOf("role" to "user", "content" to content)), structured = true)
+        val trace = request.onNetworkUpdate?.let { LlmNetworkTrace(config.service.displayName, modelId, it) }
+        val response = create(api, listOf(mapOf("role" to "user", "content" to content)), structured = true, trace = trace)
         try {
             gson.fromJson(response.text, GeminiTagSuggestionPayload::class.java)
                 .toDomain().copy(diagnostics = response.diagnostics)
@@ -100,7 +105,12 @@ internal class OpenAiProvider(
         }
     }
 
-    private suspend fun create(api: OpenAiResponsesApi, input: Any, structured: Boolean = false): Parsed {
+    private suspend fun create(
+        api: OpenAiResponsesApi,
+        input: Any,
+        structured: Boolean = false,
+        trace: LlmNetworkTrace? = null,
+    ): Parsed {
         val request = buildMap {
             put("model", modelId)
             put("input", input)
@@ -114,7 +124,7 @@ internal class OpenAiProvider(
                 )))
             }
         }
-        val response = api.create("Bearer ${config.apiKey}", request)
+        val response = api.create("Bearer ${config.apiKey}", request, trace)
         val raw = (if (response.isSuccessful) response.body() else response.errorBody())
             ?.use { it.string() }.orEmpty()
             .replace(config.apiKey, "[REDACTED]")
@@ -166,6 +176,7 @@ internal class OpenAiProvider(
                 .writeTimeout(seconds, TimeUnit.SECONDS)
                 .followRedirects(false)
                 .retryOnConnectionFailure(false)
+                .eventListenerFactory(LlmNetworkEvents)
                 .build())
             .addConverterFactory(GsonConverterFactory.create(gson))
             .build().create(OpenAiResponsesApi::class.java)

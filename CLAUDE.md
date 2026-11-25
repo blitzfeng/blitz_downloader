@@ -283,6 +283,8 @@ WebView（登录 / 加载 www.douyin.com）→ CookieManager → DouyinCookieSto
 
 `BatchDownloadCoordinator` 处理被勾选的 `VideoItemUiModel` 列表，受限并发（`DEFAULT_MAX_CONCURRENT = 3`），单项重试（`DEFAULT_MAX_RETRIES = 3`，与 F2 一致）。文件落到公共 `Download/` 下：
 
+下载文件基础名为 `作者_去话题描述_作品ID`，无描述时使用 `作者_作品ID`。截断只作用于作者和描述，保留作品 ID 后缀，避免同作者同文案、相同标题截断结果的不同作品共用路径。非数字作品 ID 使用稳定的 SHA-256 后缀。视频、封面和图集均采用此规则。MediaStore 写入完成后按插入的 URI 查询实际 RELATIVE_PATH 和 DISPLAY_NAME，再把实际路径存入数据库，兼容系统自动改名。旧记录维持已有路径，本次修复不根据文件名猜测历史文件与作品的对应关系。
+
 - `Download/bDouyin/videos/` — 视频 mp4
 - `Download/bDouyin/images/` — 图集图片（含**实况图**：静态封面 `base_NN.webp` + 同基名同序号的动图本体 `base_NN.mp4`）
 - `Download/bDouyin/covers/` — 视频封面缩略图（图集复用第一张图作为封面，不重复写）
@@ -674,7 +676,7 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 
 批量分析页面使用 Compose + Material 3，规范与实施记录见 `openspec/changes/improve-batch-ai-tag-review/`。
 
-1. **批次与候选**：批量下载成功入库超过 2 条仍记录 `download_batch`。页面合并最近两个批次并按 awemeId 去重，只将 `mediaType == video && tagEditCount == 0` 的记录列为候选；图片、图集（含实况图集）及已人工编辑的视频自动排除。“恢复全部”只恢复手动排除，启动前会重新读取数据库核验。显示用的修改次数筛选不改变提交范围。
+1. **批次与候选**：下载成功入库至少 1 条就记录 `download_batch`，单条视频也能进入批量标签整理页面；没有成功项时不记录批次。页面合并最近两个批次并按 awemeId 去重，只将 `mediaType == video && tagEditCount == 0` 的记录列为候选；图片、图集（含实况图集）及已人工编辑的视频自动排除。“恢复全部”只恢复手动排除，启动前会重新读取数据库核验。显示用的修改次数筛选不改变提交范围。
 2. **候选与本次结果分离**：`BatchTagReviewUiState.allVideos` 是候选，`sessionVideos` 是本次提交的视频。确认或人工打标增加计数后，视频退出下次候选，但仍保留在本次结果和复查区。最新下载批次未变化时，即使没有新候选也能复查该批次会话；会话 `sourceBatchIds` 首项必须匹配当前最新下载批次 ID。新批次写入会通过 Room Flow 切换页面到待分析状态，隐藏旧会话结果，并重置手动排除与显示筛选。
 3. **后台与持久化**：`AiBatchAnalysisService` 以会话 ID 串行执行；`batch_analysis_session` 保存来源批次、结束及审核状态，`batch_analysis_item` 保存成员顺序、媒体快照、成功/失败、错误摘要及原始建议。成功项同时写入既有 pending，失败独立保存，之后再发送事件。页面观察 Room 数据，离页/重建不依赖 `SharedFlow` 重放；无活动服务的未结束成员恢复为中断失败，不自动发请求。旧版只有 pending 的数据作为 legacy 会话恢复，不伪造过去失败记录的完整汇总。
 4. **显示顺序**：有未处理建议项时隐藏“全部”，按 **未处理 → 失败** 展示；全部分析结束且所有建议组处理后按 **全部 → 失败** 展示。失败或成功但无建议的项不阻止完成；空类型不占位，完成判定使用未经过显示筛选的数据。“全部”按本次提交成员去重，不受修改次数筛选影响，保留播放和人工编辑入口。全量与失败区域的封面下展示作者名，当前标签使用独立的六色多巴胺标签块自动换行，与作者及 AI 状态区分。已处理组的状态、渲染及撤销代码保留但不加入列表；编辑“全部”里的视频时不因保存中状态移除区域，保持稳定 key 与滚动位置。
@@ -739,6 +741,8 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 完成对应 todo 的任务后，更新 plan 文件 frontmatter 的 `status`，必要时同步刷新 `.cursor/CONTINUATION.md`。
 
 ## 开发规范
+批量 AI 分析由 `AiBatchAnalysisCoordinator` 使用最多 3 个工作协程和有界队列调度。视频 ID 去重，空位即时补齐，进度由单一协程按实际完成数顺序发布。单条业务失败继续处理队列，服务取消会取消全部子任务，完成通知在全部任务落库后发送。Repository 的抽帧阶段通过单独信号量限制为 1，网络请求可以重叠执行；每条请求的服务降级包含在其并发名额内。
+AI 分析日志使用每次 HTTP 调用独立的 OkHttp EventListener 统计请求时间、响应头到达时间、完成时间、上传耗时、等待响应耗时以及请求和响应体字节数。服务降级时每次调用分别展示，单条及全部复制同步包含统计。计时采用单调时钟，报文体大小包括图片 Base64，不包括 HTTP 头和 TLS 开销，压缩响应显示传输大小。缺失数据以占位符展示。
 - 每次新增需求开发完代码后，都要完善文档
 - ui设计风格要使用material design
 - 新的ui页面、dialog等采用compose实现

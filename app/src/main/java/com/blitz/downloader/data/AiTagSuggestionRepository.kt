@@ -31,6 +31,10 @@ import com.blitz.downloader.util.VideoFrameExtractor
 import com.google.gson.Gson
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 /**
  * AI 建议标签的编排层：组装请求 → 调用 [LlmProvider] → 按标签词表过滤幻觉 → 落库分析记录/
@@ -55,6 +59,7 @@ class AiTagSuggestionRepository(context: Context) {
         .filter { it.validationError == null }
         .map { if (it.service == AiService.OPENAI) OpenAiProvider(it) else GeminiProvider(it) }
     private val gson = Gson()
+    private val frameExtraction = Semaphore(1)
 
     /** 设置页「测试连接」按钮用：只验证 Key/网络/模型可用，不组装标签词表、不落库。 */
     suspend fun testConnection(): Result<String> = configuredProviders().firstOrNull()?.testConnection()
@@ -108,8 +113,10 @@ class AiTagSuggestionRepository(context: Context) {
         }
 
         // 自动补齐尚未分配数值标识（id == 0）的历史标签，确保所有标签都有唯一 id
-        videoTagRepository.backfillTagIds()
-        val tags = videoTagRepository.getAvailableTagEntities()
+        val tags = db.withTransaction {
+            videoTagRepository.backfillTagIds()
+            videoTagRepository.getAvailableTagEntities()
+        }
         if (tags.isEmpty()) {
             val err = IllegalStateException("没有可用标签，无法发起 AI 建议")
             AiAnalysisLogStore.addEntry(
@@ -129,7 +136,11 @@ class AiTagSuggestionRepository(context: Context) {
         val tagByName = tags.associateBy { it.tagName }
         val tagById = tags.filter { it.id > 0 }.associateBy { it.id }
 
-        val keyFrames = videoFile?.let { VideoFrameExtractor.extract(it) }.orEmpty()
+        val keyFrames = frameExtraction.withPermit {
+            coroutineContext.ensureActive()
+            videoFile?.let { VideoFrameExtractor.extract(it) }.orEmpty()
+        }
+        coroutineContext.ensureActive()
         val coverImage = ImagePart(jpegBytes = coverBytes, hasFace = false)
 
         val threshold = AppSettings.getHighFrequencyTagThreshold(appContext)
@@ -265,7 +276,12 @@ class AiTagSuggestionRepository(context: Context) {
             ),
         )
 
-        val (llmProvider, response) = providers.requestInPriorityOrder { it.generateTagSuggestion(request) }.getOrElse { err ->
+        val measuredRequest = request.copy(onNetworkUpdate = { metrics ->
+            AiAnalysisLogStore.updateEntry(logId) { entry ->
+                entry.copy(networkRequests = entry.networkRequests.filterNot { it.id == metrics.id } + metrics)
+            }
+        })
+        val (llmProvider, response) = providers.requestInPriorityOrder { it.generateTagSuggestion(measuredRequest) }.getOrElse { err ->
             val durationMs = System.currentTimeMillis() - startTime
             AiAnalysisLogStore.updateEntry(logId) {
                 it.withFailure(err, durationMs)

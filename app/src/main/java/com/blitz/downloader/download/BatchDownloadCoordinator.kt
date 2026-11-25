@@ -2,6 +2,7 @@ package com.blitz.downloader.download
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.ContentResolver
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -21,6 +22,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.atomic.AtomicInteger
+import java.security.MessageDigest
 
 /**
  * 列表批量下载：仅处理 [VideoItemUiModel.isSelected] 且 [VideoItemUiModel.downloadUrl] 非空的项；
@@ -205,7 +207,7 @@ object BatchDownloadCoordinator {
     /**
      * 下载图集中**待下载的**图片（[VideoItemUiModel.downloadImageUrls]，用户选图后可能只是其中几张）；
      * 全部成功才视为整体成功（与视频重试逻辑对齐）。
-     * 文件名：`{作者}_{描述}_{序号}.jpg`（序号从 01 起，两位补零）。
+     * 文件名：`{作者}_{描述}_{作品ID}_{序号}.jpg`（序号从 01 起，两位补零）。
      *
      * 序号按**实际下载的这几张**连续编号，而不是沿用原图集里的下标——`_01` 必须存在，
      * 因为入库的 `filePath` 就是第一张图，`ImageViewerActivity.findImageSet` 与导出时的
@@ -338,7 +340,7 @@ object BatchDownloadCoordinator {
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-            "$relativeDir/$displayName"
+            storedDownloadPath(resolver, uri)
         } catch (e: Exception) {
             Log.e(TAG, "image download error: $displayName", e)
             try { resolver.delete(uri, null, null) } catch (_: Exception) { }
@@ -410,7 +412,7 @@ object BatchDownloadCoordinator {
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-            "$relativeDir/$displayName"
+            storedDownloadPath(resolver, uri)
         } catch (e: Exception) {
             Log.w(TAG, "cover download (Downloads) failed: $displayName", e)
             try { resolver.delete(uri, null, null) } catch (_: Exception) { }
@@ -493,7 +495,7 @@ object BatchDownloadCoordinator {
     }
 
     /**
-     * `{作者昵称}_{去掉#话题后的描述}.mp4`；若去掉话题后无描述则为 `{作者昵称}_{videoId}.mp4`。
+     * `{作者昵称}_{去掉#话题后的描述}_{作品ID}.mp4`，无描述时省略描述部分。
      */
     internal fun buildFileName(item: VideoItemUiModel): String = "${buildFileNameBase(item)}.mp4"
 
@@ -529,21 +531,25 @@ object BatchDownloadCoordinator {
 
     /**
      * 无扩展名的基础文件名，图集各张图在其后追加 `_{序号}.{ext}`。
-     * `{作者昵称}_{去掉#话题后的描述}`；若去掉话题后无描述则为 `{作者昵称}_{id}`。
+     * 作品 ID 后缀始终保留，截断仅作用于作者和描述，避免长标题截掉身份标识。
      * 针对 Linux / Android 文件系统单个文件名最大 255 字节（NAME_MAX）的限制，
      * 此处限制基础名不超过 [MAX_FILE_NAME_BASE_BYTES]（200）个 UTF-8 字节，为扩展名及序号预留空间。
      */
     internal fun buildFileNameBase(item: VideoItemUiModel): String {
+        require(item.id.isNotBlank()) { "下载作品缺少 ID" }
         val user = sanitizeFileNameBase(item.authorNickname).ifBlank { "user" }.take(40)
         val descClean = sanitizeFileNameBase(stripHashtagTopics(item.descRaw)).trim()
-        val body = if (descClean.isBlank()) {
-            sanitizeFileNameBase(item.id).ifBlank { "item" }
+        val identity = if (item.id.length <= 64 && item.id.all { it in '0'..'9' }) {
+            item.id
         } else {
-            descClean.take(80)
+            MessageDigest.getInstance("SHA-256").digest(item.id.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }
-        val rawBase = "${user}_${body}"
-        val truncated = truncateUtf8Bytes(rawBase, MAX_FILE_NAME_BASE_BYTES).trimEnd('_', ' ')
-        return truncated.ifBlank { "media_${item.id.ifBlank { System.currentTimeMillis().toString() }}" }
+        val suffix = "_$identity"
+        val prefix = if (descClean.isBlank()) user else "${user}_${descClean.take(80)}"
+        val remainingBytes = MAX_FILE_NAME_BASE_BYTES - suffix.toByteArray(Charsets.UTF_8).size
+        val truncated = truncateUtf8Bytes(prefix, remainingBytes).trimEnd('_', ' ')
+        return "${truncated.ifBlank { "media" }}$suffix"
     }
 
     /**
@@ -640,11 +646,24 @@ object BatchDownloadCoordinator {
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-            "$relativeDir/$displayName"
+            storedDownloadPath(resolver, uri)
         } catch (e: Exception) {
             Log.e(TAG, "download error: $displayName", e)
             try { resolver.delete(uri, null, null) } catch (_: Exception) { }
             null
         }
+    }
+
+    /** MediaStore 可自动重命名重名文件，必须查询插入 URI 的实际路径，不能按期望名称推算。 */
+    private fun storedDownloadPath(resolver: ContentResolver, uri: Uri): String {
+        val columns = arrayOf(MediaStore.Downloads.RELATIVE_PATH, MediaStore.Downloads.DISPLAY_NAME)
+        val path = resolver.query(uri, columns, null, null, null)?.use { cursor ->
+            if (!cursor.moveToFirst()) return@use null
+            val directory = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Downloads.RELATIVE_PATH))
+            val name = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Downloads.DISPLAY_NAME))
+            if (directory.isNullOrBlank() || name.isNullOrBlank()) return@use null
+            "${directory.trimEnd('/')}/$name"
+        }
+        return path ?: throw IOException("无法读取已下载文件的实际存储路径")
     }
 }

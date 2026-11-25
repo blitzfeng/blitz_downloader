@@ -39,9 +39,9 @@ import kotlinx.coroutines.withContext
  * 前台批量 AI 标签分析服务：
  *
  * 参照 [com.blitz.downloader.download.DownloadService] 架构：
- * 前台通知、串行处理队列、进度更新、完成后停止。
+ * 前台通知、批次内最多三条并发分析、进度更新、完成后停止。
  *
- * 逐条调用 [com.blitz.downloader.data.AiTagSuggestionRepository.requestSuggestion] 获取建议，
+ * 有界并发调用 [com.blitz.downloader.data.AiTagSuggestionRepository.requestSuggestion] 获取建议，
  * 成功项把返回的 analysisId 与建议标签名 upsert 进 `ai_tag_suggestion_pending` 表；
  * 失败项记录日志并跳过继续处理下一条，不中断队列。
  */
@@ -103,7 +103,7 @@ class AiBatchAnalysisService : Service() {
     }
 
     private suspend fun processJob(job: BatchAnalysisJob) {
-        val awemeIds = job.awemeIds
+        val awemeIds = job.awemeIds.distinct()
         val total = awemeIds.size
         if (total == 0) return
 
@@ -120,13 +120,10 @@ class AiBatchAnalysisService : Service() {
 
         // 确保所有标签均已分配稳定唯一数值 ID
         withContext(Dispatchers.IO) {
-            tagRepo.backfillTagIds()
+            app.database.withTransaction { tagRepo.backfillTagIds() }
         }
 
-        var succeededCount = 0
-        var failedCount = 0
-
-        for ((index, awemeId) in awemeIds.withIndex()) {
+        val summary = AiBatchAnalysisCoordinator().run(awemeIds, analyze = { awemeId ->
             var failureReason = "分析失败，请人工打标签或重新分析"
             val success = withContext(Dispatchers.IO) {
                 sessionDao.setResult(job.sessionId, awemeId, BatchAnalysisItemEntity.RUNNING)
@@ -201,24 +198,21 @@ class AiBatchAnalysisService : Service() {
                 }
             }
 
-            if (success) {
-                succeededCount++
-            } else {
-                failedCount++
+            if (!success) {
                 withContext(Dispatchers.IO) {
                     sessionDao.setResult(job.sessionId, awemeId, BatchAnalysisItemEntity.FAILED, failureReason)
                 }
             }
-
-            val done = index + 1
-            AiBatchAnalysisEvents.updateProgress(done = done, total = total)
+            success
+        }, onCompleted = { awemeId, success, done, count ->
+            AiBatchAnalysisEvents.updateProgress(done = done, total = count)
             AiBatchAnalysisEvents.notifyItemDone(awemeId, success)
-            updateProgress(done = done, total = total, indeterminate = false)
-        }
+            updateProgress(done = done, total = count, indeterminate = false)
+        })
 
         withContext(Dispatchers.IO) { sessionDao.finish(job.sessionId) }
-        AiBatchAnalysisEvents.notifyBatchFinished(succeededCount, failedCount)
-        notifyComplete(succeededCount, failedCount)
+        AiBatchAnalysisEvents.notifyBatchFinished(summary.succeeded, summary.failed)
+        notifyComplete(summary.succeeded, summary.failed)
     }
 
     private fun ensureChannel() {
@@ -315,12 +309,12 @@ class AiBatchAnalysisService : Service() {
         @Synchronized
         fun start(context: Context, awemeIds: List<String>, sessionId: String): Boolean {
             if (!isConfigured(context) || awemeIds.isEmpty() || activeSessionIds.isNotEmpty()) return false
-            val job = BatchAnalysisJob(sessionId, awemeIds)
+            val job = BatchAnalysisJob(sessionId, awemeIds.distinct())
             activeSessionIds.add(sessionId)
             pendingJobs.add(job)
             return try {
                 ContextCompat.startForegroundService(context, Intent(context, AiBatchAnalysisService::class.java))
-                AiBatchAnalysisEvents.setAnalyzing(true, awemeIds.size)
+                AiBatchAnalysisEvents.setAnalyzing(true, job.awemeIds.size)
                 true
             } catch (e: Exception) {
                 pendingJobs.remove(job)

@@ -131,6 +131,40 @@ object AiAnalysisLogFormatter {
     /**
      * 生成单条日志的完整纯文本导出报告，供一键复制或分享。
      */
+    fun formatNetworkMetrics(entry: AiAnalysisLogEntry): String = buildString {
+        if (entry.networkRequests.isEmpty()) {
+            append("网络请求统计暂无记录")
+            return@buildString
+        }
+        fun time(value: Long?): String = value?.let {
+            SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.getDefault()).format(Date(it))
+        } ?: "尚未收到"
+        fun millis(value: Long?): String = value?.let { "$it ms" } ?: "—"
+        fun bytes(value: Long?): String = when {
+            value == null -> "—"
+            value < 1024 -> "$value B"
+            value < 1024 * 1024 -> String.format(Locale.getDefault(), "%.2f KiB（%d B）", value / 1024.0, value)
+            else -> String.format(Locale.getDefault(), "%.2f MiB（%d B）", value / (1024.0 * 1024), value)
+        }
+        val first = entry.networkRequests.first()
+        appendLine("请求前准备耗时  ${millis((first.requestAtMillis - entry.timestamp).coerceAtLeast(0))}")
+        entry.networkRequests.forEachIndexed { index, request ->
+            if (index > 0) appendLine()
+            appendLine("请求 ${index + 1}  ${request.service} · ${request.model}")
+            appendLine("请求时间  ${time(request.requestAtMillis)}")
+            appendLine("响应时间（收到响应头）  ${time(request.responseAtMillis)}")
+            appendLine("完成时间  ${request.completedAtMillis?.let { time(it) } ?: if (request.failed) "请求失败" else "进行中"}")
+            appendLine("上传耗时  ${millis(request.uploadDurationMs)}    等待响应  ${millis(request.responseWaitMs)}")
+            appendLine("接收响应耗时  ${millis(request.downloadDurationMs)}")
+            appendLine("请求总耗时  ${millis(request.durationMs)}")
+            appendLine("请求体大小  ${bytes(request.requestBytes)}")
+            appendLine("响应体大小  ${bytes(request.responseBytes)}")
+            request.httpCode?.let { appendLine("HTTP 状态  $it") }
+            if (request.failed) appendLine("网络请求失败")
+        }
+        append("大小按 HTTP 报文体统计，含图片 Base64，不含请求头及 TLS 开销；响应压缩时按传输大小统计。")
+    }
+
     fun formatEntryToPlainText(entry: AiAnalysisLogEntry): String = buildString {
         val timeStr = synchronized(dateFormat) {
             dateFormat.format(Date(entry.timestamp))
@@ -144,6 +178,7 @@ object AiAnalysisLogFormatter {
         appendLine("==================================================")
         appendLine("视频: ${entry.videoTitle.ifBlank { entry.awemeId }}")
         appendLine("状态: $statusStr    耗时: ${entry.durationMs} ms    时间: $timeStr")
+        appendLine(formatNetworkMetrics(entry))
         appendLine("--------------------------------------------------")
         appendLine("【请求数据概览】")
         if (entry.authorName.isNotBlank()) {

@@ -110,7 +110,10 @@ class VertexAiConnectionTest {
 
     @Test fun cancellationIsPropagated() = runBlocking {
         val service = object : GeminiApiService {
-            override suspend fun generateContent(url: String, apiKey: String, body: GeminiGenerateContentRequest): retrofit2.Response<okhttp3.ResponseBody> {
+            override suspend fun generateContent(
+                url: String, apiKey: String, body: GeminiGenerateContentRequest,
+                trace: com.blitz.downloader.llm.LlmNetworkTrace?,
+            ): retrofit2.Response<okhttp3.ResponseBody> {
                 throw CancellationException("cancelled")
             }
         }

@@ -281,6 +281,13 @@ fun AiAnalysisLogCard(entry: AiAnalysisLogEntry) {
                 }
             }
 
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = AiAnalysisLogFormatter.formatNetworkMetrics(entry),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
             // 摘要标签栏：空格分开
             if (entry.suggestedTags.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(8.dp))

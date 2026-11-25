@@ -45,6 +45,7 @@ data class TagSuggestionRequest(
     val preferenceProfileText: String? = null,
     val fewShotExamples: List<FewShotExample> = emptyList(),
     val multimodalEvidenceSamples: List<MultimodalEvidenceSample> = emptyList(),
+    val onNetworkUpdate: ((LlmNetworkMetrics) -> Unit)? = null,
 )
 
 /** 单个视觉维度的可见证据；`visibility` 取值 "high"/"medium"/"low"/"none"。 */

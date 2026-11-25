@@ -5,6 +5,8 @@ import retrofit2.http.Body
 import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Url
+import retrofit2.http.Tag
+import com.blitz.downloader.llm.LlmNetworkTrace
 
 interface GeminiApiService {
 
@@ -17,5 +19,6 @@ interface GeminiApiService {
         @Url url: String,
         @Header("x-goog-api-key") apiKey: String,
         @Body body: GeminiGenerateContentRequest,
+        @Tag trace: LlmNetworkTrace? = null,
     ): Response<okhttp3.ResponseBody>
 }
