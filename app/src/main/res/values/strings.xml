@@ -508,4 +508,7 @@
     <string name="settings_ai_priority_down">下移</string>
     <string name="settings_ai_test_no_key">请先配置一个 AI 服务</string>
     <string name="settings_ai_test_summary">测试 %1$s · %2$s；不生成标签建议</string>
+    <string name="ai_apply_replacement">应用替换建议</string>
+    <string name="ai_confirm_replacement">确认（含替换）</string>
+    <string name="ai_replacement_notice">确认后将移除提示中的旧标签，其他标签继续保留。</string>
 </resources>

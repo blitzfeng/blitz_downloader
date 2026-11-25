@@ -15,6 +15,10 @@ interface VideoAiAnalysisDao {
     @Query("SELECT * FROM video_ai_analysis WHERE id = :id")
     suspend fun getById(id: Long): VideoAiAnalysisEntity?
 
+    /** 批量恢复审核页的结构化标签变更建议。 */
+    @Query("SELECT * FROM video_ai_analysis WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<Long>): List<VideoAiAnalysisEntity>
+
     /** 某视频的历史分析记录，按时间倒序。 */
     @Query("SELECT * FROM video_ai_analysis WHERE awemeId = :awemeId ORDER BY createdAtMillis DESC")
     suspend fun getByAwemeId(awemeId: String): List<VideoAiAnalysisEntity>

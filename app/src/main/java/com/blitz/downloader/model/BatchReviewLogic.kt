@@ -15,12 +15,16 @@ object BatchReviewLogic {
     fun findConflictingVideos(
         tags: List<com.blitz.downloader.data.db.TagEntity>,
         videoTags: Map<String, Set<String>>,
+        allowedCoexistence: Map<String, List<Set<String>>> = emptyMap(),
     ): Set<String> {
         val exclusiveParents = tags.filter { it.isExclusive }.map { it.tagName }.toSet()
         val exclusiveChildren = tags.filter { it.parentTagName in exclusiveParents }
             .groupBy({ it.parentTagName }, { it.tagName }).values.map { it.toSet() }
-        return videoTags.filterValues { selected ->
-            exclusiveChildren.any { children -> selected.count { it in children } > 1 }
+        return videoTags.filter { (id, selected) ->
+            exclusiveChildren.any { children ->
+                val chosen = selected.intersect(children)
+                chosen.size > 1 && (chosen.size != 2 || allowedCoexistence[id].orEmpty().none { it == chosen })
+            }
         }.keys.toSet()
     }
 

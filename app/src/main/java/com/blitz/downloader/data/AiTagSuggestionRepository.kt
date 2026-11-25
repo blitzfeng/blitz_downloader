@@ -35,6 +35,9 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
+import com.blitz.downloader.llm.TagChangeSuggestion
+import com.blitz.downloader.llm.TagChangeSuggestions
+import com.blitz.downloader.llm.LlmResponseException
 
 /**
  * AI 建议标签的编排层：组装请求 → 调用 [LlmProvider] → 按标签词表过滤幻觉 → 落库分析记录/
@@ -65,6 +68,23 @@ class AiTagSuggestionRepository(context: Context) {
     suspend fun testConnection(): Result<String> = configuredProviders().firstOrNull()?.testConnection()
         ?: Result.failure(IllegalStateException("请先在设置中配置 AI 服务"))
 
+    suspend fun tagChangesForAnalyses(ids: List<Long>): Map<Long, List<TagChangeSuggestion>> {
+        val analyses = ids.distinct().chunked(900).flatMap { videoAiAnalysisDao.getByIds(it) }
+        val tags = videoTagRepository.getAvailableTagEntities()
+        val names = tags.associate { it.id to it.tagName }
+        return analyses.associate { analysis ->
+            val candidates = SuggestedTagCodec.decode(analysis.suggestedTagIds).values.mapNotNull { detail ->
+                val name = names[detail.tagId] ?: return@mapNotNull null
+                com.blitz.downloader.llm.TagCandidate(
+                    detail.tagId, detail.confidence ?: 0f, tagName = name,
+                    action = detail.action, replacesTagIds = detail.replacesTagIds, changeReason = detail.changeReason,
+                    coexistingTagIds = detail.coexistingTagIds,
+                )
+            }
+            analysis.id to TagChangeSuggestions.describe(candidates, tags)
+        }
+    }
+
     fun observeReferenceRows() = aiReferenceDao.observeReferenceRows()
 
     suspend fun referenceAuthor(awemeId: String) = db.downloadedVideoDao().getByAwemeId(awemeId)
@@ -79,6 +99,7 @@ class AiTagSuggestionRepository(context: Context) {
         val visualFeatureProfile: VisualFeatureProfile,
         val candidateTagIds: List<Long>,
         val candidateTagNames: List<String> = emptyList(),
+        val tagChanges: List<TagChangeSuggestion> = emptyList(),
     )
 
     /**
@@ -95,6 +116,7 @@ class AiTagSuggestionRepository(context: Context) {
         coverBytes: ByteArray,
         videoFile: File?,
         authorName: String = "",
+        existingTagNames: Set<String>? = null,
     ): Result<SuggestionOutcome> {
         val providers = configuredProviders()
         val logId = UUID.randomUUID().toString()
@@ -135,6 +157,7 @@ class AiTagSuggestionRepository(context: Context) {
         }
         val tagByName = tags.associateBy { it.tagName }
         val tagById = tags.filter { it.id > 0 }.associateBy { it.id }
+        val currentTagNames = existingTagNames ?: videoTagRepository.getTagsForVideo(awemeId).toSet()
 
         val keyFrames = frameExtraction.withPermit {
             coroutineContext.ensureActive()
@@ -162,6 +185,7 @@ class AiTagSuggestionRepository(context: Context) {
             preferenceProfileText = preferenceProfileText,
             fewShotExamples = emptyList(),
             multimodalEvidenceSamples = multimodalEvidenceSamples,
+            existingTagNames = currentTagNames,
         )
 
         val faceCount = keyFrames.count { it.hasFace }
@@ -226,6 +250,7 @@ class AiTagSuggestionRepository(context: Context) {
         val redactedRequestJson = buildString {
             append("{\n")
             append("  \"promptTarget\": \"五个视觉维度证据 + 词表候选推荐\",\n")
+            append("  \"existingTags\": ${gson.toJson(request.existingTags)},\n")
             if (resolvedAuthorName.isNotBlank()) {
                 append("  \"authorName\": \"${resolvedAuthorName.replace("\"", "\\\"")}\",\n")
             }
@@ -290,10 +315,14 @@ class AiTagSuggestionRepository(context: Context) {
         }
 
         // 解析建议结果，并根据 parentId / parentTagName 在本地自动继承与补齐父标签
-        val deduplicatedCandidates = TagSuggestionRequestBuilder.resolveCandidatesWithParentHierarchy(
-            rawCandidates = response.candidates,
-            allTags = tags,
-        )
+        val deduplicatedCandidates = runCatching {
+            val resolved = TagSuggestionRequestBuilder.resolveCandidatesWithParentHierarchy(response.candidates, tags)
+            TagChangeSuggestions.validate(resolved, tags, currentTagNames)
+        }.getOrElse { error ->
+            val failure = response.diagnostics?.let { LlmResponseException(error.message.orEmpty(), it) } ?: error
+            AiAnalysisLogStore.updateEntry(logId) { it.withFailure(failure, System.currentTimeMillis() - startTime) }
+            return Result.failure(failure)
+        }
 
         // 抽取并降采样持久化关键证据帧（宽高各缩放 50%，每视频最多 MAX_EVIDENCE_PER_VIDEO 张）
         val referencedFrameIndices = deduplicatedCandidates
@@ -369,6 +398,7 @@ class AiTagSuggestionRepository(context: Context) {
                 visualFeatureProfile = response.visualFeatureProfile,
                 candidateTagIds = deduplicatedCandidates.map { it.tagId },
                 candidateTagNames = deduplicatedCandidates.map { it.tagName },
+                tagChanges = TagChangeSuggestions.describe(deduplicatedCandidates, tags),
             ),
         )
     }

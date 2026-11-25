@@ -105,6 +105,8 @@ import com.blitz.downloader.viewmodel.BatchTagReviewUiState
 import com.blitz.downloader.viewmodel.BatchTagReviewViewModel
 import com.blitz.downloader.viewmodel.TagEditFilter
 import com.blitz.downloader.viewmodel.TagReviewGroup
+import com.blitz.downloader.llm.TagChangeSuggestion
+import com.blitz.downloader.llm.TagChangeSuggestions
 import java.io.File
 
 /**
@@ -233,6 +235,7 @@ fun BatchTagReviewScreen(
             allTags = uiState.allTags,
             currentTags = uiState.videoExistingTags[targetVideo.awemeId].orEmpty(),
             suggestedTags = uiState.videoSuggestedTags[targetVideo.awemeId].orEmpty(),
+            tagChanges = uiState.videoTagChanges[targetVideo.awemeId].orEmpty(),
             parentMap = uiState.parentMap,
             onSave = { awemeId, newTags ->
                 viewModel.saveSingleVideoTags(awemeId, newTags)
@@ -703,6 +706,13 @@ private fun TagGroupCard(
 
             if (!group.isProcessed) {
                 Spacer(modifier = Modifier.height(8.dp))
+                if (group.tagChanges.values.any { it.action == "replace" }) {
+                    Text(
+                        stringResource(R.string.ai_replacement_notice),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 Text(
                     text = if (busy) stringResource(R.string.batch_review_processing)
                         else stringResource(R.string.batch_review_selected, group.selectedAwemeIds.size),
@@ -744,7 +754,8 @@ private fun TagGroupCard(
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     ) {
                         Text(
-                            text = stringResource(R.string.batch_tag_review_confirm_group),
+                            text = stringResource(if (group.tagChanges.values.any { it.action == "replace" })
+                                R.string.ai_confirm_replacement else R.string.batch_tag_review_confirm_group),
                             style = MaterialTheme.typography.labelMedium,
                         )
                     }
@@ -767,7 +778,7 @@ private fun TagGroupCard(
                         rowVideos.forEach { video ->
                             val isChecked = group.selectedAwemeIds.contains(video.awemeId)
                             val isTagged = group.taggedAwemeIds.contains(video.awemeId)
-                            Box(modifier = Modifier.weight(1f)) {
+                            Column(modifier = Modifier.weight(1f)) {
                                 VideoItemThumbnail(
                                     video = video,
                                     isChecked = isChecked,
@@ -778,6 +789,14 @@ private fun TagGroupCard(
                                     onEdit = { if (!busy) onEditVideo(video) },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
+                                group.tagChanges[video.awemeId]?.let { change ->
+                                    Text(
+                                        change.description(),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(top = 4.dp),
+                                    )
+                                }
                             }
                         }
                         repeat(3 - rowVideos.size) {
@@ -831,6 +850,13 @@ private fun ResultVideosCard(
                                 onEdit = { if (uiState.busyAction == null) onEditVideo(video) },
                                 showCaption = false,
                             )
+                            uiState.videoTagChanges[video.awemeId].orEmpty().forEach { change ->
+                                Text(
+                                    change.description(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
                             Text(
                                 text = stringResource(R.string.batch_review_author,
                                     video.userName.trim().ifBlank { stringResource(R.string.batch_review_unknown_author) }),
@@ -1327,6 +1353,7 @@ private fun SingleVideoTagEditSheet(
     allTags: List<String>,
     currentTags: Set<String>,
     suggestedTags: Set<String>,
+    tagChanges: List<TagChangeSuggestion>,
     parentMap: Map<String, String>,
     onSave: (awemeId: String, newTags: List<String>) -> Unit,
     onDismiss: () -> Unit,
@@ -1370,6 +1397,27 @@ private fun SingleVideoTagEditSheet(
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
     ) {
+        tagChanges.forEach { change ->
+            Text(
+                change.description(),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            if (change.action == "replace") {
+                TextButton(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    onClick = {
+                        val additions = setOf(change.tagName) + TagHierarchy.ancestorsOf(change.tagName, parentMap)
+                        val next = TagChangeSuggestions.apply(checked.toSet(), additions, listOf(change))
+                        checked.clear()
+                        checked.addAll(next)
+                    },
+                ) {
+                    Text(stringResource(R.string.ai_apply_replacement))
+                }
+            }
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth()

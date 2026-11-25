@@ -125,4 +125,7 @@ data class GeminiTagCandidatePayload(
     val tagId: Long = 0L,
     val confidence: Float = 1.0f,
     val evidenceFrames: List<Int?>? = null,
+    val action: String? = null,
+    val replacesTagIds: List<Long?>? = null,
+    val changeReason: String? = null,
 )

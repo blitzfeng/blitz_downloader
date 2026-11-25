@@ -83,7 +83,12 @@ object AiAnalysisLogFormatter {
             } else {
                 "全局依据"
             }
-            "  [ ${candidate.tagName} ]   置信度: ${pct}%   ($framesStr)"
+            val change = when (candidate.action) {
+                "replace" -> "\n    替换已有标签 ID：${candidate.replacesTagIds.joinToString("、")}；依据：${candidate.changeReason}"
+                "coexist" -> "\n    建议反差共存；依据：${candidate.changeReason}"
+                else -> ""
+            }
+            "  [ ${candidate.tagName} ]   置信度: ${pct}%   ($framesStr)$change"
         }
     }
 

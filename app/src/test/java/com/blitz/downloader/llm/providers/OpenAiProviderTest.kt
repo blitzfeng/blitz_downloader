@@ -41,7 +41,7 @@ class OpenAiProviderTest {
     }
 
     @Test fun analysisSendsImagesAndStrictSchemaAndReadsMessageAfterReasoning() = runBlocking {
-        val payload = """{"visualFeatureProfile":{"face":{"visibility":"none"}},"candidates":[{"tagId":12,"tagName":"舞蹈","confidence":0.8,"evidenceFrames":[1]}]}"""
+        val payload = """{"visualFeatureProfile":{"face":{"visibility":"none"}},"candidates":[{"tagId":12,"tagName":"舞蹈","confidence":0.8,"evidenceFrames":[1],"action":"replace","replacesTagIds":[11],"changeReason":"画面依据"}]}"""
         val fixture = Fixture(200, completed(Gson().toJson(payload)))
         val image = ImagePart(byteArrayOf(1, 2, 3), hasFace = false)
         val result = fixture.provider.generateTagSuggestion(
@@ -72,6 +72,9 @@ class OpenAiProviderTest {
         assertEquals(candidate["properties"].asJsonObject.keySet(), candidate["required"].asJsonArray.map { it.asString }.toSet())
         assertEquals(12L, result.candidates.single().tagId)
         assertEquals(listOf(1), result.candidates.single().evidenceFrames)
+        assertEquals("replace", result.candidates.single().action)
+        assertEquals(listOf(11L), result.candidates.single().replacesTagIds)
+        assertEquals("画面依据", result.candidates.single().changeReason)
     }
 
     @Test fun rateLimitSelectsNextProvider() = runBlocking {

@@ -363,7 +363,7 @@ SELECT COUNT(*) FROM tags WHERE tagName = '美腿'
 | `provider` | TEXT | LLM 供应商标识，如 `"gemini"` |
 | `model` | TEXT | 具体模型版本号 |
 | `profileVersion` | INTEGER | VisualFeatureProfile 的 schema 版本 |
-| `suggestedTagIds` | TEXT | 本次返回的候选标签 id，`\|` 分隔 |
+| `suggestedTagIds` | TEXT | 普通建议兼容历史分隔格式，替换/共存建议以 JSON 保存 tagId、confidence、evidencePath、action、replacesTagIds、changeReason、coexistingTagIds，由 SuggestedTagCodec 统一解码 |
 | `succeeded` | INTEGER | 0/1，本次分析是否成功 |
 | `createdAtMillis` | INTEGER | 发起时间 |
 

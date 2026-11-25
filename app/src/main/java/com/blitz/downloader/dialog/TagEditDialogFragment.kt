@@ -29,6 +29,7 @@ import com.blitz.downloader.activity.VideoPlayerActivity
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.ui.theme.BlitzTheme
 import com.blitz.downloader.viewmodel.TagEditDialogViewModel
+import com.blitz.downloader.llm.TagChangeSuggestions
 
 /**
  * 单条记录的「设置标签」弹窗（Compose / Material 3），窗口层面的处理见 [ComposeDialogFragment]。
@@ -42,7 +43,7 @@ import com.blitz.downloader.viewmodel.TagEditDialogViewModel
  * **「AI 建议」入口**（`ai-tag-suggestions`）：功能开关关闭时不展示（`AppSettings` 属于运行时偏好，
  * 不算"网络与数据库操作"，弹窗直接读取，不必经过 ViewModel）；点击后调用 [TagEditDialogViewModel]
  * （网络+数据库操作走 ViewModel，是本弹窗唯一持有的一个）发起请求，返回结果与当前已勾选集合
- * 取**并集**（不覆盖，见 design.md Decision 5），失败展示错误提示但不影响手动勾选保存。
+ * 普通建议并入勾选集合，替换建议由用户点击应用后才移除对应旧标签；最终确定才写库。
  */
 class TagEditDialogFragment : ComposeDialogFragment() {
 
@@ -87,8 +88,8 @@ class TagEditDialogFragment : ComposeDialogFragment() {
             aiSuggestionEnabled = AppSettings.isAiSuggestionEnabled(requireContext()),
             aiState = aiState,
             hasVideoFile = videoFilePath.isNotBlank(),
-            onRequestAiSuggestion = {
-                viewModel.requestSuggestion(awemeId, secUserId, desc, coverPath, videoFilePath)
+            onRequestAiSuggestion = { selected ->
+                viewModel.requestSuggestion(awemeId, secUserId, desc, coverPath, videoFilePath, selected)
             },
             onShowLogs = {
                 if (childFragmentManager.findFragmentByTag("AiVideoLogs") == null) {
@@ -180,7 +181,7 @@ private fun TagEditDialogContent(
     aiSuggestionEnabled: Boolean,
     aiState: TagEditDialogViewModel.AiSuggestionState,
     hasVideoFile: Boolean,
-    onRequestAiSuggestion: () -> Unit,
+    onRequestAiSuggestion: (Set<String>) -> Unit,
     onPreviewVideo: () -> Unit,
     onConfirm: (tags: List<String>, aiAnalysisId: Long?) -> Unit,
     onCancel: () -> Unit,
@@ -189,11 +190,11 @@ private fun TagEditDialogContent(
     val checked = rememberCheckedTags(currentTags)
     var usedAiAnalysisId by rememberSaveable { mutableStateOf<Long?>(null) }
 
-    // 建议结果与当前已勾选集合取并集（不覆盖），词表外的名字理论上不会出现（Repository 已按
-    // tagId 过滤），这里再兜一层 `it in allTags` 纯属防御。
+    // 替换项等待显式应用；同一次分析只预勾选一次，避免转屏后覆盖用户的后续调整。
     LaunchedEffect(aiState) {
-        if (aiState is TagEditDialogViewModel.AiSuggestionState.Success) {
-            checked.addAll(aiState.suggestedTagNames.filter { it in allTags })
+        if (aiState is TagEditDialogViewModel.AiSuggestionState.Success && usedAiAnalysisId != aiState.analysisId) {
+            val replacements = aiState.tagChanges.filter { it.action == "replace" }.map { it.tagName }.toSet()
+            checked.addAll(aiState.suggestedTagNames.filter { it in allTags && it !in replacements })
             usedAiAnalysisId = aiState.analysisId
         }
     }
@@ -207,7 +208,7 @@ private fun TagEditDialogContent(
         ) {
             if (aiSuggestionEnabled) {
                 TextButton(
-                    onClick = onRequestAiSuggestion,
+                    onClick = { onRequestAiSuggestion(checked.toSet()) },
                     enabled = aiState !is TagEditDialogViewModel.AiSuggestionState.Loading,
                 ) {
                     Text(stringResource(R.string.tag_edit_ai_suggest_button))
@@ -235,6 +236,25 @@ private fun TagEditDialogContent(
             )
         }
         Spacer(Modifier.height(8.dp))
+    }
+    if (aiState is TagEditDialogViewModel.AiSuggestionState.Success) {
+        aiState.tagChanges.forEach { change ->
+            Text(
+                change.description(),
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            if (change.action == "replace") {
+                TextButton(onClick = {
+                    val next = TagChangeSuggestions.apply(checked.toSet(), setOf(change.tagName), listOf(change))
+                    checked.clear()
+                    checked.addAll(next)
+                }, modifier = Modifier.padding(horizontal = 24.dp)) {
+                    Text(stringResource(R.string.ai_apply_replacement))
+                }
+            }
+        }
     }
     TagCheckGrid(
         allTags = allTags,

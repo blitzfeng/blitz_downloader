@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.blitz.downloader.llm.TagChangeSuggestion
 
 /**
  * [com.blitz.downloader.dialog.TagEditDialogFragment] 的「AI 建议」按钮承载的网络+数据库操作——
@@ -48,7 +49,10 @@ class TagEditDialogViewModel(app: Application) : AndroidViewModel(app) {
      * [videoFilePath] 为空/文件不存在时仅用封面（`AiTagSuggestionRepository`/`VideoFrameExtractor`
      * 内部已处理，这里不用重复判断）。
      */
-    fun requestSuggestion(awemeId: String, secUserId: String, desc: String, coverPath: String, videoFilePath: String) {
+    fun requestSuggestion(
+        awemeId: String, secUserId: String, desc: String, coverPath: String, videoFilePath: String,
+        currentTags: Set<String>? = null,
+    ) {
         if (_aiState.value is AiSuggestionState.Loading) return
         _aiState.value = AiSuggestionState.Loading
         viewModelScope.launch {
@@ -72,7 +76,7 @@ class TagEditDialogViewModel(app: Application) : AndroidViewModel(app) {
                     Result.failure(error)
                 } else {
                     val videoFile = videoFilePath.takeIf { it.isNotBlank() }?.let { File(storageRoot, it) }
-                    repo.requestSuggestion(awemeId, secUserId, desc, coverBytes, videoFile)
+                    repo.requestSuggestion(awemeId, secUserId, desc, coverBytes, videoFile, existingTagNames = currentTags)
                 }
             }
             outcome.fold(
@@ -83,7 +87,7 @@ class TagEditDialogViewModel(app: Application) : AndroidViewModel(app) {
                             .map { it.tagName }
                             .toSet()
                     }
-                    _aiState.value = AiSuggestionState.Success(result.analysisId, names)
+                    _aiState.value = AiSuggestionState.Success(result.analysisId, names, result.tagChanges)
                 },
                 onFailure = { _aiState.value = AiSuggestionState.Failed(it.message ?: it.javaClass.simpleName) },
             )
@@ -93,7 +97,10 @@ class TagEditDialogViewModel(app: Application) : AndroidViewModel(app) {
     sealed interface AiSuggestionState {
         data object Idle : AiSuggestionState
         data object Loading : AiSuggestionState
-        data class Success(val analysisId: Long, val suggestedTagNames: Set<String>) : AiSuggestionState
+        data class Success(
+            val analysisId: Long, val suggestedTagNames: Set<String>,
+            val tagChanges: List<TagChangeSuggestion> = emptyList(),
+        ) : AiSuggestionState
         data class Failed(val message: String) : AiSuggestionState
     }
 }

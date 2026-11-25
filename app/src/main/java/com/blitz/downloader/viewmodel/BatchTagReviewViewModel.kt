@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.blitz.downloader.llm.TagChangeSuggestion
+import com.blitz.downloader.llm.TagChangeSuggestions
 
 enum class TagEditFilter(val label: String) {
     ALL("全部"),
@@ -40,6 +42,7 @@ data class TagReviewGroup(
     val selectedAwemeIds: Set<String>,
     val isProcessed: Boolean = false,
     val taggedAwemeIds: Set<String> = emptySet(),
+    val tagChanges: Map<String, TagChangeSuggestion> = emptyMap(),
 )
 
 data class BatchTagReviewUiState(
@@ -62,6 +65,7 @@ data class BatchTagReviewUiState(
     val parentMap: Map<String, String> = emptyMap(),
     val videoExistingTags: Map<String, Set<String>> = emptyMap(),
     val videoSuggestedTags: Map<String, Set<String>> = emptyMap(),
+    val videoTagChanges: Map<String, List<TagChangeSuggestion>> = emptyMap(),
     val logs: List<com.blitz.downloader.llm.AiAnalysisLogEntry> = emptyList(),
     val isLogSheetVisible: Boolean = false,
 ) {
@@ -97,10 +101,12 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
         val undone: Set<String> = emptySet(),
         val selections: Map<String, Set<String>> = emptyMap(),
         val knownIds: Set<String> = emptySet(),
+        val removed: Map<String, Map<String, Set<String>>>? = null,
     )
 
     private fun reviewState() = ReviewState(processedGroupNames.toSet(), appliedCascadedTagsByGroup.toMap(),
-        autoProcessedGroupNames.toSet(), manuallyUndoneGroupNames.toSet(), groupSelections.mapValues { it.value.toSet() }, knownSuccessfulIds.toSet())
+        autoProcessedGroupNames.toSet(), manuallyUndoneGroupNames.toSet(), groupSelections.mapValues { it.value.toSet() },
+        knownSuccessfulIds.toSet(), removedTagsByGroup.toMap())
 
     private fun restoreReview(state: ReviewState) {
         knownSuccessfulIds.clear()
@@ -109,6 +115,8 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
         processedGroupNames.addAll(state.processed)
         appliedCascadedTagsByGroup.clear()
         appliedCascadedTagsByGroup.putAll(state.applied)
+        removedTagsByGroup.clear()
+        removedTagsByGroup.putAll(state.removed.orEmpty())
         autoProcessedGroupNames.clear()
         autoProcessedGroupNames.addAll(state.automatic)
         manuallyUndoneGroupNames.clear()
@@ -145,6 +153,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 内存态：已被用户「确认」的分组标签名及其成功写入的各标签（含级联父标签）与 awemeId 集合映射，供撤销时精准回滚 */
     private val appliedCascadedTagsByGroup = mutableMapOf<String, Map<String, Set<String>>>()
+    private val removedTagsByGroup = mutableMapOf<String, Map<String, Set<String>>>()
 
     /** 内存态：自动标记为已处理的分组标签名集合（源自收藏夹等已有同名标签） */
     private val autoProcessedGroupNames = mutableSetOf<String>()
@@ -325,6 +334,10 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                 it.reviewTags ?: it.suggestedTags, session?.createdAtMillis ?: 0L)
         }
         val allTags = withContext(Dispatchers.IO) { tagRepo.getAvailableTags() }
+        val changesByAnalysis = withContext(Dispatchers.IO) {
+            aiRepo.tagChangesForAnalyses(items.mapNotNull { it.analysisId })
+        }
+        val videoChanges = items.associate { it.awemeId to changesByAnalysis[it.analysisId].orEmpty() }
         val parentMap = withContext(Dispatchers.IO) { tagRepo.getParentMap() }
         val existing = withContext(Dispatchers.IO) {
             videoTagDao.getTagsForVideos(sessionVideos.map { it.awemeId })
@@ -344,7 +357,8 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
             persistReview()
         }
         val autoTags = BatchReviewLogic.findAutoProcessableTags(sessionPendingRows.values.toList(),
-            sessionVideos, existing, manuallyUndoneGroupNames)
+            sessionVideos, existing, manuallyUndoneGroupNames) -
+            videoChanges.values.flatten().filter { it.action == "replace" }.map { it.tagName }.toSet()
         val newlyAuto = autoTags - processedGroupNames
         if (newlyAuto.isNotEmpty()) {
             val before = reviewState()
@@ -357,12 +371,21 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) { restoreReview(before); throw e }
         }
+        val groupExisting = existing.mapValues { (id, names) ->
+            names - videoChanges[id].orEmpty()
+                .filter { it.action == "replace" && it.tagName !in processedGroupNames }.map { it.tagName }.toSet()
+        }
         val allGroups = BatchReviewLogic.buildTagGroups(sessionPendingRows.values.toList(), sessionVideos,
-            processedGroupNames, groupSelections, existing, manuallyUndoneGroupNames, parentMap.values.toSet())
+            processedGroupNames, groupSelections, groupExisting, manuallyUndoneGroupNames, parentMap.values.toSet())
         val visibleIds = BatchReviewLogic.filterVideosByEditCount(sessionVideos, _uiState.value.editFilter).map { it.awemeId }.toSet()
         val groups = allGroups.mapNotNull { group ->
             val visible = group.videos.filter { it.awemeId in visibleIds }
-            if (visible.isEmpty()) null else group.copy(videos = visible, selectedAwemeIds = group.selectedAwemeIds.intersect(visibleIds))
+            if (visible.isEmpty()) null else group.copy(
+                videos = visible, selectedAwemeIds = group.selectedAwemeIds.intersect(visibleIds),
+                tagChanges = visible.mapNotNull { video ->
+                    videoChanges[video.awemeId]?.firstOrNull { it.tagName == group.tagName }?.let { video.awemeId to it }
+                }.toMap(),
+            )
         }
         _uiState.value = _uiState.value.copy(
             hasBatches = batches.isNotEmpty(), allVideos = candidates, sessionVideos = sessionVideos,
@@ -372,6 +395,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
             excludedAwemeIds = _uiState.value.excludedAwemeIds.intersect(candidates.map { it.awemeId }.toSet()),
             videoExistingTags = existing,
             videoSuggestedTags = items.associate { it.awemeId to it.suggestedTags.split('|').filter(String::isNotBlank).toSet() },
+            videoTagChanges = videoChanges,
             isReviewCompleted = session?.isLegacy != true && BatchReviewLogic.isSessionReviewCompleted(items, session?.finished == true, allGroups),
         )
     }
@@ -408,7 +432,11 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                 val tags = tagRepo.getAvailableTagEntities()
                 val actualTags = videoTagDao.getTagsForVideos(items.map { it.awemeId }.distinct())
                     .groupBy({ it.awemeId }, { it.tagName }).mapValues { it.value.toSet() }
-                val conflicts = BatchReviewLogic.findConflictingVideos(tags, actualTags)
+                val allowed = _uiState.value.videoTagChanges.mapValues { (_, changes) ->
+                    changes.filter { it.action == "coexist" && it.reason.isNotBlank() }
+                        .map { it.relatedTags + it.tagName }
+                }
+                val conflicts = BatchReviewLogic.findConflictingVideos(tags, actualTags, allowed)
                 // 事务内发布，避免读取完成到结果生效之间夹入标签或规则写入。
                 withContext(Dispatchers.Main.immediate) {
                     _uiState.value = _uiState.value.copy(
@@ -558,7 +586,28 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
 
-                    writtenCount = tagRepo.addTagsAsUserEdit(selectedIds, allTagsToAdd)
+                    val removed = mutableMapOf<String, MutableSet<String>>()
+                    val currentEntities = tagRepo.getAvailableTagEntities().associateBy { it.tagName }
+                    for (id in selectedIds) {
+                        val current = beforeTags[id].orEmpty()
+                        val change = group.tagChanges[id]
+                        if (change?.action == "replace") {
+                            val target = currentEntities[tagName]
+                            check(target != null && currentEntities[target.parentTagName]?.isExclusive == true &&
+                                change.replacedTags.all { currentEntities[it]?.parentTagName == target.parentTagName }) {
+                                "标签分类已变化，请重新分析后确认替换"
+                            }
+                            for (old in change.replacedTags.intersect(current)) {
+                                removed.getOrPut(old) { mutableSetOf() }.add(id)
+                            }
+                        }
+                        val next = TagChangeSuggestions.apply(current, allTagsToAdd.toSet(), listOfNotNull(change))
+                        if (tagRepo.setTagsAsUserEdit(id, next)) writtenCount++
+                    }
+                    val previousRemoved = removedTagsByGroup[tagName].orEmpty()
+                    removedTagsByGroup[tagName] = (previousRemoved.keys + removed.keys).associateWith { old ->
+                        previousRemoved[old].orEmpty() + removed[old].orEmpty()
+                    }
                     val previous = appliedCascadedTagsByGroup[tagName].orEmpty()
                     appliedCascadedTagsByGroup[tagName] = (previous.keys + actuallyAdded.keys).associateWith { tag ->
                         previous[tag].orEmpty() + actuallyAdded[tag].orEmpty()
@@ -589,6 +638,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                     videoTagDao.deleteTagFromVideos(groupVideoIds, tagName)
                 }
                 appliedCascadedTagsByGroup[tagName] = emptyMap()
+                removedTagsByGroup[tagName] = emptyMap()
                 processedGroupNames.add(tagName)
                 manuallyUndoneGroupNames.remove(tagName)
                 checkAndRecordFeedbacks()
@@ -602,11 +652,15 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
         val group = _uiState.value.groups.find { it.tagName == tagName && it.isProcessed } ?: return
         edit("undo") {
             val cascadedAdded = appliedCascadedTagsByGroup.remove(tagName) ?: emptyMap()
+            val removed = removedTagsByGroup.remove(tagName).orEmpty()
             val groupVideoIds = group.videos.map { it.awemeId }.toSet()
 
             withContext(Dispatchers.IO) {
                 // 精准回滚本次确认写入的标签（包含子标签及其级联父标签）
                 val affectedVideoIds = mutableSetOf<String>()
+                val stillOwned = videoTagDao.getTagsForVideos(
+                    removed.values.flatten().distinct(),
+                ).filter { it.tagName == tagName }.map { it.awemeId }.toSet()
                 for ((tag, ids) in cascadedAdded) {
                     if (ids.isNotEmpty()) {
                         videoTagDao.deleteTagFromVideos(ids, tag)
@@ -616,6 +670,12 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                     if (tag != tagName && tag in autoProcessedGroupNames) {
                         processedGroupNames.remove(tag)
                         autoProcessedGroupNames.remove(tag)
+                    }
+                }
+                for ((oldTag, ids) in removed) {
+                    for (id in ids.intersect(stillOwned)) {
+                        tagRepo.addTag(id, oldTag)
+                        affectedVideoIds.add(id)
                     }
                 }
                 if (affectedVideoIds.isNotEmpty()) {
@@ -731,6 +791,9 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                 if (!changed) return@withContext
                 for ((group, tags) in appliedCascadedTagsByGroup.toMap()) {
                     appliedCascadedTagsByGroup[group] = tags.mapValues { (_, ids) -> ids - awemeId }
+                }
+                for ((group, tags) in removedTagsByGroup.toMap()) {
+                    removedTagsByGroup[group] = tags.mapValues { (_, ids) -> ids - awemeId }
                 }
 
                 val pendingRow = sessionPendingRows[awemeId]

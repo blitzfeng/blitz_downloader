@@ -23,6 +23,9 @@ internal fun GeminiTagSuggestionPayload.toDomain(): TagSuggestionResponse {
                 confidence = it.confidence,
                 evidenceFrames = it.evidenceFrames.orEmpty().filterNotNull(),
                 tagName = it.tagName.orEmpty(),
+                action = it.action?.takeIf { action -> action in setOf("add", "replace", "coexist") } ?: "add",
+                replacesTagIds = it.replacesTagIds.orEmpty().filterNotNull().distinct(),
+                changeReason = it.changeReason.orEmpty(),
             )
         },
     )

@@ -32,9 +32,11 @@ object TagSuggestionRequestBuilder {
         preferenceProfileText: String? = null,
         fewShotExamples: List<FewShotExample> = emptyList(),
         multimodalEvidenceSamples: List<MultimodalEvidenceSample> = emptyList(),
+        existingTagNames: Set<String> = emptySet(),
     ): TagSuggestionRequest {
         // 过滤未启用 AI 分析的标签（如「不导出」、「图片」等）
         val activeTags = tags.filter { it.enableAi }
+        val allTagsByName = tags.associateBy { it.tagName }
         val nameToId = activeTags.associate { it.tagName to it.id }
         val parentEntitiesByName = activeTags.associateBy { it.tagName }
         val parentNamesWithChildren = activeTags.filter { it.parentTagName.isNotBlank() }.map { it.parentTagName }.toSet()
@@ -69,6 +71,13 @@ object TagSuggestionRequestBuilder {
             preferenceProfileText = preferenceProfileText?.takeIf { it.isNotBlank() },
             fewShotExamples = fewShotExamples,
             multimodalEvidenceSamples = multimodalEvidenceSamples,
+            existingTags = tags.filter { it.tagName in existingTagNames }.map { tag ->
+                TagWordEntry(
+                    tag.id, tag.tagName, tag.description,
+                    parentTagId = allTagsByName[tag.parentTagName]?.id,
+                    isExclusiveCategory = allTagsByName[tag.parentTagName]?.isExclusive ?: false,
+                )
+            },
         )
     }
 
@@ -99,6 +108,9 @@ object TagSuggestionRequestBuilder {
         appendLine("1. 输出结构化的视觉证据 visualFeatureProfile：按 face/expression/bodyAndStyling/clothing/action 五个维度，分别说明该维度在图片中是否可见（visibility: high/medium/low/none）、观察到的具体特征、以及依据的图片序号（图片序号从 0 开始，0 是封面，之后依次是关键帧）。某个维度在图片里完全看不出来时，visibility 填 \"none\"，不要编造证据。")
         appendLine("2. 从下面给出的标签词表中选择候选标签，必须返回词表中已有标签的 tagName 与对应的 tagId，不要创造新标签或返回词表之外的名字。")
         appendLine("   每个候选标签给出 confidence（0~1）与支撑该标签的图片序号 evidenceFrames。")
+        appendLine("   action 标记建议类型：add 为新增或保留；replace 为替换已有标签，replacesTagIds 填要移除的已有标签 ID；coexist 为反差兼具、建议与同类风格共存。")
+        appendLine("   replace 和 coexist 必须填写基于当前图片证据的 changeReason；add 的 replacesTagIds 为空，changeReason 可为空。coexist 的 replacesTagIds 必须为空。")
+        appendLine("   只能建议替换当前视频已有、且属于同一互斥父分类的直属子标签，保留其他分类与独立标签。互斥分类常规单选，满足下述反差兼具例外时允许共存，并对涉及的候选标记 coexist。")
         appendLine("   注意：evidenceFrames 只需填写观察到相关特征的少数关键图片序号，不要无脑填入全部图片序号。")
         appendLine()
         appendLine("【核心主体原则（宁缺毋滥）】")
@@ -110,6 +122,19 @@ object TagSuggestionRequestBuilder {
             appendLine("待分析视频文案：${request.desc}")
             appendLine()
         }
+        appendLine("【当前视频已有标签（包括下载时自动关联的收藏夹标签）】")
+        if (request.existingTags.isEmpty()) {
+            appendLine("暂无已有标签。")
+        } else {
+            request.existingTags.forEach {
+                val category = it.parentTagId?.let { parent ->
+                    "（上级标签 ID: $parent，互斥分类: ${it.isExclusiveCategory}）"
+                }.orEmpty()
+                appendLine("- [ID: ${it.tagId}] ${it.name}$category")
+            }
+            appendLine("已有标签是本条视频的上下文，可能需要纠正。若更符合另一个互斥标签，请明确提出 replace；若有清晰反差兼具证据，请提出 coexist 并解释依据。")
+        }
+        appendLine()
         appendLine("【可选标签词表与分类规则】")
         appendLine("（大模型只需输出具体命中的标签 ID 与名称，系统本地会自动继承对应的父分类，无需重复推理父分类）：")
         appendLine()
@@ -128,7 +153,7 @@ object TagSuggestionRequestBuilder {
                 val children = childrenByParentId[parent.tagId].orEmpty()
                 appendLine("【分类：${parent.name}】（主导风格单选分类）：")
                 appendLine("  * [常规约束]：该分类下的各种风格在绝大多数情况下属于互斥关系，原则上至多单选 1 项最核心、最突出的主导风格特征；若画面特征不显著则一项都不选。")
-                appendLine("  * [反差兼具例外]：仅当画面呈现极其强烈的双重反差特质（例如面部笑容呈现甜美阳光的初恋治愈感，同时镜头姿态与穿着又带有极其明确的纯欲诱惑），且【该作者历史高频标签先验或参考样例中证实过兼具此类风格】时，才允许破例同时选择至多 2 项！未见强烈双重反差或缺乏历史兼具先验时，严禁随意多选。")
+                appendLine("  * [反差兼具例外]：当当前画面有充分、清晰的证据呈现强烈双重反差特质时（例如可爱的动作与甜美笑容在不同镜头中均十分突出），允许破例同时选择至多 2 项，并以 coexist 和 changeReason 明确说明各自证据。历史标签或样例可供参考，但缺少历史兼具案例不阻止当前有充分证据的共存建议。未见清晰双重特质时严禁随意多选。")
                 if (children.isNotEmpty()) {
                     appendLine("  [具体子风格候选]：")
                     children.forEach { child ->
@@ -213,12 +238,7 @@ object TagSuggestionRequestBuilder {
         val candidateMap = resolved.groupBy { it.tagId }.mapValues { (_, items) ->
             val best = items.maxByOrNull { it.confidence } ?: items.first()
             val mergedFrames = items.flatMap { it.evidenceFrames }.distinct().sorted()
-            TagCandidate(
-                tagId = best.tagId,
-                confidence = best.confidence,
-                evidenceFrames = mergedFrames,
-                tagName = best.tagName,
-            )
+            best.copy(evidenceFrames = mergedFrames)
         }.toMutableMap()
 
         // 3. 本地自动补齐父标签

@@ -46,6 +46,7 @@ data class TagSuggestionRequest(
     val fewShotExamples: List<FewShotExample> = emptyList(),
     val multimodalEvidenceSamples: List<MultimodalEvidenceSample> = emptyList(),
     val onNetworkUpdate: ((LlmNetworkMetrics) -> Unit)? = null,
+    val existingTags: List<TagWordEntry> = emptyList(),
 )
 
 /** 单个视觉维度的可见证据；`visibility` 取值 "high"/"medium"/"low"/"none"。 */
@@ -73,6 +74,10 @@ data class TagCandidate(
     val confidence: Float,
     val evidenceFrames: List<Int> = emptyList(),
     val tagName: String = "",
+    val action: String = "add",
+    val replacesTagIds: List<Long> = emptyList(),
+    val changeReason: String = "",
+    val coexistingTagIds: List<Long> = emptyList(),
 )
 
 /** 一次 AI 建议标签请求的完整输出。 */
