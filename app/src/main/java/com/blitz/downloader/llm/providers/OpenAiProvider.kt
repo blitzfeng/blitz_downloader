@@ -9,6 +9,9 @@ import com.blitz.downloader.llm.LlmNetworkEvents
 import com.blitz.downloader.llm.LlmResponseDiagnostics
 import com.blitz.downloader.llm.LlmResponseException
 import com.blitz.downloader.llm.PreferenceSummaryRequest
+import com.blitz.downloader.llm.PreferenceLearningRequest
+import com.blitz.downloader.llm.PreferenceLearningProtocol
+import com.blitz.downloader.llm.PreferenceLearningResponse
 import com.blitz.downloader.llm.TagSuggestionRequest
 import com.blitz.downloader.llm.TagSuggestionRequestBuilder
 import com.blitz.downloader.llm.TagSuggestionResponse
@@ -65,7 +68,7 @@ internal class OpenAiProvider(
                 add(imagePart(frame, if (frame.hasFace) "high" else "low"))
             }
         }
-        val trace = request.onNetworkUpdate?.let { LlmNetworkTrace(config.service.displayName, modelId, it) }
+        val trace = request.onNetworkUpdate?.let { LlmNetworkTrace(config.service.displayName, modelId, onUpdate = it) }
         val response = create(api, listOf(mapOf("role" to "user", "content" to content)), structured = true, trace = trace)
         try {
             gson.fromJson(response.text, GeminiTagSuggestionPayload::class.java)
@@ -73,6 +76,18 @@ internal class OpenAiProvider(
         } catch (error: Exception) {
             throw LlmResponseException("OpenAI 标签输出解析失败", response.diagnostics)
         }
+    }
+
+    override suspend fun learnPreference(request: PreferenceLearningRequest): Result<PreferenceLearningResponse> = call {
+        val content = buildList {
+            add(textPart(request.prompt()))
+            request.images.forEach { (caseId, image) ->
+                add(textPart("案例 $caseId 的证据图"))
+                add(imagePart(image, "low"))
+            }
+        }
+        val response = create(api, listOf(mapOf("role" to "user", "content" to content)), learning = true)
+        PreferenceLearningProtocol.parse(response.text, response.diagnostics)
     }
 
     override suspend fun summarizePreference(request: PreferenceSummaryRequest): Result<String> = call {
@@ -110,17 +125,18 @@ internal class OpenAiProvider(
         input: Any,
         structured: Boolean = false,
         trace: LlmNetworkTrace? = null,
+        learning: Boolean = false,
     ): Parsed {
         val request = buildMap {
             put("model", modelId)
             put("input", input)
             put("store", false)
-            if (structured) {
+            if (structured || learning) {
                 put("text", mapOf("format" to mapOf(
                     "type" to "json_schema",
-                    "name" to "tag_suggestion",
+                    "name" to if (learning) "preference_learning" else "tag_suggestion",
                     "strict" to true,
-                    "schema" to tagSchema,
+                    "schema" to if (learning) learningSchema else tagSchema,
                 )))
             }
         }
@@ -164,6 +180,7 @@ internal class OpenAiProvider(
 
     companion object {
         private val gson = Gson()
+        private val learningSchema by lazy { PreferenceLearningProtocol.schema.toStrictJsonSchema() }
         private val tagSchema by lazy { GeminiProvider.TAG_SUGGESTION_SCHEMA.toStrictJsonSchema() }
         private val sharedApi by lazy { createApi(90) }
         private val sharedTestApi by lazy { createApi(20) }

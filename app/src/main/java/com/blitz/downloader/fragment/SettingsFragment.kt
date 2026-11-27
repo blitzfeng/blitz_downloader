@@ -114,6 +114,9 @@ class SettingsFragment : Fragment() {
             insets
         }
 
+        binding.itemMediaRecovery.setOnClickListener {
+            startActivity(android.content.Intent(requireContext(), com.blitz.downloader.activity.MediaRecoveryActivity::class.java))
+        }
         binding.itemBackupDb.setOnClickListener { confirmAndBackup() }
         binding.itemRestoreDb.setOnClickListener { viewModel.loadBackups() }
         binding.itemTagFilterMode.setOnClickListener { showTagFilterModeDialog() }
@@ -134,6 +137,9 @@ class SettingsFragment : Fragment() {
             GeminiApiKeyDialogFragment.show(this, AppSettings.getGeminiApiKey(requireContext()))
         }
         refreshGeminiApiKeySummary()
+        binding.itemAiPreferenceLearning.setOnClickListener {
+            startActivity(com.blitz.downloader.activity.PreferenceLearningActivity.intent(requireContext()))
+        }
         binding.itemAiReferenceManage.setOnClickListener {
             startActivity(com.blitz.downloader.activity.AiReferenceManageActivity.createIntent(requireContext()))
         }
@@ -178,6 +184,15 @@ class SettingsFragment : Fragment() {
      */
     override fun onResume() {
         super.onResume()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val overview = com.blitz.downloader.BlitzApp.instance.aiPreferenceRepository.overview()
+            val active = overview.activeVersion
+            binding.tvAiPreferenceLearningSummary.text = when {
+                active != null -> getString(R.string.ai_preference_learning_version, active, overview.pending)
+                overview.pending > 0 -> getString(R.string.ai_preference_learning_pending, overview.pending)
+                else -> getString(R.string.ai_preference_learning_summary)
+            }
+        }
         viewModel.refreshFolderVisibility()
         consumePendingHideFolder()
     }

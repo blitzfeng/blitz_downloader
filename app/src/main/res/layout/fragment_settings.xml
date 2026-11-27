@@ -125,6 +125,18 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
+                    <TextView
+                        android:id="@+id/itemMediaRecovery"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="56dp"
+                        android:gravity="center_vertical"
+                        android:paddingHorizontal="16dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:text="@string/media_recovery_title"
+                        android:textColor="@color/text_color_primary"
+                        android:textSize="16sp" />
+
                     <LinearLayout
                         android:id="@+id/itemBackupDb"
                         android:layout_width="match_parent"
@@ -494,6 +506,37 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content" />
 
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginHorizontal="16dp"
+                        android:background="@color/color_divider" />
+
+                    <LinearLayout
+                        android:id="@+id/itemAiPreferenceLearning"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:orientation="vertical"
+                        android:paddingHorizontal="16dp"
+                        android:paddingVertical="14dp">
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/ai_preference_learning"
+                            android:textColor="@color/text_color_primary"
+                            android:textSize="16sp" />
+                        <TextView
+                            android:id="@+id/tvAiPreferenceLearningSummary"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/ai_preference_learning_summary"
+                            android:textColor="@color/text_color_secondary"
+                            android:textSize="13sp" />
+                    </LinearLayout>
                     <View
                         android:layout_width="match_parent"
                         android:layout_height="1dp"

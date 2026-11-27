@@ -137,6 +137,18 @@ object AiAnalysisLogFormatter {
      * 生成单条日志的完整纯文本导出报告，供一键复制或分享。
      */
     fun formatNetworkMetrics(entry: AiAnalysisLogEntry): String = buildString {
+        entry.preparation?.let { preparation ->
+            appendLine("请求前准备耗时  ${preparation.totalMs} ms")
+            preparation.stageMs.forEach { (stage, millis) -> appendLine("$stage  $millis ms") }
+            appendLine("其他准备耗时  ${preparation.otherMs} ms")
+            preparation.failureStage?.let { appendLine("准备失败阶段  $it") }
+        }
+        entry.personalization?.let {
+            appendLine("本地规则版本  ${it.ruleProfileVersion ?: "无"}")
+            appendLine("选中规则  ${it.selectedRuleIds.joinToString("、").ifBlank { "无" }}")
+            appendLine("省略规则  ${it.omittedRuleIds.joinToString("、").ifBlank { "无" }}")
+            appendLine("当前图片 ${it.currentImageCount} 张 · 历史图片 ${it.historyImageCount} 张 · 文本案例 ${it.textExampleCount} 条")
+        }
         if (entry.networkRequests.isEmpty()) {
             append("网络请求统计暂无记录")
             return@buildString
@@ -151,8 +163,11 @@ object AiAnalysisLogFormatter {
             value < 1024 * 1024 -> String.format(Locale.getDefault(), "%.2f KiB（%d B）", value / 1024.0, value)
             else -> String.format(Locale.getDefault(), "%.2f MiB（%d B）", value / (1024.0 * 1024), value)
         }
-        val first = entry.networkRequests.first()
-        appendLine("请求前准备耗时  ${millis((first.requestAtMillis - entry.timestamp).coerceAtLeast(0))}")
+
+        if (entry.preparation == null) {
+            val first = entry.networkRequests.first()
+            appendLine("请求前准备耗时  ${millis((first.requestAtMillis - entry.timestamp).coerceAtLeast(0))}")
+        }
         entry.networkRequests.forEachIndexed { index, request ->
             if (index > 0) appendLine()
             appendLine("请求 ${index + 1}  ${request.service} · ${request.model}")

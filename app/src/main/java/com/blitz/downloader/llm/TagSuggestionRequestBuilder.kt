@@ -33,6 +33,7 @@ object TagSuggestionRequestBuilder {
         fewShotExamples: List<FewShotExample> = emptyList(),
         multimodalEvidenceSamples: List<MultimodalEvidenceSample> = emptyList(),
         existingTagNames: Set<String> = emptySet(),
+        preferenceTextExamples: List<MultimodalEvidenceSample> = emptyList(),
     ): TagSuggestionRequest {
         // 过滤未启用 AI 分析的标签（如「不导出」、「图片」等）
         val activeTags = tags.filter { it.enableAi }
@@ -70,6 +71,7 @@ object TagSuggestionRequestBuilder {
             authorProfile = authorProfile?.toContext(),
             preferenceProfileText = preferenceProfileText?.takeIf { it.isNotBlank() },
             fewShotExamples = fewShotExamples,
+            preferenceTextExamples = preferenceTextExamples,
             multimodalEvidenceSamples = multimodalEvidenceSamples,
             existingTags = tags.filter { it.tagName in existingTagNames }.map { tag ->
                 TagWordEntry(
@@ -118,10 +120,6 @@ object TagSuggestionRequestBuilder {
         appendLine("- 严禁过度打标：背景掠过、姿势模糊、画面占比极小、勉强沾边或缺乏清晰画面证据的一律严禁勾选。")
         appendLine("- 颜值类标签必须以清晰的人脸/正面特写为依据，若画面只有背影、远景或人脸模糊，绝不可给出颜值类建议。宁缺毋滥，宁可不选也不要误选。")
         appendLine()
-        if (request.desc.isNotBlank()) {
-            appendLine("待分析视频文案：${request.desc}")
-            appendLine()
-        }
         appendLine("【当前视频已有标签（包括下载时自动关联的收藏夹标签）】")
         if (request.existingTags.isEmpty()) {
             appendLine("暂无已有标签。")
@@ -208,6 +206,13 @@ object TagSuggestionRequestBuilder {
             appendLine(profileText)
             appendLine()
         }
+        if (request.preferenceTextExamples.isNotEmpty()) {
+            appendLine("【关联审核文本案例】仅在当前画面也有支持时采用。")
+            request.preferenceTextExamples.forEach { example ->
+                appendLine("文案：${example.desc}。人工采纳或补加：${example.acceptedTagNames.joinToString("、")}。人工拒绝：${example.rejectedTagNames.joinToString("、")}。")
+            }
+        }
+        if (request.desc.isNotBlank()) appendLine("待分析视频文案：${request.desc}")
         appendLine("请严格按照给定的 JSON Schema 返回结果。")
     }
 
@@ -231,6 +236,7 @@ object TagSuggestionRequestBuilder {
             val entity = (if (candidate.tagName.isNotBlank()) tagByName[candidate.tagName] else null)
                 ?: tagById[candidate.tagId]
                 ?: return@mapNotNull null
+            if (!entity.enableAi) return@mapNotNull null
             candidate.copy(tagId = entity.id, tagName = entity.tagName)
         }
 
@@ -245,7 +251,7 @@ object TagSuggestionRequestBuilder {
         for (candidate in candidateMap.values.toList()) {
             val entity = tagById[candidate.tagId] ?: continue
             if (entity.parentTagName.isBlank()) continue
-            val parentEntity = tagByName[entity.parentTagName] ?: continue
+            val parentEntity = tagByName[entity.parentTagName]?.takeIf { it.enableAi } ?: continue
 
             val existingParent = candidateMap[parentEntity.id]
             if (existingParent != null) {

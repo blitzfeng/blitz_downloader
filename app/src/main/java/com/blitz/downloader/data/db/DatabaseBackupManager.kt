@@ -1,196 +1,125 @@
 package com.blitz.downloader.data.db
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.os.Environment
+import android.os.SystemClock
+import android.util.Log
+import com.blitz.downloader.BlitzApp
 import com.blitz.downloader.download.BatchDownloadCoordinator
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
-/**
- * Room 数据库备份 / 恢复。
- *
- * 备份策略：
- * - 备份目录：`Download/bDouyin/backup/backup_<yyyyMMdd_HHmmss>/blitz_downloader.db`
- *   每次备份新开带时间戳的子目录，旧备份保留，UI 上让用户选择恢复哪一份。
- * - WAL：Room 默认开启 WAL，备份前必须执行 `PRAGMA wal_checkpoint(FULL)`，否则
- *   WAL 中尚未合并到主库的事务会丢失。
- * - `.nomedia`：在 `backup/` 根目录创建 .nomedia，阻止媒体扫描器把备份当成媒体文件索引。
- *
- * 恢复策略：
- * - 必须先关闭 [AppDatabase] 单例并删除现有 `.db / -wal / -shm` 三件套，
- *   再把备份文件覆盖到 `getDatabasePath()`。仅覆盖 .db 而保留旧 WAL 会让 SQLite
- *   把新主库回滚到一个不一致的状态。
- * - 恢复完成后调用方应触发进程重启（Room 再次 `getInstance` 时会按新文件初始化）。
- */
+/** 文件操作必须在 IO 线程运行；产品入口统一经应用级协调器串行调用。 */
 object DatabaseBackupManager {
+    const val DB_FILE_NAME = BackupFileStore.DB_NAME
+    const val BACKUP_SUBDIR = "${BatchDownloadCoordinator.RELATIVE_DOWNLOAD_SUBDIR}/backup"
 
-    /** 与 [AppDatabase.DB_NAME] 保持一致。AppDatabase 中是 private const，这里复刻为常量。 */
-    const val DB_FILE_NAME: String = "blitz_downloader.db"
-
-    /** 备份根目录：`Download/bDouyin/backup`。 */
-    const val BACKUP_SUBDIR: String = "${BatchDownloadCoordinator.RELATIVE_DOWNLOAD_SUBDIR}/backup"
-
-    /** 单次备份子目录前缀：`backup_yyyyMMdd_HHmmss`。 */
-    private const val BACKUP_ENTRY_PREFIX: String = "backup_"
-
-    private val ENTRY_TIME_FORMAT = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
-
-    /** 单条备份的描述。 */
-    data class BackupEntry(
-        /** 备份子目录绝对路径（包含 .db 文件）。 */
-        val dir: File,
-        /** 备份的 .db 文件。 */
-        val dbFile: File,
-        /** 创建时间（取自目录名时间戳；解析失败用文件 lastModified）。 */
-        val createdAt: Long,
-    ) {
-        /** UI 展示用：`2026-06-18 12:34:56 (1.2 MB)` */
-        fun displayLabel(): String {
-            val dt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(createdAt))
-            val sizeMb = dbFile.length() / 1024.0 / 1024.0
-            return "%s (%.2f MB)".format(Locale.US, dt, sizeMb)
-        }
+    data class BackupEntry(val dir: File, val dbFile: File, val createdAt: Long) {
+        fun displayLabel(): String = "%s (%.2f MB)".format(Locale.US,
+            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(createdAt)), dbFile.length() / 1024.0 / 1024.0)
     }
 
-    // ── 路径辅助 ───────────────────────────────────────────────────────────────
-
-    /** 公共 `Download/bDouyin/backup` 目录（不保证存在）。 */
     fun backupRootDir(): File {
         @Suppress("DEPRECATION")
-        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        return File(downloads, BACKUP_SUBDIR)
+        return File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), BACKUP_SUBDIR)
     }
 
-    // ── 备份 ───────────────────────────────────────────────────────────────────
+    fun fileStore(root: File = backupRootDir()) = BackupFileStore(root, isLink = {
+        android.system.OsConstants.S_ISLNK(android.system.Os.lstat(it.path).st_mode)
+    })
 
-    /**
-     * 执行一次完整备份。**必须在 IO 线程调用。**
-     *
-     * @return 备份成功的 .db 文件可读路径（如 `Download/bDouyin/backup/backup_xxx/blitz_downloader.db`）。
-     * @throws Exception 任何 I/O 或 SQLite 异常都向上抛出，由 UI 层 catch 提示。
-     */
-    @Throws(Exception::class)
-    fun backupNow(context: Context): File {
-        // 1) 先 checkpoint，确保 WAL 中数据全部合并到主库文件
-        val db = AppDatabase.getInstance(context)
-        db.openHelper.writableDatabase.use { sdb ->
-            sdb.query("PRAGMA wal_checkpoint(FULL)").use { it.moveToFirst() }
-        }
-
-        // 2) 准备目标目录
-        val root = backupRootDir()
-        if (!root.exists() && !root.mkdirs()) {
-            throw java.io.IOException("无法创建备份目录: ${root.absolutePath}")
-        }
-        // .nomedia 防止备份目录被扫成媒体
-        val nomedia = File(root, ".nomedia")
-        if (!nomedia.exists()) {
-            runCatching { nomedia.createNewFile() }
-        }
-
-        val entryDir = File(root, BACKUP_ENTRY_PREFIX + ENTRY_TIME_FORMAT.format(Date(System.currentTimeMillis())))
-        if (!entryDir.mkdirs()) {
-            throw java.io.IOException("无法创建本次备份子目录: ${entryDir.absolutePath}")
-        }
-
-        // 3) 复制 .db / -wal / -shm 三件套（wal/shm 可能不存在，存在就一起备份保险一点）
-        val src = context.getDatabasePath(DB_FILE_NAME)
-        if (!src.exists()) {
-            throw java.io.FileNotFoundException("数据库文件不存在: ${src.absolutePath}")
-        }
-        val dstDb = File(entryDir, DB_FILE_NAME)
-        src.copyTo(dstDb, overwrite = true)
-        listOf("$DB_FILE_NAME-wal", "$DB_FILE_NAME-shm").forEach { suffixName ->
-            val s = File(src.parentFile, suffixName)
-            if (s.exists()) s.copyTo(File(entryDir, suffixName), overwrite = true)
-        }
-        return dstDb
+    suspend fun backupNow(context: Context, kind: String = "MANUAL", store: BackupFileStore = fileStore()): File {
+        val startedAt = System.currentTimeMillis()
+        val started = SystemClock.elapsedRealtime()
+        val temp = tempDir(context)
+        try {
+            val file = File(temp, DB_FILE_NAME)
+            val snapshotStart = SystemClock.elapsedRealtime()
+            val info = DatabaseSnapshot.create(AppDatabase.getInstance(context), file)
+            val snapshotMs = SystemClock.elapsedRealtime() - snapshotStart
+            val entry = store.publish(file, kind, startedAt, maxOf(startedAt, System.currentTimeMillis()), info.version)
+            Log.i("DatabaseBackup", "kind=$kind snapshotMs=$snapshotMs totalMs=${SystemClock.elapsedRealtime() - started} bytes=${file.length()}")
+            return entry.dbFile
+        } finally { removeTemp(temp) }
     }
 
-    // ── 恢复 ───────────────────────────────────────────────────────────────────
+    fun scan(context: Context, store: BackupFileStore = fileStore()): BackupFileStore.Scan =
+        store.scan { validateEntry(context, it) }
 
-    /** 列出已有备份，按时间倒序（最新在前）。**必须在 IO 线程调用。** */
-    fun listBackups(): List<BackupEntry> {
-        val root = backupRootDir()
-        if (!root.isDirectory) return emptyList()
-        val out = mutableListOf<BackupEntry>()
-        root.listFiles()?.forEach { sub ->
-            if (!sub.isDirectory || !sub.name.startsWith(BACKUP_ENTRY_PREFIX)) return@forEach
-            val dbFile = File(sub, DB_FILE_NAME)
-            if (!dbFile.isFile) return@forEach
-            val ts = parseEntryTimestamp(sub.name) ?: dbFile.lastModified()
-            out += BackupEntry(sub, dbFile, ts)
-        }
-        out.sortByDescending { it.createdAt }
-        return out
+    fun listBackups(context: Context = BlitzApp.instance): List<BackupEntry> =
+        scan(context).entries.map { BackupEntry(it.dir, it.dbFile, it.completedAt) }
+
+    /** 旧 WAL 只在隔离目录回放，始终不修改用户原始副本。 */
+    fun validateEntry(context: Context, entry: BackupFileStore.Entry) {
+        val temp = prepareEntry(context, entry.dbFile)
+        try {
+            val info = DatabaseSnapshot.validate(File(temp, DB_FILE_NAME))
+            if (entry.manifest != null && info.version != entry.manifest.databaseVersion) throw IOException("备份版本校验失败")
+        } finally { removeTemp(temp) }
     }
 
-    /**
-     * 从指定备份覆盖当前数据库。**必须在 IO 线程调用，且调用方负责重启进程。**
-     *
-     * 实现要点：
-     * 1. `AppDatabase.closeAndReset()` 关闭单例并释放底层文件句柄；
-     * 2. 删除现有 `.db / -wal / -shm`；
-     * 3. 拷贝备份的 `.db`（以及备份目录下若存在的 -wal/-shm，正常不应该有）；
-     * 4. 不在此处 `getInstance()`，等进程重启后由调用方/启动逻辑重新打开。
-     */
-    @Throws(Exception::class)
     fun restoreFrom(context: Context, entry: BackupEntry) {
-        val srcDb = entry.dbFile
-        if (!srcDb.isFile) {
-            throw java.io.FileNotFoundException("备份文件不存在: ${srcDb.absolutePath}")
-        }
-        // 直接 File 读取；重装/换签名后该文件在 MediaStore 里可能被"孤儿化"，
-        // 读取会抛 SecurityException——此时应由 UI 层引导改走 SAF（[restoreFromStream]）。
-        applyRestore(context) { srcDb.inputStream() }
+        val temp = prepareEntry(context, entry.dbFile)
+        try { applyRestore(context, File(temp, DB_FILE_NAME)) } finally { removeTemp(temp) }
     }
 
-    /**
-     * 从任意输入流恢复（供 SAF 文件选择器场景使用）。**必须在 IO 线程调用，且调用方负责重启进程。**
-     *
-     * 用户通过系统文件选择器（`ACTION_OPEN_DOCUMENT`）选中备份 `.db` 后，用其授权 Uri 打开流传入，
-     * 可**绕过 MediaStore 归属校验**，因此即便备份文件在重装后被孤儿化也能读取。
-     */
-    @Throws(Exception::class)
     fun restoreFromStream(context: Context, source: java.io.InputStream) {
-        applyRestore(context) { source }
+        val temp = tempDir(context)
+        try {
+            val file = File(temp, DB_FILE_NAME)
+            source.use { input -> FileOutputStream(file).use { output -> input.copyTo(output); output.fd.sync() } }
+            DatabaseSnapshot.validate(file)
+            applyRestore(context, file)
+        } finally { removeTemp(temp) }
     }
 
-    /**
-     * 恢复的写入核心：关闭数据库单例 → 删除现有 `.db / -wal / -shm` → 从 [openSource] 覆盖写入 `.db`。
-     * 备份写入时已 `checkpoint`，主库自洽，无需再恢复 wal/shm。
-     */
-    @Throws(Exception::class)
-    private inline fun applyRestore(context: Context, openSource: () -> java.io.InputStream) {
-        AppDatabase.closeAndReset()
-
-        val dst = context.getDatabasePath(DB_FILE_NAME)
-        dst.parentFile?.let { if (!it.exists()) it.mkdirs() }
-
-        // 删 -wal / -shm 必须在覆盖 .db 之前；否则旧 WAL 会把新库回滚
-        listOf("$DB_FILE_NAME-wal", "$DB_FILE_NAME-shm").forEach { suffixName ->
-            val f = File(dst.parentFile, suffixName)
-            if (f.exists() && !f.delete()) {
-                throw java.io.IOException("无法删除旧 WAL/SHM 文件: ${f.absolutePath}")
+    private fun prepareEntry(context: Context, source: File): File {
+        val temp = tempDir(context)
+        try {
+            source.copyTo(File(temp, DB_FILE_NAME))
+            for (suffix in listOf("-wal", "-shm")) {
+                val sidecar = File(source.path + suffix)
+                if (sidecar.exists()) sidecar.copyTo(File(temp, DB_FILE_NAME + suffix))
             }
-        }
-        if (dst.exists() && !dst.delete()) {
-            throw java.io.IOException("无法删除现有数据库: ${dst.absolutePath}")
-        }
-
-        openSource().use { input ->
-            dst.outputStream().use { output -> input.copyTo(output) }
-        }
+            val isolated = File(temp, DB_FILE_NAME)
+            SQLiteDatabase.openDatabase(isolated.path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+                db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { cursor ->
+                    if (cursor.moveToFirst() && cursor.getInt(0) != 0) throw IOException("备份 WAL 校验失败")
+                }
+            }
+            DatabaseSnapshot.validate(isolated)
+            return temp
+        } catch (error: Exception) { removeTemp(temp); throw error }
     }
 
-    // ── 私有辅助 ───────────────────────────────────────────────────────────────
+    private fun applyRestore(context: Context, source: File) {
+        DatabaseSnapshot.validate(source)
+        val dest = context.getDatabasePath(DB_FILE_NAME)
+        dest.parentFile?.mkdirs()
+        val stage = File(dest.parentFile, "${dest.name}.restore-${UUID.randomUUID()}")
+        try {
+            source.inputStream().use { input -> FileOutputStream(stage).use { output -> input.copyTo(output); output.fd.sync() } }
+            AppDatabase.closeAndReset()
+            listOf("-wal", "-shm").forEach { suffix ->
+                val sidecar = File(dest.path + suffix)
+                if (sidecar.exists() && !sidecar.delete()) throw IOException("无法删除旧 WAL/SHM 文件")
+            }
+            if (!stage.renameTo(dest)) throw IOException("无法替换数据库文件")
+        } finally { stage.delete() }
+    }
 
-    /** 解析 `backup_yyyyMMdd_HHmmss` 形式的目录名为毫秒；失败返回 null。 */
-    private fun parseEntryTimestamp(dirName: String): Long? {
-        if (!dirName.startsWith(BACKUP_ENTRY_PREFIX)) return null
-        val tail = dirName.removePrefix(BACKUP_ENTRY_PREFIX)
-        return runCatching { ENTRY_TIME_FORMAT.parse(tail)?.time }.getOrNull()
+    private fun tempDir(context: Context): File = File(context.cacheDir, "db-backup-${UUID.randomUUID()}").also {
+        if (!it.mkdir()) throw IOException("无法创建数据库临时目录")
+    }
+
+    private fun removeTemp(dir: File) {
+        listOf(DB_FILE_NAME, "$DB_FILE_NAME-wal", "$DB_FILE_NAME-shm", "$DB_FILE_NAME-journal").forEach { File(dir, it).delete() }
+        dir.delete()
     }
 }

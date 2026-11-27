@@ -25,11 +25,25 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AiTagSuggestionPendingEntity::class,
         LikedListIndexSessionEntity::class,
         LikedListIndexItemEntity::class,
+        AiPreferenceCaseEntity::class,
+        AiPreferenceRunEntity::class,
+        AiPreferenceNodeEntity::class,
+        AiPreferenceRuleProfileEntity::class,
+        RecoverySession::class,
+        RecoveryFile::class,
+        RecoveryWork::class,
+        RecoveryCandidate::class,
+        RecoveryBatch::class,
+        RecoveryBatchItem::class,
+        RecoveryRecord::class,
     ],
-    version = 30,
+    version = 32,
+    autoMigrations = [androidx.room.AutoMigration(from = 31, to = 32)],
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
+
+    abstract fun mediaRecoveryDao(): MediaRecoveryDao
 
     abstract fun batchAnalysisDao(): BatchAnalysisDao
 
@@ -58,6 +72,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiTagSuggestionPendingDao(): AiTagSuggestionPendingDao
 
     abstract fun likedListIndexDao(): LikedListIndexDao
+
+    abstract fun aiPreferenceDao(): AiPreferenceDao
 
     companion object {
         /** 数据库文件名；[DatabaseBackupManager] 也会用这个名字（务必保持一致）。 */
@@ -584,17 +600,64 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_30_31 = object : Migration(30, 31) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""CREATE TABLE IF NOT EXISTS ai_preference_case (
+                    awemeId TEXT NOT NULL PRIMARY KEY, revision INTEGER NOT NULL, analysisId INTEGER,
+                    judgmentsJson TEXT NOT NULL, suggestedJson TEXT NOT NULL, visualJson TEXT NOT NULL,
+                    evidenceJson TEXT NOT NULL, `desc` TEXT NOT NULL, contentHash TEXT NOT NULL,
+                    updatedAtMillis INTEGER NOT NULL)""")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS ai_preference_learning_run (
+                    runId TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL, manifestJson TEXT NOT NULL,
+                    strategyVersion INTEGER NOT NULL, providerPlanJson TEXT NOT NULL,
+                    plannedNodeCount INTEGER NOT NULL, completedNodeCount INTEGER NOT NULL,
+                    processedCaseCount INTEGER NOT NULL, lastError TEXT, createdAtMillis INTEGER NOT NULL,
+                    updatedAtMillis INTEGER NOT NULL)""")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS ai_preference_learning_node (
+                    nodeId TEXT NOT NULL PRIMARY KEY, runId TEXT NOT NULL, stage TEXT NOT NULL,
+                    inputHash TEXT NOT NULL, inputJson TEXT NOT NULL, childNodeIdsJson TEXT NOT NULL,
+                    status TEXT NOT NULL, outputJson TEXT, diagnosticsJson TEXT)""")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_ai_preference_learning_node_runId ON ai_preference_learning_node(runId)")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_ai_preference_learning_node_runId_inputHash ON ai_preference_learning_node(runId, inputHash)")
+                db.execSQL("""CREATE TABLE IF NOT EXISTS ai_preference_rule_profile (
+                    version INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, runId TEXT, status TEXT NOT NULL,
+                    rulesJson TEXT NOT NULL, manifestJson TEXT NOT NULL, overridesJson TEXT NOT NULL,
+                    coverageJson TEXT NOT NULL, createdAtMillis INTEGER NOT NULL, activatedAtMillis INTEGER)""")
+                // 旧摘要保留在原表。只有生成摘要后的反馈与排除状态可以保守核对时，才建立兼容副本。
+                db.execSQL("""INSERT INTO ai_preference_rule_profile
+                    (runId, status, rulesJson, manifestJson, overridesJson, coverageJson, createdAtMillis, activatedAtMillis)
+                    SELECT NULL, 'LEGACY', p.profileText, CAST(p.sampleCount AS TEXT), '{}', '{}', p.updatedAtMillis, NULL
+                    FROM preference_profile p
+                    WHERE p.id = (SELECT id FROM preference_profile ORDER BY updatedAtMillis DESC, id DESC LIMIT 1)
+                      AND p.sampleCount > 0 AND p.sampleCount = (SELECT COUNT(*) FROM video_tag_feedback)
+                      AND NOT EXISTS (SELECT 1 FROM video_tag_feedback WHERE createdAtMillis > p.updatedAtMillis)
+                      AND NOT EXISTS (SELECT 1 FROM ai_reference_exclusion)""")
+                val legacyChanges = listOf(
+                    "INSERT ON video_tag_feedback", "UPDATE ON video_tag_feedback", "DELETE ON video_tag_feedback",
+                    "INSERT ON ai_reference_exclusion", "DELETE ON tags",
+                    "UPDATE OF description, parentTagName, isExclusive, enableAi ON tags",
+                    "DELETE ON downloaded_videos", "UPDATE OF desc, coverPath ON downloaded_videos",
+                    "INSERT ON ai_preference_case", "UPDATE ON ai_preference_case",
+                )
+                legacyChanges.forEachIndexed { i, change ->
+                    db.execSQL("""CREATE TRIGGER IF NOT EXISTS invalidate_legacy_preference_$i AFTER $change
+                        BEGIN UPDATE ai_preference_rule_profile SET status = 'LEGACY_INVALID' WHERE status = 'LEGACY'; END""")
+                }
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
         fun getInstance(context: Context): AppDatabase {
             return instance ?: synchronized(this) {
-                instance ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    DB_NAME,
-                )
-                    .addMigrations(
+                instance ?: open(context, DB_NAME).also { instance = it }
+            }
+        }
+
+        internal fun open(context: Context, name: String): AppDatabase =
+            Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
+                .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
                         MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
@@ -602,12 +665,9 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20,
                         MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25,
                         MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30,
+                        MIGRATION_30_31,
                     )
-                    .fallbackToDestructiveMigration()
-                    .build()
-                    .also { instance = it }
-            }
-        }
+                .build()
 
         /**
          * 关闭当前 Room 单例并释放底层文件句柄。

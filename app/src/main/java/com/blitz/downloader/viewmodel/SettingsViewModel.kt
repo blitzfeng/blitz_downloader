@@ -46,7 +46,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         _busy.value = BusyKind.BACKUP
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching { DatabaseBackupManager.backupNow(getApplication()) }
+                runCatching { BlitzApp.instance.databaseBackupCoordinator.backup() }
             }
             _busy.value = null
             result.fold(
@@ -64,7 +64,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun loadBackups() {
         viewModelScope.launch {
-            val backups = withContext(Dispatchers.IO) { DatabaseBackupManager.listBackups() }
+            val backups = runCatching { BlitzApp.instance.databaseBackupCoordinator.listBackups() }.getOrElse { emptyList() }
             emit(
                 if (backups.isEmpty()) {
                     SettingsEvent.NoBackupsFound
@@ -80,7 +80,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         _busy.value = BusyKind.RESTORE
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching { DatabaseBackupManager.restoreFrom(getApplication(), entry) }
+                runCatching { BlitzApp.instance.databaseBackupCoordinator.restore(entry) }
             }
             _busy.value = null
             result.fold(
@@ -106,9 +106,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val resolver = getApplication<Application>().contentResolver
-                    resolver.openInputStream(uri)?.use { input ->
-                        DatabaseBackupManager.restoreFromStream(getApplication(), input)
-                    } ?: throw IOException("无法打开所选文件")
+                    BlitzApp.instance.databaseBackupCoordinator.restore {
+                        resolver.openInputStream(uri) ?: throw IOException("无法打开所选文件")
+                    }
                 }
             }
             _busy.value = null

@@ -97,17 +97,19 @@ class TagEditDialogFragment : ComposeDialogFragment() {
                 }
             },
             onPreviewVideo = { startActivity(VideoPlayerActivity.createFileIntent(requireContext(), videoFilePath)) },
-            onConfirm = { tags, aiAnalysisId -> finishWith(tags, aiAnalysisId) },
+            onConfirm = { tags, aiAnalysisId, evaluated, replacements -> finishWith(tags, aiAnalysisId, evaluated, replacements) },
             onCancel = { dismiss() },
         )
     }
 
-    private fun finishWith(tags: List<String>, aiAnalysisId: Long?) {
+    private fun finishWith(tags: List<String>, aiAnalysisId: Long?, evaluated: List<String>, replacements: List<String>) {
         parentFragmentManager.setFragmentResult(
             REQUEST_KEY,
             Bundle().apply {
                 putString(RESULT_AWEME_ID, awemeId)
                 putStringArrayList(RESULT_TAGS, ArrayList(tags))
+                putStringArrayList(RESULT_EVALUATED, ArrayList(evaluated))
+                putStringArrayList(RESULT_REPLACEMENTS, ArrayList(replacements))
                 // 只在本次编辑用过「AI 建议」时携带，未使用时不带这个 key（与既有行为等价）
                 if (aiAnalysisId != null) putLong(RESULT_AI_ANALYSIS_ID, aiAnalysisId)
             },
@@ -122,6 +124,8 @@ class TagEditDialogFragment : ComposeDialogFragment() {
 
         /** 勾选结果，**整体覆盖**该记录的标签（空列表 = 清空）。 */
         const val RESULT_TAGS = "tags"
+        const val RESULT_EVALUATED = "evaluated"
+        const val RESULT_REPLACEMENTS = "replacements"
 
         /** 本次编辑用过「AI 建议」时携带，关联的 `VideoAiAnalysisEntity.id`，供宿主写入反馈样例。 */
         const val RESULT_AI_ANALYSIS_ID = "aiAnalysisId"
@@ -183,18 +187,23 @@ private fun TagEditDialogContent(
     hasVideoFile: Boolean,
     onRequestAiSuggestion: (Set<String>) -> Unit,
     onPreviewVideo: () -> Unit,
-    onConfirm: (tags: List<String>, aiAnalysisId: Long?) -> Unit,
+    onConfirm: (List<String>, Long?, List<String>, List<String>) -> Unit,
     onCancel: () -> Unit,
     onShowLogs: () -> Unit = {},
 ) {
     val checked = rememberCheckedTags(currentTags)
     var usedAiAnalysisId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var suggested by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    var touched by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    var appliedReplacements by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
 
     // 替换项等待显式应用；同一次分析只预勾选一次，避免转屏后覆盖用户的后续调整。
     LaunchedEffect(aiState) {
         if (aiState is TagEditDialogViewModel.AiSuggestionState.Success && usedAiAnalysisId != aiState.analysisId) {
             val replacements = aiState.tagChanges.filter { it.action == "replace" }.map { it.tagName }.toSet()
-            checked.addAll(aiState.suggestedTagNames.filter { it in allTags && it !in replacements })
+            suggested = ArrayList(aiState.suggestedTagNames.filter { it in allTags && it !in replacements })
+            appliedReplacements = arrayListOf()
+            checked.addAll(suggested)
             usedAiAnalysisId = aiState.analysisId
         }
     }
@@ -250,6 +259,7 @@ private fun TagEditDialogContent(
                     val next = TagChangeSuggestions.apply(checked.toSet(), setOf(change.tagName), listOf(change))
                     checked.clear()
                     checked.addAll(next)
+                    appliedReplacements = ArrayList((appliedReplacements + change.tagName).distinct())
                 }, modifier = Modifier.padding(horizontal = 24.dp)) {
                     Text(stringResource(R.string.ai_apply_replacement))
                 }
@@ -260,6 +270,7 @@ private fun TagEditDialogContent(
         allTags = allTags,
         checked = checked,
         onToggle = { tag ->
+            touched = ArrayList((touched + tag).distinct())
             if (tag in checked) {
                 checked.remove(tag) // 取消：只影响这一个标签，不联动
             } else {
@@ -274,7 +285,10 @@ private fun TagEditDialogContent(
         trailing = {
             TextButton(onClick = onCancel) { Text(stringResource(android.R.string.cancel)) }
             // 覆盖语义：一个都不勾也要能确认（= 清空该记录的标签），所以不做 enabled 判断
-            TextButton(onClick = { onConfirm(allTags.filter { it in checked }, usedAiAnalysisId) }) {
+            TextButton(onClick = {
+                onConfirm(allTags.filter { it in checked }, usedAiAnalysisId,
+                    (suggested + touched + appliedReplacements).distinct(), appliedReplacements)
+            }) {
                 Text(stringResource(android.R.string.ok))
             }
         },
@@ -295,7 +309,7 @@ private fun TagEditDialogPreview() {
                 hasVideoFile = true,
                 onRequestAiSuggestion = {},
                 onPreviewVideo = {},
-                onConfirm = { _, _ -> },
+                onConfirm = { _, _, _, _ -> },
                 onCancel = {},
             )
         }

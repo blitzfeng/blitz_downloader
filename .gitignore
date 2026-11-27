@@ -16,3 +16,5 @@ local.properties
 /.idea/*
 .claude/*
 *.apk
+/recovery-local/
+/.kotlin/errors/*.log

@@ -1,6 +1,9 @@
 package com.blitz.downloader.viewmodel
 
 import android.app.Application
+import androidx.room.withTransaction
+import com.blitz.downloader.model.PreferenceJudgment
+import com.blitz.downloader.model.PreferenceSource
 import androidx.lifecycle.viewModelScope
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.DownloadMediaType
@@ -136,10 +139,36 @@ class ManageVideoViewModel(app: Application) : ManageTabViewModel(app) {
      * 记录反馈样例；未使用 AI 建议时
      * 传 `null`，不产生任何反馈记录（对应 spec"未使用 AI 建议的手动打标签路径不产生反馈记录"）。
      */
-    fun applyTagsToVideo(awemeId: String, tags: List<String>, aiAnalysisId: Long? = null) {
+    fun applyTagsToVideo(awemeId: String, tags: List<String>, aiAnalysisId: Long? = null,
+        evaluated: List<String> = emptyList(), replacements: List<String> = emptyList(),
+    ) {
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                tagRepo.setTagsAsUserEdit(awemeId, tags)
+            val database = com.blitz.downloader.BlitzApp.instance.database
+            database.withTransaction {
+                val changes = aiAnalysisId?.let {
+                    aiTagSuggestionRepo.tagChangesForAnalyses(listOf(it))[it]
+                }.orEmpty().associateBy { it.tagName }
+                val before = tagRepo.getTagsForVideo(awemeId).toSet()
+                val decisions = buildMap {
+                    for (name in evaluated) {
+                        val selected = name in tags
+                        val change = changes[name]
+                        val source = when {
+                            selected && name in replacements -> PreferenceSource.HUMAN_REPLACE
+                            selected && change?.action == "coexist" -> PreferenceSource.HUMAN_COEXIST
+                            selected && aiAnalysisId == null && name !in before -> PreferenceSource.HUMAN_ADD
+                            selected -> PreferenceSource.HUMAN_CONFIRM
+                            else -> PreferenceSource.HUMAN_REMOVE
+                        }
+                        put(name, (if (selected) PreferenceJudgment.POSITIVE else PreferenceJudgment.NEGATIVE) to source)
+                        if (!selected) continue
+                        if (source == PreferenceSource.HUMAN_REPLACE) change?.replacedTags.orEmpty()
+                            .filter { it !in tags }.forEach { put(it, PreferenceJudgment.NEGATIVE to source) }
+                        if (source == PreferenceSource.HUMAN_COEXIST) change?.relatedTags.orEmpty()
+                            .filter { it in tags }.forEach { put(it, PreferenceJudgment.POSITIVE to source) }
+                    }
+                }
+                tagRepo.setTagsAsUserEdit(awemeId, tags, decisions, aiAnalysisId)
                 if (aiAnalysisId != null) {
                     val confirmedTagIds = tagRepo.getAvailableTagEntities()
                         .filter { it.tagName in tags }
@@ -192,7 +221,7 @@ class ManageVideoViewModel(app: Application) : ManageTabViewModel(app) {
         viewModelScope.launch {
             val invalidIds = withContext(Dispatchers.IO) {
                 repo.getAllByMediaType(mediaType)
-                    .filter { it.filePath.isNotBlank() && !resolveFile(it.filePath).exists() }
+                    .filter { readResolver.status(it.filePath) == com.blitz.downloader.data.DownloadedMediaReadResolver.Status.MISSING }
                     .map { it.awemeId }
             }
             if (invalidIds.isEmpty()) {
@@ -216,10 +245,10 @@ class ManageVideoViewModel(app: Application) : ManageTabViewModel(app) {
     fun openVideoPlayer(entity: DownloadedVideoEntity) {
         viewModelScope.launch {
             val playable = uiState.value.items.filter { it.entity.filePath.isNotBlank() }
-            val exists = entity.filePath.isNotBlank() &&
-                withContext(Dispatchers.IO) { resolveFile(entity.filePath).exists() }
-            if (!exists) {
-                emit(ManageTabEvent.FileNotFound)
+            val status = withContext(Dispatchers.IO) { readResolver.status(entity.filePath) }
+            if (status != com.blitz.downloader.data.DownloadedMediaReadResolver.Status.READABLE) {
+                emit(if (status == com.blitz.downloader.data.DownloadedMediaReadResolver.Status.MISSING)
+                    ManageTabEvent.FileNotFound else ManageTabEvent.PermissionNeeded)
                 return@launch
             }
             val position = playable.indexOfFirst { it.entity.awemeId == entity.awemeId }

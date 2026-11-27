@@ -62,7 +62,7 @@ object BatchReviewLogic {
         filter: TagEditFilter,
     ): List<DownloadedVideoEntity> = when (filter) {
         TagEditFilter.ALL -> videos
-        TagEditFilter.UNEDITED -> videos.filter { it.tagEditCount == 0 }
+        TagEditFilter.UNEDITED -> videos.filter { it.tagEditCount == 0 && !it.hasUnknownHistory }
         TagEditFilter.EDITED -> videos.filter { it.tagEditCount > 0 }
     }
 

@@ -230,6 +230,17 @@ class TagSuggestionRequestBuilderTest {
     }
 
     @Test
+    fun resolveCandidatesWithParentHierarchy_skipsAiDisabledTags() {
+        val tags = listOf(
+            TagEntity("停用父标签", id = 91, enableAi = false),
+            TagEntity("可用子标签", id = 92, parentTagName = "停用父标签"),
+        )
+        val candidates = listOf(TagCandidate(91, 0.9f), TagCandidate(92, 0.9f))
+        val resolved = TagSuggestionRequestBuilder.resolveCandidatesWithParentHierarchy(candidates, tags)
+        assertEquals(listOf(92L), resolved.map { it.tagId })
+    }
+
+    @Test
     fun resolveCandidatesWithParentHierarchy_filtersHallucinations() {
         val allTags = listOf(
             TagEntity(tagName = "颜值", sortOrder = 0, id = 10L),

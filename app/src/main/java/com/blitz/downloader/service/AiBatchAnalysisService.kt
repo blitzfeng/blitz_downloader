@@ -88,6 +88,7 @@ class AiBatchAnalysisService : Service() {
                         if (e is CancellationException) throw e
                     } finally {
                         activeSessionIds.remove(job.sessionId)
+                        AiWorkGate.release(batchOwner(job.sessionId))
                     }
                 }
             } finally {
@@ -280,6 +281,12 @@ class AiBatchAnalysisService : Service() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     }
 
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        scope.cancel()
+        stopForegroundCompat()
+        stopSelf(startId)
+    }
+
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
@@ -288,6 +295,7 @@ class AiBatchAnalysisService : Service() {
     data class BatchAnalysisJob(val sessionId: String, val awemeIds: List<String>)
 
     companion object {
+        private fun batchOwner(id: String) = "analysis:$id"
         private const val TAG = "AiBatchAnalysisService"
         private const val CHANNEL_ID = "blitz_ai_batch_analysis"
         private const val FOREGROUND_ID = 2001
@@ -306,19 +314,25 @@ class AiBatchAnalysisService : Service() {
         }
 
         /** 启动批量分析服务 */
-        @Synchronized
-        fun start(context: Context, awemeIds: List<String>, sessionId: String): Boolean {
+        suspend fun start(context: Context, awemeIds: List<String>, sessionId: String,
+            prepare: suspend () -> Unit,
+        ): Boolean {
             if (!isConfigured(context) || awemeIds.isEmpty() || activeSessionIds.isNotEmpty()) return false
+            if (!AiWorkGate.acquire(batchOwner(sessionId))) return false
             val job = BatchAnalysisJob(sessionId, awemeIds.distinct())
-            activeSessionIds.add(sessionId)
-            pendingJobs.add(job)
             return try {
+                // 取得批量工作所有权后再建立会话，避免被拒绝的启动清空已有审核资料。
+                prepare()
+                activeSessionIds.add(sessionId)
+                pendingJobs.add(job)
                 ContextCompat.startForegroundService(context, Intent(context, AiBatchAnalysisService::class.java))
                 AiBatchAnalysisEvents.setAnalyzing(true, job.awemeIds.size)
                 true
             } catch (e: Exception) {
                 pendingJobs.remove(job)
                 activeSessionIds.remove(sessionId)
+                AiWorkGate.release(batchOwner(sessionId))
+                if (e is CancellationException) throw e
                 Log.e(TAG, "Cannot start analysis service", e)
                 false
             }

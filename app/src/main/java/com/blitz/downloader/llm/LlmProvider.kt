@@ -12,6 +12,9 @@ interface LlmProvider {
     /** 发起一次 AI 建议标签请求。失败（网络异常、解析失败、幻觉过滤后为空等）不抛异常，走 [Result.failure]。 */
     suspend fun generateTagSuggestion(request: TagSuggestionRequest): Result<TagSuggestionResponse>
 
+    suspend fun learnPreference(request: PreferenceLearningRequest): Result<PreferenceLearningResponse> =
+        Result.failure(UnsupportedOperationException("服务不支持偏好学习"))
+
     /** 生成一版个人偏好摘要（纯文本输入输出，不带图片）。 */
     suspend fun summarizePreference(request: PreferenceSummaryRequest): Result<String>
 

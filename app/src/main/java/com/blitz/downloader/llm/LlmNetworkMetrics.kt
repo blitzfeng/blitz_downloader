@@ -28,6 +28,7 @@ data class LlmNetworkMetrics(
 class LlmNetworkTrace(
     val service: String,
     val model: String,
+    val logPayload: Boolean = true,
     val onUpdate: (LlmNetworkMetrics) -> Unit,
 )
 

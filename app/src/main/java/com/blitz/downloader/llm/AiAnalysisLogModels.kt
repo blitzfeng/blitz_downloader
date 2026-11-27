@@ -36,6 +36,8 @@ data class AiAnalysisLogEntry(
     val visualFeatureProfile: VisualFeatureProfile? = null,
     val tokenUsage: String? = null,
     val errorMessage: String? = null,
+    val preparation: AiPreparationTiming? = null,
+    val personalization: AiRequestPersonalization? = null,
 )
 
 /** 所有调用失败共用的日志更新逻辑；没有收到响应时不伪造返回报文。 */

@@ -51,7 +51,7 @@ import java.io.File
 class ImageViewerActivity : AppCompatActivity() {
 
     /** 图集中的一页：静态封面 + 可选的实况图 mp4（非空即动图）。 */
-    internal data class LivePhotoPage(val cover: File, val video: File?)
+    internal data class LivePhotoPage(val cover: Any, val video: Any?)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +65,18 @@ class ImageViewerActivity : AppCompatActivity() {
             return
         }
 
+        val members = intent.getStringArrayListExtra(EXTRA_MEMBERS)
+        if (!members.isNullOrEmpty()) {
+            val resolver = com.blitz.downloader.data.DownloadedMediaReadResolver(this)
+            val selected = members.filterNot { it.endsWith(".mp4",true) }.map { cover ->
+                val live = members.firstOrNull { it.equals(cover.substringBeforeLast('.') + ".mp4",true) }
+                LivePhotoPage(resolver.model(cover), live?.let(resolver::model))
+            }
+            if (selected.isNotEmpty()) {
+                setContent { BlitzTheme { ImageViewerScreen(title,selected) { finish() } } }
+                return
+            }
+        }
         @Suppress("DEPRECATION")
         val firstFile = File(Environment.getExternalStorageDirectory(), filePath)
         if (!firstFile.exists()) {
@@ -121,6 +133,7 @@ class ImageViewerActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_FILE_PATH = "extra_file_path"
         const val EXTRA_TITLE = "extra_title"
+        const val EXTRA_MEMBERS = "confirmed_members"
     }
 }
 
@@ -151,7 +164,7 @@ private fun ImageViewerScreen(
             if (item.video != null) {
                 // 实况图：本地 mp4，仅当前页播放
                 LivePhotoPlayer(
-                    mediaSource = item.video.absolutePath,
+                    mediaSource = item.video.toString(),
                     coverModel = item.cover,
                     isActive = pagerState.currentPage == page,
                     modifier = Modifier.fillMaxSize(),

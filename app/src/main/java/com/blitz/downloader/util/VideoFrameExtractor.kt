@@ -50,8 +50,9 @@ object VideoFrameExtractor {
 
     private const val JPEG_QUALITY = 80
 
-    fun extract(file: File): List<ImagePart> {
+    fun extract(file: File, onStage: ((String) -> Unit)? = null): List<ImagePart> {
         if (!file.isFile) return emptyList()
+        onStage?.invoke("候选帧解码")
         val retriever = MediaMetadataRetriever()
         val candidateBitmaps = mutableListOf<Bitmap>()
         return try {
@@ -71,9 +72,11 @@ object VideoFrameExtractor {
             }
             if (candidateBitmaps.isEmpty()) return emptyList()
 
+            onStage?.invoke("人脸检测")
             val faceFrames = FaceFrameSelector.selectFaceFrames(candidateBitmaps, MAX_FINAL_FRAMES)
             val faceIndices = faceFrames.map { it.index }.toSet()
 
+            onStage?.invoke("帧选择、缩放和压缩")
             val generalBudget = (MAX_FINAL_FRAMES - faceIndices.size).coerceAtLeast(0)
             val generalIndices = if (generalBudget > 0) {
                 evenlySpacedIndices(candidateBitmaps.size, generalBudget).filter { it !in faceIndices }

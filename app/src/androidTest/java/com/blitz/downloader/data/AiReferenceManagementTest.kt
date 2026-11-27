@@ -60,7 +60,7 @@ class AiReferenceManagementTest {
         } finally { db.close() }
     }
 
-    @Test fun migration29To30PreservesDataAndExclusionSurvivesReopen() = runBlocking {
+    @Test fun migration29To31PreservesDataAndExclusionSurvivesReopen() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val name = "ai-reference-migration-test.db"
@@ -87,7 +87,7 @@ class AiReferenceManagementTest {
         helper.writableDatabase
         helper.close()
         fun open() = Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(AppDatabase.MIGRATION_29_30).build()
+            .addMigrations(AppDatabase.MIGRATION_29_30, AppDatabase.MIGRATION_30_31).build()
         try {
             val db = open()
             try {

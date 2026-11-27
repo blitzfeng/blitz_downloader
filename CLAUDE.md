@@ -17,13 +17,12 @@ Android 应用（Kotlin），用于批量下载抖音视频与图集。实现思
 ./gradlew installDebug               # 构建并安装到已连接设备
 ./gradlew assembleRelease            # 构建 release APK（同一把签名，见下）
 ./gradlew test                       # JVM 单元测试（app/src/test）
-./gradlew connectedAndroidTest       # 设备/模拟器上的仪器化测试
 ./gradlew testDebugUnitTest --tests "com.blitz.downloader.api.AwemeMapperTest"
 ./gradlew lint                       # Android Lint
 ./gradlew clean
 ```
 
-JVM 单元测试目前只有 5 个，都是纯 JVM、不读外部 fixture：`AwemeMapperTest`、`DouyinListApiModelsTest`、`DouyinUrlParserParseTest`、`signing/Sm3Test`、`download/BatchDownloadCoordinatorTest`。改 mapper / 解析 / 签名时优先扩这几个，别引入 Robolectric。
+JVM 测试使用 `testDebugUnitTest`。失联媒体恢复的设备测试使用独立包和固定模拟器，脚本会核对序列号、签名和 instrumentation 目标。AGP 的 connected 测试会在收尾时卸载被测应用，禁止在存有个人数据的主包上运行。换电脑后从[构建与验收交接](docs/media-recovery-validation.md#换电脑继续开发)开始。
 
 `local.properties` 由本地生成（SDK 路径），不提交。`release` 构建类型当前 `isMinifyEnabled = false`；ProGuard 规则在 `app/proguard-rules.pro`。**debug 与 release 共用仓库根目录的 `keystore`**（`app/build.gradle.kts` 里两个 signingConfig 指向同一把 key），所以两种包可以互相覆盖安装、不会因签名变化丢数据库——但换签名/重装仍会让备份文件在 MediaStore 被孤儿化（见下方"持久化"）。
 
@@ -522,13 +521,13 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 - **无人脸响应的空值处理**：Gemini 的 JSON 由 `GeminiResponseMapper` 转为领域模型。不可见或缺失的视觉维度归为 `visibility = "none"`，省略或显式为 `null` 的特征/证据列表转为空列表；身体、服饰等有效维度继续保留。Gson 不保证 Kotlin 非空约束或带参构造器的默认值，不能直接将响应字段传给非空领域模型。缺失顶层 `visualFeatureProfile` / `candidates` 仍作为结构化输出错误处理，不能伪装成分析成功；`candidates = []` 是合法的无标签结果。
 
 - **历史参考管理**：设置页「管理历史参考案例」和每条 AI 日志都可进入 `AiReferenceManageActivity`。日志入口默认按该视频作者筛选，支持文案/作者搜索、多选移除、查看参考图及恢复。移除按视频 ID 排除其全部历史案例，保留下载文件、标签、审核反馈与统计；对同一视频新增反馈也不会自动恢复参考资格。
-- **参考排除的一致性**：`ai_reference_exclusion`（v30）由 `AiReferenceDao.setExcluded` 在事务中更新，同时清除旧 `preference_profile` 摘要。`VideoTagFeedbackDao` 的六条历史参考查询均在 LIMIT 之前应用排除条件；真实反馈计数与准确率统计不受影响。异步生成偏好摘要保存前核对排除 ID 快照，避免旧请求结果重新引入被移除案例。当前已发出的 AI 请求及历史日志保持快照语义。
+- **参考排除的一致性**：`ai_reference_exclusion`（v30）由 `AiReferenceDao.setExcluded` 在事务中更新，同时清除旧 `preference_profile` 摘要。`VideoTagFeedbackDao` 的六条历史参考查询均在 LIMIT 之前应用排除条件；真实反馈计数与准确率统计不受影响。偏好学习的冻结清单在发送节点、启用及回滚时核对来源。排除案例会让相关任务和版本失效。当前已发出的 AI 请求及历史日志保持快照语义。
 
 - **AI 分析日志**：批量页与单视频打标签弹窗共用 `ui/AiAnalysisLogSheet.kt` 的无窗口日志内容。单视频日志由 `AiVideoLogDialogFragment` 展示，复用父 `TagEditDialogViewModel`，按 `awemeId` 订阅/清空；查看日志不重新请求 AI，关闭日志不影响标签勾选或正在运行的请求。日志只保存在 `AiAnalysisLogStore` 内存中，最多 100 条。
 - **Gemini 失败诊断**：`GeminiApiService` 返回 `ResponseBody`，由 `GeminiResponseParser` 保留脱敏响应并先检查 `promptFeedback.blockReason` 和异常 `finishReason`，再读取文本。`LlmResponseException` 将响应和 token 统计随调用带回 Repository；成功调用通过 `TagSuggestionResponse.diagnostics` 携带同样的信息。失败详情和复制日志都包含具体原因及响应中的模型版本/响应标识，不能以 HTTP 200 或缺少 candidates 直接归类为成功/通用空结果。
 
 单条记录标签编辑弹窗（`TagEditDialogFragment`）新增了「AI 建议」按钮，用视频封面/关键帧 + 文案 +
-标签词表 + 作者历史 + 个人偏好摘要，调用 Gemini 多模态模型生成候选标签，作为对纯统计式
+标签词表、当前视频证据及本地偏好规则作为多模态分析上下文，调用配置的服务生成候选标签，作为对纯统计式
 `author_tag_frequency` 预勾选的补充（能看懂新内容，不止复用作者自己的历史）。**默认关闭**，
 需要用户在设置页显式开启并配置 Gemini API Key 才会出现入口；批量场景（`batch-ai-tag-review`）
 尚未实现，目前只有这一个单条入口。完整设计见 `openspec/changes/ai-tag-suggestions/`。
@@ -555,8 +554,8 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 **反馈与学习闭环**：用户保存后，`ManageVideoViewModel.applyTagsToVideo` 对比"AI 建议集合"与
 "最终确认集合"，按标签逐行分类写入 `video_tag_feedback`（`ACCEPTED`/`REJECTED`/`MISSED`，
 见 `AiTagFeedbackKind`），随后触发 `TagPreferenceDao.recomputeAll()` 重算按标签的建议/接受/
-拒绝/漏判统计。累计新反馈达到阈值（当前 20）时额外调用 `GeminiProvider.summarizePreference`
-生成一版新的个人偏好摘要（`PreferenceProfileEntity`，只保留最新一条）。**不做模型微调/训练**，
+拒绝和漏判统计。人工判断按作品和稳定标签 ID 写入案例修订，20 个作品新增或更新后在设置页提示。
+用户主动确认全量学习计划后才调用模型。
 "越用越准"完全靠这套统计 + few-shot 样例实现。
 
 **两个真机验证才暴露的坑，别再踩**：
@@ -681,7 +680,7 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 3. **后台与持久化**：`AiBatchAnalysisService` 以会话 ID 串行执行；`batch_analysis_session` 保存来源批次、结束及审核状态，`batch_analysis_item` 保存成员顺序、媒体快照、成功/失败、错误摘要及原始建议。成功项同时写入既有 pending，失败独立保存，之后再发送事件。页面观察 Room 数据，离页/重建不依赖 `SharedFlow` 重放；无活动服务的未结束成员恢复为中断失败，不自动发请求。旧版只有 pending 的数据作为 legacy 会话恢复，不伪造过去失败记录的完整汇总。
 4. **显示顺序**：有未处理建议项时隐藏“全部”，按 **未处理 → 失败** 展示；全部分析结束且所有建议组处理后按 **全部 → 失败** 展示。失败或成功但无建议的项不阻止完成；空类型不占位，完成判定使用未经过显示筛选的数据。“全部”按本次提交成员去重，不受修改次数筛选影响，保留播放和人工编辑入口。全量与失败区域的封面下展示作者名，当前标签使用独立的六色多巴胺标签块自动换行，与作者及 AI 状态区分。已处理组的状态、渲染及撤销代码保留但不加入列表；编辑“全部”里的视频时不因保存中状态移除区域，保持稳定 key 与滚动位置。
 5. **分组操作**：保留原有标签分组、父子标签联动、自动识别已有标签与撤销逻辑（已处理组不展示，长按入口暂不调用）。三个按钮显示按压反馈、处理中状态、反选数量及操作结果。业务入口在协程启动前防重；事务统一提交标签、编辑次数、反馈和审核状态。数据库错误不标为已处理，可重试。后台迟到的同标签建议会重新打开对应组，避免把新视频误算为已处理。
-6. **人工编辑与反馈**：失败区及全量区共用 `saveSingleVideoTags`，仅实际标签变化时通过 `setTagsAsUserEdit` 累加一次。失败不生成虚假反馈，原始失败状态不会被人工修改覆盖；成功项即使清理 pending，仍可使用会话保留的 analysisId 更新反馈。同一次分析的反馈按 analysisId 替换，避免反复编辑累计重复样例。反馈统计留在事务内，确认/跳过后的偏好摘要网络刷新在事务之外运行。手工编辑会解除该视频旧分组的撤销归属，避免撤销覆盖后续人工修改。
+6. **人工编辑与反馈**：失败区及全量区共用 `saveSingleVideoTags`，仅实际标签变化时通过 `setTagsAsUserEdit` 累加一次。失败不生成虚假反馈，原始失败状态不会被人工修改覆盖；成功项即使清理 pending，仍可使用会话保留的 analysisId 更新反馈。同一次分析的反馈按 analysisId 替换，避免反复编辑累计重复样例。反馈统计和案例来源都留在事务内。学习任务由设置页主动启动。手工编辑会解除该视频旧分组的撤销归属，避免撤销覆盖后续人工修改。
 7. **结果保留与重启分析**：只有用户主动开启下一次分析才创建新会话；服务接受后清理旧会话专用数据，不清理 AI 学习资产。暂存建议清理不影响本次成员及审核恢复状态。日志入口维持原有行为。
 8. **完成后校验标签冲突**：仅页面内容区的“预览”后提供“校验”，顶部 toolbar 不提供校验入口，仅非空会话分析及审核全部完成、非加载/分析/写入/校验中时可用。每次在只读事务中读取完整标签列表（不按 `enableAi` 过滤）和本次去重成员当前标签，`BatchReviewLogic.findConflictingVideos` 仅将同一 `isExclusive` 父标签下同时选择多个直属子标签判为冲突；缺少父标签、父子共存、非互斥多选不报错，也不推断祖先。“全部”和“失败”共用 `conflictingVideoIds`，冲突视频 item 整体显示 Material 3 红色错误背景；保存不会直接清除标记，再次校验通过才恢复。校验使用审核/保存同一防重状态与互斥锁，事务内发布一致结果，读取失败保留标记并允许重试，不增加编辑次数、写反馈或调用 AI。新批次/会话清空旧结果，提交前核对数据库中的会话、来源批次及成员状态，排队期间发生变化则丢弃结果。结果只在 ViewModel 内存保留，新建页面状态后需重新校验。
 
@@ -691,12 +690,12 @@ Activity 与两个 Tab **不再直接互相引用**（旧实现靠 `findFragment
 
 **数据库结构的权威文档是 `.cursor/rules/db-schema.md`，改 `data/db/` 之前先读它。** 要点：
 
-- `AppDatabase` 当前 **version = 30**：v30 新增 `ai_reference_exclusion`，持久保存历史参考排除规则；v29 增量增加 `batch_analysis_session` 与 `batch_analysis_item`，保留批量 AI 分析结果和审核状态；v23–v28 已包含点赞列表索引相关迁移。Room schema 导出到 `app/schemas/`，迁移测试验证 v28→v29 保留下载记录、标签及 pending 数据。
-- 所有迁移 `MIGRATION_1_2 .. MIGRATION_19_20` 都在 `AppDatabase` 里显式列出。builder 上虽然还挂着 `fallbackToDestructiveMigration()` 作兜底，但**不要**依赖它来"对付过去"——漏写迁移 = 用户数据被清空。新增字段时：写下一版 `MIGRATION_x_y` → `version` 递增 → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。**新建表**（区别于 `ALTER TABLE` 加列）：迁移 SQL 里不要写 `DEFAULT` 子句，除非对应 Entity 字段有 `@ColumnInfo(defaultValue = ...)`——两边对不上会在 Room 运行时 schema 校验时报错，`video_ai_analysis` 等 5 张新表与 `download_batch` 等新表的迁移已经踩过这条、按"新建表不写 DEFAULT"的规则改对，新增表照抄这个模式。
+- `AppDatabase` 当前 **version = 32**。v31 新增本地偏好案例、任务、节点检查点和规则版本。v30 新增 `ai_reference_exclusion`，持久保存历史参考排除规则；v29 增量增加 `batch_analysis_session` 与 `batch_analysis_item`，保留批量 AI 分析结果和审核状态；v23–v28 已包含点赞列表索引相关迁移。Room schema 导出到 `app/schemas/`，迁移测试验证 v28→v29 保留下载记录、标签及 pending 数据。
+- 所有迁移 `MIGRATION_1_2 .. MIGRATION_19_20` 都在 `AppDatabase` 里显式列出。主库仅允许完整迁移链。v31→v32 使用 Room 根据导出 schema 生成的纯新增迁移。缺失迁移会阻止打开并保留原库。新增字段时：写下一版 `MIGRATION_x_y` → `version` 递增 → `addMigrations(...)` 注册 → 同步更新 `.cursor/rules/db-schema.md`（新增列与版本行）。**新建表**（区别于 `ALTER TABLE` 加列）：迁移 SQL 里不要写 `DEFAULT` 子句，除非对应 Entity 字段有 `@ColumnInfo(defaultValue = ...)`——两边对不上会在 Room 运行时 schema 校验时报错，`video_ai_analysis` 等 5 张新表与 `download_batch` 等新表的迁移已经踩过这条、按"新建表不写 DEFAULT"的规则改对，新增表照抄这个模式。
 - `hasLivePhoto`（v15）标记「实况图（动图）图集」（图集里至少一张带 mp4），下载时算出（`imageVideoUrls` 有非空项）写入，供下载页 / 管理页列表显示动图角标（左上角小播放图标，透明背景，与「已下载」/「已导出」徽标并排在同一水平容器里，谁 gone 谁不占位）。**下载页不读它**（内存里 `VideoItemUiModel.hasLivePhoto` 现算），只有管理页读。旧记录默认 false，不做历史回填。
 - `watched`（是否已看过）只由**管理页进入视频播放页**置位：`ManageVideoViewModel.openVideoPlayer` 把 `awemeIds` 随 `createListFileIntent` 传给播放页，播放页每加载一条就写库（含上下滑动切到的）。列表侧「未看过」标记的刷新分两条路：点开那条就地标掉，滑动看过的靠 `ManageVideoFragment.onResume` → `refreshWatchedFlags()` 回查——**别把其中一条删掉当冗余**，也别指望 ViewModel 的 `init` 或 StateFlow 自动收集能替代 `onResume` 那条（ViewModel 不随 `onResume` 重建）。
 - `mediaWidth` / `mediaHeight`（v14）存媒体的**呈现宽高**（已做旋转 / EXIF 修正），`0` = 未知。只服务于局域网导出的横屏/竖屏分包，方向由 `MediaOrientation.of` 现算、不落库。图集也会写（探首图），当前不用，为后续留数据。详见上方「导出管道」。
-- 备份/恢复走 `DatabaseBackupManager`（入口在 `SettingsActivity` 设置页，由 MainActivity Toolbar 的设置图标进入；实际读写在 `SettingsViewModel`，对话框与「恢复后重启进程」留在 `SettingsActivity`；管理页菜单已不再有这两项）——它直接操作 SQLite 文件，改库结构后要确认导入旧备份的兼容处理。备份写到公共 `Download/bDouyin/backup`（存活于卸载、可 MTP 看到）。**恢复有两条路径**：`restoreFrom(entry)` 直接 File 读取，但**重装/换签名后备份文件在 MediaStore 被孤儿化**（owner 清空 + `.db` 属非媒体，`READ_MEDIA_*` 不覆盖）会抛 `SecurityException`；此时 UI 引导改用 SAF（`ACTION_OPEN_DOCUMENT` → `restoreFromStream`），授权 Uri 绕过归属校验。别把恢复退回成"只 File 读取"。
+- 备份/恢复入口在设置 tab 的 `SettingsFragment` / `SettingsViewModel`，统一经 `BlitzApp.databaseBackupCoordinator` 串行执行。恢复保护默认开启，启动注册和执行锁内都阻止自动检查与过期清理。以下策略仅在明确解除保护后适用：最近成功副本超过 5 天或没有副本就自动备份并 Toast；严格超过 30 天的有效副本（含手动）会清理，始终保留最近一份，新备份失败不清理。`DatabaseSnapshot` 在源 Room 事务内逐行复制结构及数据，生成独立单文件并校验，再由 `DatabaseBackupManager` 发布到公共 `Download/bDouyin/backup`；不关闭共享连接或顺序复制活动 WAL。**恢复保留两条路径**：直接 File 读取及重装/换签名后文件孤儿化时的 SAF 授权流。设置页的二次确认与恢复后重启保留；不得绕过协调器另起产品入口。详细规则和验证见 [数据库自动备份](docs/database-auto-backup.md)。
 - `userRelation` 是 `|` 分隔的多标签字符串（`"like"`、`"like|<夹名>"`、`"<夹名>"`）；写入时统一通过 `DownloadedVideoRepository.buildUserRelationFromLike(...)` / `buildUserRelationFromCollection(...)` 构造，**不要**手拼。
 - 打标签有**两组入口**，别混用：程序自动用 `VideoTagRepository.setTags` / `addTags` / `ensureCollectFolderTagLinked`（只写 `video_tags`）；**UI 上的用户编辑一律走 `setTagsAsUserEdit` / `addTagsAsUserEdit`**，它们额外给 `downloaded_videos.tagEditCount` 累加（一次编辑算一次，集合没变化不计）。新增标签编辑入口时用错会让「改过几次」的统计漏计或虚增。
 - 多选后「设置标签」弹窗还有个「仅次数 +1」（`bumpTagEditCountManually`）：只累加计数不动标签，用来补 v12 之前没记录的历史数据。它是无条件 `+1`、没有幂等标记，靠二次确认兜底。
@@ -755,7 +754,7 @@ AI 分析日志使用每次 HTTP 调用独立的 OkHttp EventListener 统计请�
 
 设置页分别配置 Gemini、Vertex AI 和 OpenAI 的 Key，并通过「AI 服务优先级」排序。Vertex 默认使用 `gemini-3.8-flash`，OpenAI 默认使用 `gpt-6-astra`。已有的服务选择用作初始优先级，未配置的服务不参与调用。
 
-`AppSettings.getAiConnections` 读取有序配置，repository 在每次分析开始时固定顺序，分析记录保存实际成功的 provider/model。标签分析和偏好摘要遇到网络异常、408、429 或 5xx 时尝试下一项。「测试连接」只调用首选项。Gemini 与 Vertex AI 通过 `x-goog-api-key` 传输密钥，Vertex 使用全局生成端点。OpenAI 通过 Authorization 请求头直连 Responses API，复用现有封面、关键帧、历史案例和标签建议模型。
+`AppSettings.getAiConnections` 读取有序配置，repository 在每次分析开始时固定顺序，分析记录保存实际成功的 provider/model。标签分析和偏好学习遇到网络异常、408、429 或 5xx 时尝试下一项。「测试连接」只调用首选项。Gemini 与 Vertex AI 通过 `x-goog-api-key` 传输密钥，Vertex 使用全局生成端点。OpenAI 通过 Authorization 请求头直连 Responses API，复用现有封面、关键帧、历史案例和标签建议模型。
 
 使用步骤与验证限制见 `docs/vertex-ai.md`。JVM 回归测试 `VertexAiConnectionTest` 使用 OkHttp 拦截器验证真实 Retrofit 请求编码，不访问云端。macOS 单元测试使用 `JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/private/tmp ./gradlew testDebugUnitTest`，避免相机目录测试将系统临时路径的符号链接判为非法。
 
@@ -763,3 +762,11 @@ AI 分析日志使用每次 HTTP 调用独立的 OkHttp EventListener 统计请�
 ### AI 分析页自动校验
 
 `BatchTagReviewViewModel` 在分组确认/跳过或单条标签保存成功、刷新后满足完整会话审核完成条件时，自动执行与手动「校验」相同的冲突检查。自动与手动复用 `validateTagsLocked`，在 `stateMutex` 内串行执行，写入事务先提交、校验另行只读；校验结束前保持 busy，不能重复保存或校验。未完成审核不自动触发；保存成功后的读取异常不会回滚已提交的标签和审核状态，也不误清冲突标记。冲突仍在全部/失败区域整体标红，修正保存后自动恢复，无需再点校验；手动入口保留。
+
+### 失联媒体恢复
+
+设置页的恢复入口使用 Room v32 暂存扫描、查询和审核。只在明确确认且每个写入批次有已验证独立备份后插入下载记录。恢复记录保留原操作历史未知标记。设备验证使用独立包与固定序列号。[恢复操作与验证](docs/media-recovery.md)
+
+### 本地偏好学习
+
+`AiPreferenceRepository` 管理学习案例、任务和版本。提炼与合并由 `PreferenceLearningService` 执行，与三协程批量分析共享 `AiWorkGate`。规则草稿经人工审核后可以启用，回滚同样核对标签和来源。有效规则版本优先用于单条及批量分析，可带最多两个文本案例，历史参考图片计数为零。没有有效规则时使用原有案例参考和仍兼容的旧摘要。操作与故障恢复见 [学习我的偏好](docs/ai-preference-learning-v1.md)。

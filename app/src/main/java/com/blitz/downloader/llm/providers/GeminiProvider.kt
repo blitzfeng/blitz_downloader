@@ -1,6 +1,6 @@
 package com.blitz.downloader.llm.providers
 
-import android.util.Base64
+import okio.ByteString.Companion.toByteString
 import android.util.Log
 import com.blitz.downloader.config.AiConnectionConfig
 import com.blitz.downloader.config.AiService
@@ -12,6 +12,9 @@ import com.blitz.downloader.llm.LlmProvider
 import com.blitz.downloader.llm.LlmNetworkTrace
 import com.blitz.downloader.llm.LlmNetworkEvents
 import com.blitz.downloader.llm.PreferenceSummaryRequest
+import com.blitz.downloader.llm.PreferenceLearningRequest
+import com.blitz.downloader.llm.PreferenceLearningProtocol
+import com.blitz.downloader.llm.PreferenceLearningResponse
 import com.blitz.downloader.llm.TagSuggestionRequest
 import com.blitz.downloader.llm.TagSuggestionResponse
 import com.blitz.downloader.llm.TagSuggestionRequestBuilder
@@ -121,7 +124,7 @@ class GeminiProvider(
             ),
         )
         return requestResult {
-            val trace = request.onNetworkUpdate?.let { LlmNetworkTrace(config.service.displayName, modelId, it) }
+            val trace = request.onNetworkUpdate?.let { LlmNetworkTrace(config.service.displayName, modelId, onUpdate = it) }
             val response = service.generateContent(config.generateContentUrl, config.apiKey, requestBody(body), trace)
             val parsed = GeminiResponseParser.parse(response)
             parsed.decode { text ->
@@ -130,6 +133,27 @@ class GeminiProvider(
                 payload.toDomain().copy(diagnostics = parsed.diagnostics)
             }
         }
+    }
+
+    override suspend fun learnPreference(request: PreferenceLearningRequest): Result<PreferenceLearningResponse> = requestResult {
+        val parts = buildList {
+            add(GeminiPart(text = request.prompt()))
+            request.images.forEach { (caseId, image) ->
+                add(GeminiPart(text = "案例 $caseId 的证据图"))
+                add(toGeminiPart(image, MEDIA_RESOLUTION_LOW))
+            }
+        }
+        val body = GeminiGenerateContentRequest(
+            contents = listOf(GeminiContent(role = "user", parts = parts)),
+            generationConfig = GeminiGenerationConfig(
+                responseMimeType = "application/json",
+                responseSchema = PreferenceLearningProtocol.schema,
+                thinkingConfig = GeminiThinkingConfig(thinkingLevel = THINKING_LEVEL),
+            ),
+        )
+        val trace = LlmNetworkTrace(config.service.displayName, modelId, logPayload = false) {}
+        val parsed = GeminiResponseParser.parse(service.generateContent(config.generateContentUrl, config.apiKey, requestBody(body), trace))
+        PreferenceLearningProtocol.parse(parsed.text, parsed.diagnostics)
     }
 
     override suspend fun summarizePreference(request: PreferenceSummaryRequest): Result<String> {
@@ -171,7 +195,7 @@ class GeminiProvider(
     private fun toGeminiPart(image: ImagePart, resolution: String): GeminiPart = GeminiPart(
         inlineData = GeminiInlineData(
             mimeType = "image/jpeg",
-            data = Base64.encodeToString(image.jpegBytes, Base64.NO_WRAP),
+            data = image.jpegBytes.toByteString().base64(),
         ),
         mediaResolution = GeminiMediaResolutionConfig(level = resolution),
     )
@@ -202,6 +226,7 @@ class GeminiProvider(
     private class LoggingInterceptor : Interceptor {
         override fun intercept(chain: Interceptor.Chain): OkResponse {
             val request = chain.request()
+            if (request.tag(LlmNetworkTrace::class.java)?.logPayload == false) return chain.proceed(request)
             val key = request.header("x-goog-api-key").orEmpty()
             fun redact(value: String): String = if (key.isEmpty()) value else value.replace(key, "[REDACTED]")
             Log.d(TAG, "→ ${request.method} ${request.url.encodedPath}")

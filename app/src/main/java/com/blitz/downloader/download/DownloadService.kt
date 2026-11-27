@@ -132,7 +132,7 @@ class DownloadService : Service() {
                 val size = relPath.takeIf { it.isNotBlank() }?.let { p ->
                     MediaOrientationProbe.probe(File(Environment.getExternalStorageDirectory(), p))
                 }
-                repo.recordSuccessfulDownload(
+                val rowId = repo.recordSuccessfulDownload(
                     awemeId = item.id,
                     downloadType = meta.downloadType,
                     userName = meta.userName,
@@ -152,6 +152,7 @@ class DownloadService : Service() {
                     mediaHeight = size?.height ?: 0,
                     hasLivePhoto = meta.hasLivePhoto,
                 )
+                if (rowId == -1L) return@forEach
                 if (meta.linkCollectFolderTag && meta.collectionType.isNotBlank()) {
                     tagRepo.ensureCollectFolderTagLinked(awemeId = item.id, folderName = meta.collectionType)
                 }

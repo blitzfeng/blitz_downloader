@@ -4,7 +4,6 @@ import android.util.Log
 import com.blitz.downloader.download.MediaExportManager
 import com.blitz.downloader.model.MediaOrientation
 import java.io.BufferedOutputStream
-import java.io.FileInputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.BindException
@@ -28,6 +27,7 @@ import kotlin.concurrent.thread
  * - 路由：`/` 列表页；`/f?i=N` 下载第 N 个文件；`/all.zip` 流式打包全部文件；
  *   开启 [splitByOrientation] 时另有 `/landscape.zip`、`/portrait.zip` 按画面方向分包；
  *   开启 [splitByMediaKind] 时另有 `/static.zip`、`/live.zip` 按静态图/动图(mp4)分包。
+ *
  *   两个分包开关按 Tab 互斥使用（视频 Tab 只开方向、图片 Tab 只开类型），但实现上互不依赖。
  * - 单文件带 `Content-Length`（浏览器可显示进度）；zip 流长度未知，用 `Connection: close` 收尾。
  * - 每个连接开一个 daemon 线程处理，简单可靠；导出文件数量级不大，无需线程池。
@@ -210,7 +210,7 @@ class LanFileServer(
     }
 
     private fun serveIndex(out: OutputStream, writeBody: Boolean) {
-        val totalBytes = files.sumOf { it.file.length() }
+        val totalBytes = files.sumOf { it.length() }
         val sb = StringBuilder()
         sb.append("<!doctype html><html lang=\"zh\"><head><meta charset=\"utf-8\">")
         sb.append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
@@ -289,7 +289,7 @@ class LanFileServer(
         subset: List<MediaExportManager.ExportFile>,
     ) {
         if (subset.isEmpty()) return
-        val bytes = subset.sumOf { it.file.length() }
+        val bytes = subset.sumOf { it.length() }
         sb.append("<a class=\"splitbtn\" href=\"").append(href).append("\">")
         sb.append(escapeHtml(title)).append(" ").append(subset.size).append(" 个")
         sb.append("<span class=\"sub\">").append(humanSize(bytes)).append("</span></a>")
@@ -318,12 +318,12 @@ class LanFileServer(
         val index = files.indexOf(ef)
         sb.append("<li><a class=\"file\" href=\"/f?i=$index\">")
         sb.append(escapeHtml(ef.entryName))
-        sb.append("</a><span class=\"size\">").append(humanSize(ef.file.length())).append("</span></li>")
+        sb.append("</a><span class=\"size\">").append(humanSize(ef.length())).append("</span></li>")
     }
 
     private fun serveFile(out: OutputStream, index: Int, writeBody: Boolean) {
         val ef = files.getOrNull(index)
-        if (ef == null || !ef.file.isFile) {
+        if (ef == null || !ef.available()) {
             writeText(out, "404 Not Found", "file not found")
             return
         }
@@ -331,7 +331,7 @@ class LanFileServer(
             out, "200 OK",
             linkedMapOf(
                 "Content-Type" to mimeOf(ef.file.name),
-                "Content-Length" to ef.file.length().toString(),
+                "Content-Length" to ef.length().toString(),
                 "Content-Disposition" to contentDisposition(ef.entryName),
                 "Connection" to "close",
             ),
@@ -341,7 +341,7 @@ class LanFileServer(
             return
         }
         try {
-            FileInputStream(ef.file).use { it.copyTo(out, STREAM_BUFFER) }
+            ef.open().use { it.copyTo(out, STREAM_BUFFER) }
             out.flush()
         } catch (e: Exception) {
             // 对端取消 / 断网：字节没发完，不算一次成功传输
@@ -403,10 +403,10 @@ class LanFileServer(
         val sentIds = LinkedHashSet<String>()
         var aborted = false
         for (ef in subset) {
-            if (!ef.file.isFile) continue
+            if (!ef.available()) continue
             try {
                 zos.putNextEntry(ZipEntry(ef.entryName))
-                FileInputStream(ef.file).use { it.copyTo(zos, STREAM_BUFFER) }
+                ef.open().use { it.copyTo(zos, STREAM_BUFFER) }
                 zos.closeEntry()
                 sentIds.add(ef.awemeId)
             } catch (e: Exception) {

@@ -27,10 +27,17 @@ object DouyinCookieStore {
         DouyinCookieSync.applyDerivedTokensFromCookieLine(line)
     }
 
-    fun persistCurrentCookie() {
+    fun loginEpoch(): Long = appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)?.getLong("login_epoch",0) ?: 0
+
+    @Synchronized fun persistCurrentCookie() {
         val ctx = appContext ?: return
-        val sp = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val sp = prefs.edit()
         val line = DouyinApiClient.globalCookie?.trim().orEmpty()
+        val old = prefs.getString(KEY_COOKIE_LINE,null)
+        if (com.blitz.downloader.api.RecoveryDetailFetcher.scope(old) != com.blitz.downloader.api.RecoveryDetailFetcher.scope(line)) {
+            sp.putLong("login_epoch",loginEpoch() + 1)
+        }
         if (line.isEmpty()) {
             sp.remove(KEY_COOKIE_LINE)
         } else {

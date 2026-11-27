@@ -1,6 +1,6 @@
 # BlitzDownloader 数据库设计文档
 
-> **当前版本：v30**
+> **当前版本：v32**
 > 实现文件：`app/src/main/java/com/blitz/downloader/data/db/`
 
 ---
@@ -30,6 +30,8 @@
 
 | 版本 | 关键变更 |
 |------|---------|
+| v32 | v31→v32 使用 Room 增量自动迁移，仅新增七张 `media_recovery_*` 表及索引，主库没有破坏式迁移兜底。详见 [失联记录恢复](../../docs/media-recovery.md) |
+| v31 | 显式迁移新增偏好案例、学习任务、任务节点与规则版本四张表，保留全部旧表 |
 | v30 | 新增 `ai_reference_exclusion(awemeId TEXT PRIMARY KEY NOT NULL, excludedAtMillis INTEGER NOT NULL)`，排除规则随数据库备份；v29→v30 为纯新增表迁移 |
 | v1 | 初始表：`id`、`awemeId`、`downloadType`、`userName`、`createdAtMillis` |
 | v2 | 新增 `mediaType`、`filePath` |
@@ -352,7 +354,7 @@ SELECT COUNT(*) FROM tags WHERE tagName = '美腿'
 | `video_visual_feature` | `VideoVisualFeatureEntity` | 结构化视觉证据（VisualFeatureProfile，JSON 字符串），关联 `video_ai_analysis.id` |
 | `video_tag_feedback` | `VideoTagFeedbackEntity` | 按标签逐行记录反馈（接受/拒绝/漏判），支撑逐标签准确率统计 |
 | `tag_preference` | `TagPreferenceEntity` | 从 `video_tag_feedback` 聚合的按标签统计缓存（建议/接受/拒绝/漏判次数、接受率），模式对齐 `author_tag_frequency`（`DELETE`+`INSERT...SELECT` 重算） |
-| `preference_profile` | `PreferenceProfileEntity` | 压缩后的自然语言个人偏好摘要，只保留最新一条被读取，累计新反馈达到阈值才重新生成 |
+| `preference_profile` | `PreferenceProfileEntity` | 历史自然语言摘要。v31 仅在可核对兼容时回退使用 |
 
 ### `video_ai_analysis` 字段说明
 
@@ -479,3 +481,16 @@ tags(tagName)          video_tags(awemeId, tagName)
 `ai_reference_exclusion` 不设置外键，保存用户明确排除的视频 ID 及操作时间；不因反馈被重建或同一视频重新下载而自动恢复。恢复参考资格时仅删除对应排除规则。
 
 `AiReferenceDao.setExcluded` 在同一事务修改规则并使旧偏好摘要失效。六条历史参考采样查询（同作者/全局的原始反馈、确认反馈与证据图反馈）均先过滤排除 ID，再排序和 LIMIT；反馈计数、作者标签频率、标签准确率等真实统计保持原有口径。管理页的查询刻意不过滤，以供用户查看与恢复已移除案例。
+
+## 本地偏好学习（v31）
+
+| 表 | 主键与用途 |
+| --- | --- |
+| `ai_preference_case` | `awemeId`。保存最新案例修订、分析关联、逐标签判断、原建议、已有视觉资料及证据路径 |
+| `ai_preference_learning_run` | `runId`。保存冻结来源清单、学习策略、服务与模型计划、状态和覆盖进度 |
+| `ai_preference_learning_node` | `nodeId`。保存输入哈希、子节点、状态、结构化结果和诊断。每次任务内 `runId + inputHash` 唯一 |
+| `ai_preference_rule_profile` | 自增 `version`。保存草稿、人工覆写、来源覆盖及启用状态 |
+
+四张表随既有数据库备份。迁移不写入凭据，不改变存量下载、标签、分析或反馈表。无来源字段的历史反馈按作品实时投影为来源未知，供学习预览核对。
+
+规则启用通过事务校验来源并归档原活动版本。包含被修改、删除或排除的案例，或引用已变更标签语义的旧版本会失效。旧自然语言摘要保留在原表，迁移时仅在没有排除且反馈数量和时间均符合基线条件时建立兼容副本。后续来源变化会使该副本失效。

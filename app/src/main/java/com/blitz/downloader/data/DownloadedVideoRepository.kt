@@ -1,6 +1,7 @@
 package com.blitz.downloader.data
 
 import android.content.Context
+import androidx.room.withTransaction
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.blitz.downloader.data.db.AppDatabase
 import com.blitz.downloader.data.db.DownloadedVideoEntity
@@ -10,19 +11,35 @@ import com.blitz.downloader.data.db.DownloadedVideoEntity
  */
 class DownloadedVideoRepository(context: Context) {
 
-    private val dao = AppDatabase.getInstance(context).downloadedVideoDao()
+    private val db = AppDatabase.getInstance(context)
+    private val dao = db.downloadedVideoDao()
+    private val preferenceSources = PreferenceSourceInvalidation(db)
 
     suspend fun insert(entity: DownloadedVideoEntity) = dao.insert(entity)
 
     suspend fun update(entity: DownloadedVideoEntity) = dao.update(entity)
 
-    suspend fun delete(entity: DownloadedVideoEntity) = dao.delete(entity)
+    suspend fun delete(entity: DownloadedVideoEntity) = db.withTransaction {
+        dao.delete(entity)
+        if (dao.getByAwemeId(entity.awemeId) == null) preferenceSources.casesChanged(setOf(entity.awemeId))
+    }
 
-    suspend fun deleteByRowId(rowId: Long) = dao.deleteByRowId(rowId)
+    suspend fun deleteByRowId(rowId: Long) = db.withTransaction {
+        val id = dao.getByRowId(rowId)?.awemeId
+        dao.deleteByRowId(rowId)
+        if (id != null && dao.getByAwemeId(id) == null) preferenceSources.casesChanged(setOf(id))
+    }
 
-    suspend fun deleteByAwemeId(awemeId: String) = dao.deleteByAwemeId(awemeId)
+    suspend fun deleteByAwemeId(awemeId: String) = db.withTransaction {
+        dao.deleteByAwemeId(awemeId)
+        preferenceSources.casesChanged(setOf(awemeId))
+    }
 
-    suspend fun deleteByAwemeIds(awemeIds: List<String>): Int = dao.deleteByAwemeIds(awemeIds)
+    suspend fun deleteByAwemeIds(awemeIds: List<String>): Int = db.withTransaction {
+        val count = awemeIds.distinct().chunked(500).sumOf { dao.deleteByAwemeIds(it) }
+        preferenceSources.casesChanged(awemeIds.toSet())
+        count
+    }
 
     suspend fun getByRowId(rowId: Long): DownloadedVideoEntity? = dao.getByRowId(rowId)
 
@@ -145,8 +162,8 @@ class DownloadedVideoRepository(context: Context) {
         mediaWidth: Int = 0,
         mediaHeight: Int = 0,
         hasLivePhoto: Boolean = false,
-    ) {
-        dao.insert(
+    ): Long {
+        return dao.insert(
             DownloadedVideoEntity(
                 awemeId = awemeId,
                 downloadType = downloadType,

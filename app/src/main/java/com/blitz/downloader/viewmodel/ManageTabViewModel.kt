@@ -315,7 +315,8 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
         if (!filters.tagEditCount.isActive || list.isEmpty()) return list
         val scoped = scopeByRelation(list)
         if (scoped.isEmpty()) return scoped
-        return scoped.filter { filters.tagEditCount.matches(it.tagEditCount) }
+        return scoped.filter { filters.tagEditCount.matches(it.tagEditCount) &&
+            (it.downloadType != com.blitz.downloader.data.DownloadSourceType.RECOVERED || it.tagEditCount > 0) }
     }
 
     /** 按当前排序对内存中的实体列表倒序排序（用于非分页的筛选/全选路径）。 */
@@ -456,7 +457,7 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
         if (entities.isEmpty()) return
         viewModelScope.launch {
             val missing = withContext(Dispatchers.IO) {
-                entities.filter { it.filePath.isNotBlank() && !resolveFile(it.filePath).exists() }
+                entities.filter { readResolver.status(it.filePath) == com.blitz.downloader.data.DownloadedMediaReadResolver.Status.MISSING }
                     .map { it.awemeId }
                     .toSet()
             }
@@ -504,6 +505,8 @@ abstract class ManageTabViewModel(app: Application) : AndroidViewModel(app) {
     protected fun emit(event: ManageTabEvent) {
         _events.tryEmit(event)
     }
+
+    protected val readResolver by lazy { com.blitz.downloader.data.DownloadedMediaReadResolver(getApplication()) }
 
     protected fun resolveFile(filePath: String): File =
         DownloadedMediaFileManager.resolveFile(filePath)
@@ -578,6 +581,7 @@ sealed interface ManageTabEvent {
 
     data class TagsApplied(val count: Int) : ManageTabEvent
     data class TagEditCountBumped(val count: Int) : ManageTabEvent
+    data object PermissionNeeded : ManageTabEvent
     data object FileNotFound : ManageTabEvent
 
     data class OpenVideoPlayer(
@@ -588,5 +592,5 @@ sealed interface ManageTabEvent {
         val awemeIds: List<String>,
     ) : ManageTabEvent
 
-    data class OpenImageViewer(val filePath: String, val title: String) : ManageTabEvent
+    data class OpenImageViewer(val filePath: String, val title: String, val members: List<String> = emptyList()) : ManageTabEvent
 }

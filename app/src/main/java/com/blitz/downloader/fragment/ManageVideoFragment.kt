@@ -293,6 +293,7 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
                 toast(getString(R.string.manage_bump_tag_edit_count_done, event.count))
                 manageViewModel.exitSelectionMode(tab)
             }
+            ManageTabEvent.PermissionNeeded -> toast(getString(R.string.media_recovery_permission))
             ManageTabEvent.FileNotFound -> toast(getString(R.string.player_file_not_found))
             is ManageTabEvent.OpenVideoPlayer -> startActivity(
                 VideoPlayerActivity.createListFileIntent(
@@ -352,7 +353,11 @@ class ManageVideoFragment : Fragment(R.layout.fragment_manage_video) {
             val tags = bundle.getStringArrayList(TagEditDialogFragment.RESULT_TAGS).orEmpty()
             val aiAnalysisId = bundle.takeIf { it.containsKey(TagEditDialogFragment.RESULT_AI_ANALYSIS_ID) }
                 ?.getLong(TagEditDialogFragment.RESULT_AI_ANALYSIS_ID)
-            if (awemeId.isNotEmpty()) viewModel.applyTagsToVideo(awemeId, tags, aiAnalysisId)
+            if (awemeId.isNotEmpty()) viewModel.applyTagsToVideo(
+                awemeId, tags, aiAnalysisId,
+                bundle.getStringArrayList(TagEditDialogFragment.RESULT_EVALUATED).orEmpty(),
+                bundle.getStringArrayList(TagEditDialogFragment.RESULT_REPLACEMENTS).orEmpty(),
+            )
         }
         // 多选批量：追加标签，或只给标签修改次数 +1
         childFragmentManager.setFragmentResultListener(

@@ -77,6 +77,20 @@ class OpenAiProviderTest {
         assertEquals("画面依据", result.candidates.single().changeReason)
     }
 
+    @Test fun learningUsesStrictSchemaAndLowResolution() = runBlocking {
+        val payload = """{"rules":[{"scope":"tag","tagIds":[12],"criteria":"标准","positiveSignals":[],"negativeSignals":["反例"],"replacementConditions":[],"coexistenceConditions":[],"sourceNodeIds":["node"],"representativeCaseIds":["a"],"insufficientEvidence":true}]}"""
+        val fixture = Fixture(200, completed(Gson().toJson(payload)))
+        val result = fixture.provider.learnPreference(com.blitz.downloader.llm.PreferenceLearningRequest(
+            "计划", listOf("a" to ImagePart(byteArrayOf(1, 2, 3), false)),
+        )).getOrThrow()
+        assertEquals("tag:12", result.rules.single().scopeKey)
+        assertEquals(listOf("反例"), result.rules.single().negativeSignals)
+        val body = JsonParser.parseString(fixture.bodies.single()).asJsonObject
+        assertEquals("preference_learning", body.getAsJsonObject("text").getAsJsonObject("format")["name"].asString)
+        assertTrue(fixture.bodies.single().contains("\"detail\":\"low\""))
+        assertEquals("Bearer $KEY", fixture.requests.single().header("Authorization"))
+    }
+
     @Test fun rateLimitSelectsNextProvider() = runBlocking {
         val limited = Fixture(429, """{"error":{"message":"额度用尽"}}""")
         val available = Fixture(200, completed("\"OK\""))

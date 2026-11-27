@@ -103,7 +103,8 @@ fun LivePhotoPlayer(
     DisposableEffect(mediaSource) {
         try {
             mediaPlayer.reset()
-            mediaPlayer.setDataSource(mediaSource)
+            if (mediaSource.startsWith("content://")) mediaPlayer.setDataSource(context,android.net.Uri.parse(mediaSource))
+            else mediaPlayer.setDataSource(mediaSource)
             mediaPlayer.isLooping = true
             mediaPlayer.setVolume(0f, 0f)   // 实况图静音
             mediaPlayer.setOnVideoSizeChangedListener { _, w, h ->

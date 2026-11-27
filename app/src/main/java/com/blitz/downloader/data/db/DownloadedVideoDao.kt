@@ -12,8 +12,8 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao
 interface DownloadedVideoDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(entity: DownloadedVideoEntity)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(entity: DownloadedVideoEntity): Long
 
     @Update
     suspend fun update(entity: DownloadedVideoEntity)

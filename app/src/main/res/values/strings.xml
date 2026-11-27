@@ -205,7 +205,14 @@
     <string name="manage_menu_backup_db">备份数据库</string>
     <string name="manage_menu_restore_db">恢复备份</string>
     <string name="manage_backup_confirm_title">备份数据库</string>
-    <string name="manage_backup_confirm_msg">将把当前数据库复制到 Download/bDouyin/backup 下带时间戳的子目录，旧备份会保留。继续？</string>
+    <string name="manage_backup_confirm_msg">将把当前数据库备份到 Download/bDouyin/backup。继续？</string>
+    <string name="auto_backup_done">数据库已自动备份：%1$s</string>
+    <string name="auto_backup_cleanup_partial">数据库已自动备份：%1$s；部分过期备份未能删除</string>
+    <string name="auto_backup_failed">数据库自动备份失败：%1$s</string>
+    <string name="auto_backup_cleanup_failed">过期备份清理未全部完成</string>
+    <string name="auto_backup_permission">备份目录无法访问，请在设置中检查存储权限</string>
+    <string name="auto_backup_space">存储空间不足</string>
+    <string name="auto_backup_io">文件读写或数据库校验失败，稍后将重试</string>
     <string name="manage_backup_doing">正在备份…</string>
     <string name="manage_backup_done">备份完成：%1$s</string>
     <string name="manage_backup_failed">备份失败：%1$s</string>
@@ -511,4 +518,10 @@
     <string name="ai_apply_replacement">应用替换建议</string>
     <string name="ai_confirm_replacement">确认（含替换）</string>
     <string name="ai_replacement_notice">确认后将移除提示中的旧标签，其他标签继续保留。</string>
+    <string name="ai_preference_learning">学习我的偏好</string>
+    <string name="ai_preference_learning_summary">预览案例、审核和管理本地规则</string>
+    <string name="ai_preference_learning_version">启用版本 %1$d · 待更新 %2$d 个作品</string>
+    <string name="ai_preference_learning_pending">待更新 %1$d 个作品</string>
+    <string name="media_recovery_title">恢复失联记录</string>
+    <string name="media_recovery_permission">媒体暂时无法读取，请在设置的「恢复失联记录」中检查目录授权</string>
 </resources>

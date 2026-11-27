@@ -301,6 +301,7 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val s = withContext(Dispatchers.IO) {
                 ManageStats(
+                    unknownHistory = getApplication<com.blitz.downloader.BlitzApp>().database.mediaRecoveryDao().recoveredCount(),
                     videoCount = repo.countByMediaType(DownloadMediaType.VIDEO),
                     imageCount = repo.countByMediaType(DownloadMediaType.IMAGE),
                     videoBytes = dirSize(BatchDownloadCoordinator.VIDEO_SUBDIR),
@@ -485,8 +486,12 @@ class ManageViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 entities
             }
-            val files = withContext(Dispatchers.IO) {
-                MediaExportManager.resolveExportFiles(resolved)
+            val files = try {
+                withContext(Dispatchers.IO) { MediaExportManager.resolveExportFiles(resolved) }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _lanError.tryEmit(LanStartFailure.StartFailed("媒体不可读取，请检查目录授权"))
+                return@launch
             }
             if (files.isEmpty()) {
                 _lanError.tryEmit(LanStartFailure.NothingToExport)
@@ -606,6 +611,7 @@ data class ManageStats(
     val coverBytes: Long,
     val topAuthors: List<AuthorCount>,
     val topTags: List<TagCount>,
+    val unknownHistory: Int = 0,
 ) {
     val totalBytes: Long get() = videoBytes + imageBytes + coverBytes
     val totalCount: Int get() = videoCount + imageCount

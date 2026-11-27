@@ -6,12 +6,14 @@ import android.util.Log
 import com.blitz.downloader.config.AppSettings
 import com.blitz.downloader.data.db.AppDatabase
 import com.blitz.downloader.data.db.ConfirmedFeedbackRow
-import com.blitz.downloader.data.db.PreferenceProfileEntity
 import com.blitz.downloader.data.db.VideoAiAnalysisEntity
 import com.blitz.downloader.data.db.VideoTagFeedbackEntity
 import com.blitz.downloader.data.db.VideoVisualFeatureEntity
 import com.blitz.downloader.llm.withFailure
 import com.blitz.downloader.llm.AiAnalysisLogEntry
+import com.blitz.downloader.llm.AiPreparationTracker
+import com.blitz.downloader.llm.AiRequestPersonalization
+import kotlinx.coroutines.CancellationException
 import com.blitz.downloader.llm.AiAnalysisLogFormatter
 import com.blitz.downloader.llm.AiAnalysisLogStatus
 import com.blitz.downloader.llm.AiAnalysisLogStore
@@ -19,7 +21,6 @@ import com.blitz.downloader.llm.FewShotExample
 import com.blitz.downloader.llm.ImagePart
 import com.blitz.downloader.llm.LlmProvider
 import com.blitz.downloader.llm.MultimodalEvidenceSample
-import com.blitz.downloader.llm.PreferenceSummaryRequest
 import com.blitz.downloader.llm.TagSuggestionRequestBuilder
 import com.blitz.downloader.llm.VisualFeatureProfile
 import com.blitz.downloader.llm.providers.GeminiProvider
@@ -54,8 +55,8 @@ class AiTagSuggestionRepository(context: Context) {
     private val videoVisualFeatureDao = db.videoVisualFeatureDao()
     private val videoTagFeedbackDao = db.videoTagFeedbackDao()
     private val tagPreferenceDao = db.tagPreferenceDao()
-    private val preferenceProfileDao = db.preferenceProfileDao()
     private val aiReferenceDao = db.aiReferenceDao()
+    private val preferenceRepository by lazy { (appContext as? com.blitz.downloader.BlitzApp)?.aiPreferenceRepository ?: AiPreferenceRepository(appContext, db) }
 
     private val videoTagRepository = VideoTagRepository(appContext)
     private fun configuredProviders(): List<LlmProvider> = AppSettings.getAiConnections(appContext)
@@ -91,7 +92,10 @@ class AiTagSuggestionRepository(context: Context) {
 
     /** 参考资格与旧摘要在同一事务内变更，真实反馈和标签统计保持原样。 */
     suspend fun setReferencesExcluded(awemeIds: Collection<String>, excluded: Boolean) {
-        aiReferenceDao.setExcluded(awemeIds.toList(), excluded, System.currentTimeMillis())
+        db.withTransaction {
+            aiReferenceDao.setExcluded(awemeIds.toList(), excluded, System.currentTimeMillis())
+            if (excluded) PreferenceSourceInvalidation(db).casesChanged(awemeIds.toSet())
+        }
     }
 
     data class SuggestionOutcome(
@@ -118,14 +122,32 @@ class AiTagSuggestionRepository(context: Context) {
         authorName: String = "",
         existingTagNames: Set<String>? = null,
     ): Result<SuggestionOutcome> {
-        val providers = configuredProviders()
         val logId = UUID.randomUUID().toString()
         val startTime = System.currentTimeMillis()
+        val preparation = AiPreparationTracker()
+        AiAnalysisLogStore.addEntry(AiAnalysisLogEntry(logId, awemeId, authorName, desc.ifBlank { awemeId }, desc, startTime))
+        return try {
+            prepareSuggestion(awemeId, secUserId, desc, coverBytes, videoFile, authorName,
+                existingTagNames, logId, startTime, preparation)
+        } catch (error: Exception) {
+            AiAnalysisLogStore.updateEntry(logId) {
+                it.withFailure(error, System.currentTimeMillis() - startTime)
+                    .copy(preparation = it.preparation ?: preparation.finish(failed = true))
+            }
+            if (error is CancellationException) throw error
+            Result.failure(error)
+        }
+    }
 
+    private suspend fun prepareSuggestion(
+        awemeId: String, secUserId: String, desc: String, coverBytes: ByteArray, videoFile: File?,
+        authorName: String, existingTagNames: Set<String>?, logId: String, startTime: Long,
+        preparation: AiPreparationTracker,
+    ): Result<SuggestionOutcome> {
+        val providers = configuredProviders()
+        preparation.enter("本地标签及已有标签读取")
         val resolvedAuthorName = authorName.ifBlank {
-            runCatching {
-                db.downloadedVideoDao().getByAwemeId(awemeId)?.userName.orEmpty()
-            }.getOrDefault("")
+            db.downloadedVideoDao().getByAwemeId(awemeId)?.userName.orEmpty()
         }
         val videoTitle = when {
             resolvedAuthorName.isNotBlank() && desc.isNotBlank() -> "$resolvedAuthorName - $desc"
@@ -141,41 +163,38 @@ class AiTagSuggestionRepository(context: Context) {
         }
         if (tags.isEmpty()) {
             val err = IllegalStateException("没有可用标签，无法发起 AI 建议")
-            AiAnalysisLogStore.addEntry(
-                AiAnalysisLogEntry(
-                    id = logId,
-                    awemeId = awemeId,
-                    authorName = resolvedAuthorName,
-                    videoTitle = videoTitle,
-                    videoDesc = desc,
-                    timestamp = startTime,
-                    status = AiAnalysisLogStatus.FAILED,
-                    errorMessage = err.message,
-                ),
-            )
-            return Result.failure(err)
+            throw err
         }
         val tagByName = tags.associateBy { it.tagName }
         val tagById = tags.filter { it.id > 0 }.associateBy { it.id }
         val currentTagNames = existingTagNames ?: videoTagRepository.getTagsForVideo(awemeId).toSet()
 
+        preparation.enter("抽帧名额等待")
         val keyFrames = frameExtraction.withPermit {
+            preparation.enter(null)
             coroutineContext.ensureActive()
-            videoFile?.let { VideoFrameExtractor.extract(it) }.orEmpty()
+            videoFile?.let { VideoFrameExtractor.extract(it, preparation::enter) }.orEmpty()
         }
+        preparation.enter(null)
         coroutineContext.ensureActive()
         val coverImage = ImagePart(jpegBytes = coverBytes, hasFace = false)
 
+        preparation.enter("偏好版本及历史资料读取")
         val threshold = AppSettings.getHighFrequencyTagThreshold(appContext)
         val authorProfile = videoTagRepository.getAuthorProfileForAi(secUserId, threshold)
-        val preferenceProfileText = preferenceProfileDao.getLatest()?.profileText
+        val preference = preferenceRepository.context(awemeId, tags, currentTagNames,
+            authorProfile?.topTags.orEmpty().map { it.tagName }.toSet()) {
+            preparation.enter("规则与文本案例选择")
+        }
+        val preferenceProfileText = preference?.text ?: preferenceRepository.compatibleLegacySummary()
 
-        val multimodalEvidenceSamples = if (secUserId.isNotBlank()) {
+        val multimodalEvidenceSamples = if (preference == null && secUserId.isNotBlank()) {
             getMultimodalEvidenceSamplesForAuthor(secUserId, tagById)
         } else {
             emptyList()
         }
 
+        preparation.enter("请求组装及编码")
         val request = TagSuggestionRequestBuilder.build(
             coverImage = coverImage,
             keyFrames = keyFrames,
@@ -186,6 +205,7 @@ class AiTagSuggestionRepository(context: Context) {
             fewShotExamples = emptyList(),
             multimodalEvidenceSamples = multimodalEvidenceSamples,
             existingTagNames = currentTagNames,
+            preferenceTextExamples = preference?.examples.orEmpty(),
         )
 
         val faceCount = keyFrames.count { it.hasFace }
@@ -282,15 +302,10 @@ class AiTagSuggestionRepository(context: Context) {
             promptText
         }
 
-        AiAnalysisLogStore.addEntry(
-            AiAnalysisLogEntry(
-                id = logId,
-                awemeId = awemeId,
+        AiAnalysisLogStore.updateEntry(logId) { entry ->
+            entry.copy(
                 authorName = resolvedAuthorName,
                 videoTitle = videoTitle,
-                videoDesc = desc,
-                timestamp = startTime,
-                status = AiAnalysisLogStatus.RUNNING,
                 requestPrompt = promptSummary,
                 fullPrompt = fullPrompt,
                 requestAuthorTagsSummary = authorTagsSummary,
@@ -298,18 +313,23 @@ class AiTagSuggestionRepository(context: Context) {
                 requestFramesSummary = framesSummary,
                 requestVocabularySummary = vocabSummary,
                 rawRequestBody = AiAnalysisLogFormatter.formatJson(redactedRequestJson),
-            ),
-        )
+                personalization = AiRequestPersonalization(preference?.version, preference?.selected.orEmpty(),
+                    preference?.omitted.orEmpty(), 1 + keyFrames.size,
+                    multimodalEvidenceSamples.count { it.evidenceImage != null },
+                    preference?.examples?.size ?: multimodalEvidenceSamples.count { it.evidenceImage == null }),
+            )
+        }
 
         val measuredRequest = request.copy(onNetworkUpdate = { metrics ->
             AiAnalysisLogStore.updateEntry(logId) { entry ->
-                entry.copy(networkRequests = entry.networkRequests.filterNot { it.id == metrics.id } + metrics)
+                entry.copy(preparation = entry.preparation ?: preparation.finish(),
+                    networkRequests = entry.networkRequests.filterNot { it.id == metrics.id } + metrics)
             }
         })
         val (llmProvider, response) = providers.requestInPriorityOrder { it.generateTagSuggestion(measuredRequest) }.getOrElse { err ->
             val durationMs = System.currentTimeMillis() - startTime
             AiAnalysisLogStore.updateEntry(logId) {
-                it.withFailure(err, durationMs)
+                it.withFailure(err, durationMs).copy(preparation = it.preparation ?: preparation.finish(failed = true))
             }
             return Result.failure(err)
         }
@@ -363,6 +383,7 @@ class AiTagSuggestionRepository(context: Context) {
         AiAnalysisLogStore.updateEntry(logId) {
             it.copy(
                 status = AiAnalysisLogStatus.SUCCESS,
+                preparation = it.preparation ?: preparation.finish(),
                 durationMs = durationMs,
                 suggestedTags = deduplicatedCandidates,
                 visualFeatureProfile = response.visualFeatureProfile,
@@ -407,12 +428,12 @@ class AiTagSuggestionRepository(context: Context) {
      * 用户确认（或批量分组确认）完成后调用：对比 [analysisId] 对应的原始建议集合与
      * [confirmedTagIds]（该视频此刻实际持有的标签 id 集合），按 design.md Decision 7 规则
      * 分类写入 [VideoTagFeedbackEntity]（`ACCEPTED`/`REJECTED`/`MISSED`），随后触发
-     * [com.blitz.downloader.data.db.TagPreferenceDao] 重算与（视情况）[maybeRefreshPreferenceProfile]。
+     * [com.blitz.downloader.data.db.TagPreferenceDao] 重算。
      *
      * `analysisId` 查不到对应分析记录时静默返回，不抛异常——理论上不应发生（结果契约保证
      * 只有真正发起过建议才会带这个 id），但防御性处理优于崩溃。
      */
-    suspend fun recordFeedback(analysisId: Long, confirmedTagIds: Set<Long>, refreshProfile: Boolean = true) {
+    suspend fun recordFeedback(analysisId: Long, confirmedTagIds: Set<Long>, @Suppress("UNUSED_PARAMETER") refreshProfile: Boolean = false) {
         val analysis = videoAiAnalysisDao.getById(analysisId) ?: return
         val suggested = SuggestedTagCodec.decode(analysis.suggestedTagIds)
         val now = System.currentTimeMillis()
@@ -446,43 +467,7 @@ class AiTagSuggestionRepository(context: Context) {
             if (rows.isNotEmpty()) videoTagFeedbackDao.insertAll(rows)
             tagPreferenceDao.recomputeAll(now)
         }
-        if (refreshProfile) maybeRefreshPreferenceProfile()
-    }
 
-    /**
-     * 累计新反馈达到 [PREFERENCE_REFRESH_THRESHOLD] 时调用 [LlmProvider.summarizePreference]
-     * 生成新版本并写入 [com.blitz.downloader.data.db.PreferenceProfileEntity]；未达阈值直接返回，
-     * 不产生任何调用（避免过于频繁的额外费用）。生成失败（网络异常等）静默忽略——
-     * 摘要是锦上添花的上下文，不应该因为这一步失败而影响调用方主流程。
-     */
-    suspend fun maybeRefreshPreferenceProfile() {
-        val currentTotal = videoTagFeedbackDao.countAll()
-        val lastSampleCount = preferenceProfileDao.getLatestSampleCount() ?: 0
-        if (currentTotal - lastSampleCount < PREFERENCE_REFRESH_THRESHOLD) return
-
-        val (exclusions, rows) = db.withTransaction {
-            aiReferenceDao.excludedVideoIds() to videoTagFeedbackDao.getRecentConfirmedGlobal(PREFERENCE_SUMMARY_ROW_LIMIT)
-        }
-        val examples = groupIntoFewShotExamples(rows, videoAllTagNameMap())
-        if (examples.isEmpty()) return
-
-        val request = PreferenceSummaryRequest(examples)
-        val summaryText = configuredProviders()
-            .requestInPriorityOrder { it.summarizePreference(request) }.getOrNull()?.second ?: return
-
-        db.withTransaction {
-            // 用户管理参考期间生成的旧摘要不能重新带入已移除案例。
-            if (aiReferenceDao.excludedVideoIds() != exclusions) return@withTransaction
-            val latestVersion = preferenceProfileDao.getLatest()?.version ?: 0
-            preferenceProfileDao.insert(
-                PreferenceProfileEntity(
-                    version = latestVersion + 1,
-                    profileText = summaryText,
-                    sampleCount = currentTotal,
-                    updatedAtMillis = System.currentTimeMillis(),
-                ),
-            )
-        }
     }
 
     private suspend fun getMultimodalEvidenceSamplesForAuthor(

@@ -65,6 +65,23 @@ class VertexAiConnectionTest {
         assertEquals(KEY, fixture.requests.single().header("x-goog-api-key"))
     }
 
+    @Test fun googleLearningProtocolsCarrySchemaAndLowResolution() = runBlocking {
+        val payload = """{"rules":[{"scope":"global","tagIds":[],"criteria":"标准","positiveSignals":[],"negativeSignals":[],"replacementConditions":[],"coexistenceConditions":[],"sourceNodeIds":["node"],"representativeCaseIds":["a"],"insufficientEvidence":true}]}"""
+        val json = com.google.gson.Gson().toJson(payload)
+        for (kind in listOf(AiService.GEMINI, AiService.VERTEX_AI)) {
+            val fixture = Fixture(response = """{"candidates":[{"content":{"parts":[{"text":$json}]},"finishReason":"STOP"}]}""")
+            val response = fixture.provider(AiConnectionConfig(kind, KEY)).learnPreference(
+                com.blitz.downloader.llm.PreferenceLearningRequest(
+                    "计划", listOf("a" to com.blitz.downloader.llm.ImagePart(byteArrayOf(1), false)),
+                ),
+            ).getOrThrow()
+            assertEquals("global:", response.rules.single().scopeKey)
+            assertTrue(fixture.bodies.single().contains("responseSchema"))
+            assertTrue(fixture.bodies.single().contains("MEDIA_RESOLUTION_LOW"))
+            assertEquals(KEY, fixture.requests.single().header("x-goog-api-key"))
+        }
+    }
+
     @Test fun blankKeyFailsBeforeNetwork() = runBlocking {
         val fixture = Fixture()
         val result = fixture.provider(AiConnectionConfig(AiService.VERTEX_AI, "")).testConnection()

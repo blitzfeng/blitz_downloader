@@ -491,6 +491,7 @@ class ManageFragment : Fragment() {
 
     private fun buildStatsText(s: ManageStats): String = buildString {
         append(getString(R.string.manage_stats_count_line, s.videoCount, s.imageCount, s.totalCount))
+        if (s.unknownHistory > 0) append("\n恢复记录 ${s.unknownHistory} 条，恢复前的操作历史未知")
         append("\n\n")
         append(getString(R.string.manage_stats_size_title)).append('\n')
         append(getString(R.string.manage_stats_size_video, humanSize(s.videoBytes))).append('\n')
@@ -838,9 +839,10 @@ class ManageFragment : Fragment() {
         val tab = currentTab
         val entities = viewModel.selectedEntities(tab)
         if (entities.isEmpty()) return
-        val notExported = entities.filter { it.exportCount <= 0 }
-        val exportedCount = entities.size - notExported.size
-        if (exportedCount == 0) {
+        val notExported = entities.filter { it.exportCount == 0 && it.downloadType != com.blitz.downloader.data.DownloadSourceType.RECOVERED }
+        val unknown = entities.count { it.exportCount == 0 && it.downloadType == com.blitz.downloader.data.DownloadSourceType.RECOVERED }
+        val exportedCount = entities.count { it.exportCount > 0 }
+        if (exportedCount == 0 && unknown == 0) {
             startLanExport(tab, entities)
             return
         }
@@ -852,7 +854,7 @@ class ManageFragment : Fragment() {
                     entities.size,
                     exportedCount,
                     notExported.size,
-                ),
+                ) + if (unknown > 0) "\n恢复前导出历史未知：$unknown 条" else "",
             )
             .setPositiveButton(R.string.manage_export_lan_reexport_confirm) { _, _ ->
                 startLanExport(tab, entities)

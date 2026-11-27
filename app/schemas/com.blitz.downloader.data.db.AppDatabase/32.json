@@ -1,0 +1,2127 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 32,
+    "identityHash": "182727612ab956e9fd11e6646a4326e4",
+    "entities": [
+      {
+        "tableName": "downloaded_videos",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `awemeId` TEXT NOT NULL, `downloadType` TEXT NOT NULL, `userName` TEXT NOT NULL, `createdAtMillis` INTEGER NOT NULL, `mediaType` TEXT NOT NULL, `filePath` TEXT NOT NULL, `coverPath` TEXT NOT NULL, `createTime` INTEGER NOT NULL, `desc` TEXT NOT NULL, `collectionType` TEXT NOT NULL, `collectId` TEXT NOT NULL, `videoAuthorSecUserId` TEXT NOT NULL, `sourceOwnerSecUserId` TEXT NOT NULL, `userRelation` TEXT NOT NULL, `diggCount` INTEGER NOT NULL, `collectCount` INTEGER NOT NULL, `exportCount` INTEGER NOT NULL, `tagEditCount` INTEGER NOT NULL, `watched` INTEGER NOT NULL, `mediaWidth` INTEGER NOT NULL, `mediaHeight` INTEGER NOT NULL, `hasLivePhoto` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "downloadType",
+            "columnName": "downloadType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userName",
+            "columnName": "userName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMillis",
+            "columnName": "createdAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaType",
+            "columnName": "mediaType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "filePath",
+            "columnName": "filePath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coverPath",
+            "columnName": "coverPath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createTime",
+            "columnName": "createTime",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "desc",
+            "columnName": "desc",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "collectionType",
+            "columnName": "collectionType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "collectId",
+            "columnName": "collectId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "videoAuthorSecUserId",
+            "columnName": "videoAuthorSecUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceOwnerSecUserId",
+            "columnName": "sourceOwnerSecUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userRelation",
+            "columnName": "userRelation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "diggCount",
+            "columnName": "diggCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "collectCount",
+            "columnName": "collectCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "exportCount",
+            "columnName": "exportCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tagEditCount",
+            "columnName": "tagEditCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "watched",
+            "columnName": "watched",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaWidth",
+            "columnName": "mediaWidth",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mediaHeight",
+            "columnName": "mediaHeight",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasLivePhoto",
+            "columnName": "hasLivePhoto",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_downloaded_videos_awemeId",
+            "unique": true,
+            "columnNames": [
+              "awemeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_downloaded_videos_awemeId` ON `${TABLE_NAME}` (`awemeId`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "batch_analysis_session",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `createdAtMillis` INTEGER NOT NULL, `sourceBatchIds` TEXT NOT NULL, `finished` INTEGER NOT NULL, `reviewJson` TEXT NOT NULL, `isLegacy` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMillis",
+            "columnName": "createdAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceBatchIds",
+            "columnName": "sourceBatchIds",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finished",
+            "columnName": "finished",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reviewJson",
+            "columnName": "reviewJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isLegacy",
+            "columnName": "isLegacy",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "batch_analysis_item",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `awemeId` TEXT NOT NULL, `position` INTEGER NOT NULL, `videoJson` TEXT NOT NULL, `status` TEXT NOT NULL, `error` TEXT NOT NULL, `analysisId` INTEGER, `suggestedTags` TEXT NOT NULL, `reviewTags` TEXT, PRIMARY KEY(`sessionId`, `awemeId`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "videoJson",
+            "columnName": "videoJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "error",
+            "columnName": "error",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analysisId",
+            "columnName": "analysisId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "suggestedTags",
+            "columnName": "suggestedTags",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reviewTags",
+            "columnName": "reviewTags",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "awemeId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "video_tags",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`awemeId` TEXT NOT NULL, `tagName` TEXT NOT NULL, PRIMARY KEY(`awemeId`, `tagName`), FOREIGN KEY(`awemeId`) REFERENCES `downloaded_videos`(`awemeId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tagName",
+            "columnName": "tagName",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "awemeId",
+            "tagName"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_video_tags_tagName",
+            "unique": false,
+            "columnNames": [
+              "tagName"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_video_tags_tagName` ON `${TABLE_NAME}` (`tagName`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "downloaded_videos",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "awemeId"
+            ],
+            "referencedColumns": [
+              "awemeId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "tags",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`tagName` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, `parentTagName` TEXT NOT NULL, `id` INTEGER NOT NULL, `description` TEXT NOT NULL, `collectFolderNames` TEXT NOT NULL, `enableAi` INTEGER NOT NULL, `isExclusive` INTEGER NOT NULL, PRIMARY KEY(`tagName`))",
+        "fields": [
+          {
+            "fieldPath": "tagName",
+            "columnName": "tagName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "parentTagName",
+            "columnName": "parentTagName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "collectFolderNames",
+            "columnName": "collectFolderNames",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enableAi",
+            "columnName": "enableAi",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isExclusive",
+            "columnName": "isExclusive",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "tagName"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "author_tag_frequency",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`secUserId` TEXT NOT NULL, `tagName` TEXT NOT NULL, `count` INTEGER NOT NULL, PRIMARY KEY(`secUserId`, `tagName`))",
+        "fields": [
+          {
+            "fieldPath": "secUserId",
+            "columnName": "secUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tagName",
+            "columnName": "tagName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "count",
+            "columnName": "count",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "secUserId",
+            "tagName"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "video_ai_analysis",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `awemeId` TEXT NOT NULL, `provider` TEXT NOT NULL, `model` TEXT NOT NULL, `profileVersion` INTEGER NOT NULL, `suggestedTagIds` TEXT NOT NULL, `succeeded` INTEGER NOT NULL, `createdAtMillis` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provider",
+            "columnName": "provider",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileVersion",
+            "columnName": "profileVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "suggestedTagIds",
+            "columnName": "suggestedTagIds",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "succeeded",
+            "columnName": "succeeded",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMillis",
+            "columnName": "createdAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "video_visual_feature",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `analysisId` INTEGER NOT NULL, `awemeId` TEXT NOT NULL, `profileJson` TEXT NOT NULL, `createdAtMillis` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analysisId",
+            "columnName": "analysisId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileJson",
+            "columnName": "profileJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMillis",
+            "columnName": "createdAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "video_tag_feedback",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `awemeId` TEXT NOT NULL, `analysisId` INTEGER NOT NULL, `tagId` INTEGER NOT NULL, `kind` TEXT NOT NULL, `confidence` REAL, `createdAtMillis` INTEGER NOT NULL, `evidenceImagePath` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analysisId",
+            "columnName": "analysisId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tagId",
+            "columnName": "tagId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confidence",
+            "columnName": "confidence",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAtMillis",
+            "columnName": "createdAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "evidenceImagePath",
+            "columnName": "evidenceImagePath",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_video_tag_feedback_tagId",
+            "unique": false,
+            "columnNames": [
+              "tagId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_video_tag_feedback_tagId` ON `${TABLE_NAME}` (`tagId`)"
+          },
+          {
+            "name": "index_video_tag_feedback_awemeId",
+            "unique": false,
+            "columnNames": [
+              "awemeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_video_tag_feedback_awemeId` ON `${TABLE_NAME}` (`awemeId`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "ai_reference_exclusion",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`awemeId` TEXT NOT NULL, `excludedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`awemeId`))",
+        "fields": [
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "excludedAtMillis",
+            "columnName": "excludedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "awemeId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "tag_preference",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`tagId` INTEGER NOT NULL, `suggestedCount` INTEGER NOT NULL, `acceptedCount` INTEGER NOT NULL, `rejectedCount` INTEGER NOT NULL, `missedCount` INTEGER NOT NULL, `acceptanceRate` REAL NOT NULL, `recommendedThreshold` REAL NOT NULL, `updatedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`tagId`))",
+        "fields": [
+          {
+            "fieldPath": "tagId",
+            "columnName": "tagId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "suggestedCount",
+            "columnName": "suggestedCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acceptedCount",
+            "columnName": "acceptedCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rejectedCount",
+            "columnName": "rejectedCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "missedCount",
+            "columnName": "missedCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acceptanceRate",
+            "columnName": "acceptanceRate",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recommendedThreshold",
+            "columnName": "recommendedThreshold",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMillis",
+            "columnName": "updatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "tagId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "preference_profile",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `version` INTEGER NOT NULL, `profileText` TEXT NOT NULL, `sampleCount` INTEGER NOT NULL, `updatedAtMillis` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "version",
+            "columnName": "version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileText",
+            "columnName": "profileText",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sampleCount",
+            "columnName": "sampleCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMillis",
+            "columnName": "updatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "download_batch",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `createdAtMillis` INTEGER NOT NULL, `awemeIds` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMillis",
+            "columnName": "createdAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeIds",
+            "columnName": "awemeIds",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "ai_tag_suggestion_pending",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`awemeId` TEXT NOT NULL, `analysisId` INTEGER NOT NULL, `suggestedTags` TEXT NOT NULL, `generatedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`awemeId`))",
+        "fields": [
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analysisId",
+            "columnName": "analysisId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "suggestedTags",
+            "columnName": "suggestedTags",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generatedAtMillis",
+            "columnName": "generatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "awemeId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "liked_list_index_session",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sourceKey` TEXT NOT NULL, `sourceType` TEXT NOT NULL, `ownerSecUserId` TEXT NOT NULL, `collectionId` TEXT, `state` TEXT NOT NULL, `maxItems` INTEGER NOT NULL, `indexedCount` INTEGER NOT NULL, `nextCursor` INTEGER NOT NULL, `nextSourcePosition` INTEGER NOT NULL, `lastViewedOffset` INTEGER NOT NULL, `anchorAwemeId` TEXT, `anchorSourcePosition` INTEGER, `anchorOffsetPx` INTEGER, `lastSuccessfulPageAtMillis` INTEGER NOT NULL, `recoveryError` TEXT, PRIMARY KEY(`sourceKey`))",
+        "fields": [
+          {
+            "fieldPath": "sourceKey",
+            "columnName": "sourceKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceType",
+            "columnName": "sourceType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ownerSecUserId",
+            "columnName": "ownerSecUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "collectionId",
+            "columnName": "collectionId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxItems",
+            "columnName": "maxItems",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "indexedCount",
+            "columnName": "indexedCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextCursor",
+            "columnName": "nextCursor",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextSourcePosition",
+            "columnName": "nextSourcePosition",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastViewedOffset",
+            "columnName": "lastViewedOffset",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "anchorAwemeId",
+            "columnName": "anchorAwemeId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "anchorSourcePosition",
+            "columnName": "anchorSourcePosition",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "anchorOffsetPx",
+            "columnName": "anchorOffsetPx",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "lastSuccessfulPageAtMillis",
+            "columnName": "lastSuccessfulPageAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recoveryError",
+            "columnName": "recoveryError",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sourceKey"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "liked_list_index_item",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sourceKey` TEXT NOT NULL, `awemeId` TEXT NOT NULL, `sourcePosition` INTEGER NOT NULL, `title` TEXT NOT NULL, `authorNickname` TEXT NOT NULL, `authorSecUserId` TEXT NOT NULL, `description` TEXT NOT NULL, `createTime` INTEGER NOT NULL, `isPhoto` INTEGER NOT NULL, `collectStat` INTEGER NOT NULL, `userDigged` INTEGER NOT NULL, `diggCount` INTEGER NOT NULL, `collectCount` INTEGER NOT NULL, `coverUrl` TEXT, `mediaUrl` TEXT, `photoMediaJson` TEXT, PRIMARY KEY(`sourceKey`, `awemeId`))",
+        "fields": [
+          {
+            "fieldPath": "sourceKey",
+            "columnName": "sourceKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourcePosition",
+            "columnName": "sourcePosition",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "authorNickname",
+            "columnName": "authorNickname",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "authorSecUserId",
+            "columnName": "authorSecUserId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createTime",
+            "columnName": "createTime",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isPhoto",
+            "columnName": "isPhoto",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "collectStat",
+            "columnName": "collectStat",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userDigged",
+            "columnName": "userDigged",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "diggCount",
+            "columnName": "diggCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "collectCount",
+            "columnName": "collectCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coverUrl",
+            "columnName": "coverUrl",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "mediaUrl",
+            "columnName": "mediaUrl",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "photoMediaJson",
+            "columnName": "photoMediaJson",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sourceKey",
+            "awemeId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_liked_list_index_item_source_order",
+            "unique": false,
+            "columnNames": [
+              "sourceKey",
+              "sourcePosition"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_liked_list_index_item_source_order` ON `${TABLE_NAME}` (`sourceKey`, `sourcePosition`)"
+          },
+          {
+            "name": "index_liked_list_index_item_source_create_time",
+            "unique": false,
+            "columnNames": [
+              "sourceKey",
+              "createTime"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_liked_list_index_item_source_create_time` ON `${TABLE_NAME}` (`sourceKey`, `createTime`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "ai_preference_case",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`awemeId` TEXT NOT NULL, `revision` INTEGER NOT NULL, `analysisId` INTEGER, `judgmentsJson` TEXT NOT NULL, `suggestedJson` TEXT NOT NULL, `visualJson` TEXT NOT NULL, `evidenceJson` TEXT NOT NULL, `desc` TEXT NOT NULL, `contentHash` TEXT NOT NULL, `updatedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`awemeId`))",
+        "fields": [
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analysisId",
+            "columnName": "analysisId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "judgmentsJson",
+            "columnName": "judgmentsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "suggestedJson",
+            "columnName": "suggestedJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "visualJson",
+            "columnName": "visualJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "evidenceJson",
+            "columnName": "evidenceJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "desc",
+            "columnName": "desc",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contentHash",
+            "columnName": "contentHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMillis",
+            "columnName": "updatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "awemeId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "ai_preference_learning_run",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`runId` TEXT NOT NULL, `status` TEXT NOT NULL, `manifestJson` TEXT NOT NULL, `strategyVersion` INTEGER NOT NULL, `providerPlanJson` TEXT NOT NULL, `plannedNodeCount` INTEGER NOT NULL, `completedNodeCount` INTEGER NOT NULL, `processedCaseCount` INTEGER NOT NULL, `lastError` TEXT, `createdAtMillis` INTEGER NOT NULL, `updatedAtMillis` INTEGER NOT NULL, PRIMARY KEY(`runId`))",
+        "fields": [
+          {
+            "fieldPath": "runId",
+            "columnName": "runId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "manifestJson",
+            "columnName": "manifestJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "strategyVersion",
+            "columnName": "strategyVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "providerPlanJson",
+            "columnName": "providerPlanJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "plannedNodeCount",
+            "columnName": "plannedNodeCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedNodeCount",
+            "columnName": "completedNodeCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "processedCaseCount",
+            "columnName": "processedCaseCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "lastError",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAtMillis",
+            "columnName": "createdAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtMillis",
+            "columnName": "updatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "runId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "ai_preference_learning_node",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`nodeId` TEXT NOT NULL, `runId` TEXT NOT NULL, `stage` TEXT NOT NULL, `inputHash` TEXT NOT NULL, `inputJson` TEXT NOT NULL, `childNodeIdsJson` TEXT NOT NULL, `status` TEXT NOT NULL, `outputJson` TEXT, `diagnosticsJson` TEXT, PRIMARY KEY(`nodeId`))",
+        "fields": [
+          {
+            "fieldPath": "nodeId",
+            "columnName": "nodeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runId",
+            "columnName": "runId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stage",
+            "columnName": "stage",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputHash",
+            "columnName": "inputHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputJson",
+            "columnName": "inputJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "childNodeIdsJson",
+            "columnName": "childNodeIdsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outputJson",
+            "columnName": "outputJson",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "diagnosticsJson",
+            "columnName": "diagnosticsJson",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "nodeId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_ai_preference_learning_node_runId",
+            "unique": false,
+            "columnNames": [
+              "runId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ai_preference_learning_node_runId` ON `${TABLE_NAME}` (`runId`)"
+          },
+          {
+            "name": "index_ai_preference_learning_node_runId_inputHash",
+            "unique": true,
+            "columnNames": [
+              "runId",
+              "inputHash"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_ai_preference_learning_node_runId_inputHash` ON `${TABLE_NAME}` (`runId`, `inputHash`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "ai_preference_rule_profile",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`version` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `runId` TEXT, `status` TEXT NOT NULL, `rulesJson` TEXT NOT NULL, `manifestJson` TEXT NOT NULL, `overridesJson` TEXT NOT NULL, `coverageJson` TEXT NOT NULL, `createdAtMillis` INTEGER NOT NULL, `activatedAtMillis` INTEGER)",
+        "fields": [
+          {
+            "fieldPath": "version",
+            "columnName": "version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runId",
+            "columnName": "runId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rulesJson",
+            "columnName": "rulesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "manifestJson",
+            "columnName": "manifestJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "overridesJson",
+            "columnName": "overridesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "coverageJson",
+            "columnName": "coverageJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMillis",
+            "columnName": "createdAtMillis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "activatedAtMillis",
+            "columnName": "activatedAtMillis",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "version"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "media_recovery_session",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `generation` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `state` TEXT NOT NULL, `stage` TEXT NOT NULL, `policyVersion` INTEGER NOT NULL, `authScopeHash` TEXT NOT NULL, `fileCount` INTEGER NOT NULL, `retryAfter` INTEGER NOT NULL, `errorCode` TEXT NOT NULL, PRIMARY KEY(`sessionId`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "stage",
+            "columnName": "stage",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "policyVersion",
+            "columnName": "policyVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "authScopeHash",
+            "columnName": "authScopeHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fileCount",
+            "columnName": "fileCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "retryAfter",
+            "columnName": "retryAfter",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorCode",
+            "columnName": "errorCode",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_media_recovery_session_state",
+            "unique": false,
+            "columnNames": [
+              "state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_recovery_session_state` ON `${TABLE_NAME}` (`state`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "media_recovery_file",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `logicalPath` TEXT NOT NULL, `locator` TEXT NOT NULL, `kind` TEXT NOT NULL, `groupKey` TEXT NOT NULL, `size` INTEGER NOT NULL, `modified` INTEGER NOT NULL, `quickHash` TEXT NOT NULL, `awemeId` TEXT, `ordinal` INTEGER, `referenced` INTEGER NOT NULL, `durationMs` INTEGER NOT NULL, `width` INTEGER NOT NULL, `height` INTEGER NOT NULL, `fullSha256` TEXT, PRIMARY KEY(`sessionId`, `logicalPath`), FOREIGN KEY(`sessionId`) REFERENCES `media_recovery_session`(`sessionId`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "logicalPath",
+            "columnName": "logicalPath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "locator",
+            "columnName": "locator",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "groupKey",
+            "columnName": "groupKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "size",
+            "columnName": "size",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modified",
+            "columnName": "modified",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quickHash",
+            "columnName": "quickHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "ordinal",
+            "columnName": "ordinal",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "referenced",
+            "columnName": "referenced",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "durationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fullSha256",
+            "columnName": "fullSha256",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "logicalPath"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_media_recovery_file_sessionId_awemeId",
+            "unique": false,
+            "columnNames": [
+              "sessionId",
+              "awemeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_recovery_file_sessionId_awemeId` ON `${TABLE_NAME}` (`sessionId`, `awemeId`)"
+          },
+          {
+            "name": "index_media_recovery_file_sessionId_groupKey",
+            "unique": false,
+            "columnNames": [
+              "sessionId",
+              "groupKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_recovery_file_sessionId_groupKey` ON `${TABLE_NAME}` (`sessionId`, `groupKey`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "media_recovery_session",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId"
+            ],
+            "referencedColumns": [
+              "sessionId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "media_recovery_work",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `awemeId` TEXT NOT NULL, `state` TEXT NOT NULL, `detailJson` TEXT, `detailHash` TEXT NOT NULL, `authScopeHash` TEXT NOT NULL, `fetchedAt` INTEGER NOT NULL, `attempts` INTEGER NOT NULL, `httpCode` INTEGER NOT NULL, `elapsedMs` INTEGER NOT NULL, PRIMARY KEY(`sessionId`, `awemeId`), FOREIGN KEY(`sessionId`) REFERENCES `media_recovery_session`(`sessionId`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detailJson",
+            "columnName": "detailJson",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "detailHash",
+            "columnName": "detailHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "authScopeHash",
+            "columnName": "authScopeHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fetchedAt",
+            "columnName": "fetchedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "httpCode",
+            "columnName": "httpCode",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elapsedMs",
+            "columnName": "elapsedMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "awemeId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_media_recovery_work_sessionId_state",
+            "unique": false,
+            "columnNames": [
+              "sessionId",
+              "state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_recovery_work_sessionId_state` ON `${TABLE_NAME}` (`sessionId`, `state`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "media_recovery_session",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId"
+            ],
+            "referencedColumns": [
+              "sessionId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "media_recovery_candidate",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `awemeId` TEXT NOT NULL, `groupKey` TEXT NOT NULL, `inputsJson` TEXT NOT NULL, `method` TEXT NOT NULL, `reason` TEXT NOT NULL, `state` TEXT NOT NULL, `revision` INTEGER NOT NULL, `fingerprint` TEXT NOT NULL, `confirmedAt` INTEGER NOT NULL, PRIMARY KEY(`sessionId`, `awemeId`, `groupKey`), FOREIGN KEY(`sessionId`, `awemeId`) REFERENCES `media_recovery_work`(`sessionId`, `awemeId`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "groupKey",
+            "columnName": "groupKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputsJson",
+            "columnName": "inputsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "method",
+            "columnName": "method",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reason",
+            "columnName": "reason",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "confirmedAt",
+            "columnName": "confirmedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "awemeId",
+            "groupKey"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_media_recovery_candidate_sessionId_state",
+            "unique": false,
+            "columnNames": [
+              "sessionId",
+              "state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_recovery_candidate_sessionId_state` ON `${TABLE_NAME}` (`sessionId`, `state`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "media_recovery_work",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId",
+              "awemeId"
+            ],
+            "referencedColumns": [
+              "sessionId",
+              "awemeId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "media_recovery_batch",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`batchId` TEXT NOT NULL, `operationId` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `part` INTEGER NOT NULL, `manifestJson` TEXT NOT NULL, `manifestHash` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `state` TEXT NOT NULL, `backupLocator` TEXT NOT NULL, `backupSha256` TEXT NOT NULL, `backupSize` INTEGER NOT NULL, `verifiedAt` INTEGER NOT NULL, `completedAt` INTEGER NOT NULL, `inserted` INTEGER NOT NULL, `skipped` INTEGER NOT NULL, `errorCode` TEXT NOT NULL, PRIMARY KEY(`batchId`), FOREIGN KEY(`sessionId`) REFERENCES `media_recovery_session`(`sessionId`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operationId",
+            "columnName": "operationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "part",
+            "columnName": "part",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "manifestJson",
+            "columnName": "manifestJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "manifestHash",
+            "columnName": "manifestHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "backupLocator",
+            "columnName": "backupLocator",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "backupSha256",
+            "columnName": "backupSha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "backupSize",
+            "columnName": "backupSize",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "verifiedAt",
+            "columnName": "verifiedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedAt",
+            "columnName": "completedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inserted",
+            "columnName": "inserted",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "skipped",
+            "columnName": "skipped",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorCode",
+            "columnName": "errorCode",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "batchId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_media_recovery_batch_sessionId",
+            "unique": false,
+            "columnNames": [
+              "sessionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_recovery_batch_sessionId` ON `${TABLE_NAME}` (`sessionId`)"
+          },
+          {
+            "name": "index_media_recovery_batch_operationId_part",
+            "unique": true,
+            "columnNames": [
+              "operationId",
+              "part"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_media_recovery_batch_operationId_part` ON `${TABLE_NAME}` (`operationId`, `part`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "media_recovery_session",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sessionId"
+            ],
+            "referencedColumns": [
+              "sessionId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "media_recovery_batch_item",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`batchId` TEXT NOT NULL, `awemeId` TEXT NOT NULL, `groupKey` TEXT NOT NULL, `fingerprint` TEXT NOT NULL, `revision` INTEGER NOT NULL, `payloadJson` TEXT NOT NULL, `payloadHash` TEXT NOT NULL, `state` TEXT NOT NULL, `rowId` INTEGER, PRIMARY KEY(`batchId`, `awemeId`), FOREIGN KEY(`batchId`) REFERENCES `media_recovery_batch`(`batchId`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "groupKey",
+            "columnName": "groupKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revision",
+            "columnName": "revision",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadJson",
+            "columnName": "payloadJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadHash",
+            "columnName": "payloadHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rowId",
+            "columnName": "rowId",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "batchId",
+            "awemeId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_media_recovery_batch_item_batchId_state",
+            "unique": false,
+            "columnNames": [
+              "batchId",
+              "state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_recovery_batch_item_batchId_state` ON `${TABLE_NAME}` (`batchId`, `state`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "media_recovery_batch",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "batchId"
+            ],
+            "referencedColumns": [
+              "batchId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "media_recovery_record",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`awemeId` TEXT NOT NULL, `videoRowId` INTEGER NOT NULL, `batchId` TEXT NOT NULL, `importedAt` INTEGER NOT NULL, `inputsJson` TEXT NOT NULL, `unknownHistory` TEXT NOT NULL, PRIMARY KEY(`awemeId`), FOREIGN KEY(`batchId`) REFERENCES `media_recovery_batch`(`batchId`) ON UPDATE NO ACTION ON DELETE NO ACTION , FOREIGN KEY(`videoRowId`) REFERENCES `downloaded_videos`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "awemeId",
+            "columnName": "awemeId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "videoRowId",
+            "columnName": "videoRowId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "batchId",
+            "columnName": "batchId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "importedAt",
+            "columnName": "importedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputsJson",
+            "columnName": "inputsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unknownHistory",
+            "columnName": "unknownHistory",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "awemeId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_media_recovery_record_videoRowId",
+            "unique": true,
+            "columnNames": [
+              "videoRowId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_media_recovery_record_videoRowId` ON `${TABLE_NAME}` (`videoRowId`)"
+          },
+          {
+            "name": "index_media_recovery_record_batchId",
+            "unique": false,
+            "columnNames": [
+              "batchId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_media_recovery_record_batchId` ON `${TABLE_NAME}` (`batchId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "media_recovery_batch",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "batchId"
+            ],
+            "referencedColumns": [
+              "batchId"
+            ]
+          },
+          {
+            "table": "downloaded_videos",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "videoRowId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '182727612ab956e9fd11e6646a4326e4')"
+    ]
+  }
+}

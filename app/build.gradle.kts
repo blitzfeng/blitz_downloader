@@ -16,7 +16,8 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = if (providers.gradleProperty("recoveryValidation").orNull == "true")
+            "com.blitz.downloader.RecoveryValidationRunner" else "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -44,6 +45,9 @@ android {
             )
         }
         debug {
+            if (providers.gradleProperty("recoveryValidation").orNull == "true") {
+                applicationIdSuffix = ".recoveryvalidation"
+            }
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -61,6 +65,17 @@ android {
         viewBinding = true
         // 新增 UI（页面 / 对话框）走 Compose，存量 XML 页面保持不动，两者在同一进程内共存
         compose = true
+    }
+}
+
+// connected 测试结束时 AGP 会卸载被测包。生产包不得参与该流程。
+tasks.configureEach {
+    if (name.startsWith("connected") && name.endsWith("AndroidTest")) {
+        doFirst {
+            check(providers.gradleProperty("recoveryValidation").orNull == "true") {
+                "禁止对主包执行 connected 测试。恢复测试使用 tools/recovery/run-emulator-tests.ps1 和独立验证包。"
+            }
+        }
     }
 }
 

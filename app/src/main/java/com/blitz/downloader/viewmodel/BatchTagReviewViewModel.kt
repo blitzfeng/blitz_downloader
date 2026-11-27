@@ -2,6 +2,9 @@ package com.blitz.downloader.viewmodel
 
 import android.app.Application
 import androidx.room.withTransaction
+import com.blitz.downloader.data.AiPreferenceCases
+import com.blitz.downloader.model.PreferenceSource
+import com.blitz.downloader.model.PreferenceJudgment
 import com.blitz.downloader.data.db.BatchAnalysisSessionEntity
 import com.blitz.downloader.data.db.BatchAnalysisItemEntity
 import com.blitz.downloader.model.BatchReviewLogic
@@ -85,6 +88,7 @@ sealed interface BatchTagReviewEvent {
 class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = (getApplication<Application>() as BlitzApp).database
+    private val preferenceCases = AiPreferenceCases(db)
     private val batchDao = db.downloadBatchDao()
     private val sessionDao = db.batchAnalysisDao()
     private val stateMutex = Mutex()
@@ -366,6 +370,10 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                 db.withTransaction {
                     processedGroupNames.addAll(newlyAuto)
                     autoProcessedGroupNames.addAll(newlyAuto)
+                    for ((id, row) in sessionPendingRows) {
+                        val auto = row.suggestedTags.split('|').filter { it in newlyAuto && it in existing[id].orEmpty() }
+                        auto.forEach { recordGroupSource(id, it, PreferenceSource.AUTO_EXISTING) }
+                    }
                     checkAndRecordFeedbacks()
                     persistReview()
                 }
@@ -461,16 +469,6 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Preference summarization can call the network; never hold the review transaction for it. */
-    private fun refreshPreferenceProfile() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try { aiRepo.maybeRefreshPreferenceProfile() } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                android.util.Log.w("BatchTagReview", "Preference summary refresh failed", e)
-            }
-        }
-    }
-
     /** Prevent duplicate clicks before launching; roll back memory together with the DB transaction. */
     private fun edit(action: String, count: () -> Int = { 0 }, block: suspend () -> Unit) {
         if (_uiState.value.busyAction != null) return
@@ -494,7 +492,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                         false
                     }
                     _events.emit(BatchTagReviewEvent.ActionDone(action, count()))
-                    if (action == "confirm" || action == "skip") refreshPreferenceProfile()
+
                     // 保存与校验在同一把锁内串行，但校验不属于写入事务。
                     // 只忽略本次编辑占用的 busy，其他完成条件与手动入口一致。
                     if (refreshed && action in setOf("confirm", "skip", "save") &&
@@ -602,7 +600,22 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                             }
                         }
                         val next = TagChangeSuggestions.apply(current, allTagsToAdd.toSet(), listOfNotNull(change))
-                        if (tagRepo.setTagsAsUserEdit(id, next)) writtenCount++
+                        val source = when (change?.action) {
+                            "replace" -> PreferenceSource.HUMAN_REPLACE
+                            "coexist" -> PreferenceSource.HUMAN_COEXIST
+                            else -> PreferenceSource.HUMAN_CONFIRM
+                        }
+                        val decisions = buildMap {
+                            put(tagName, PreferenceJudgment.POSITIVE to source)
+                            change?.replacedTags.orEmpty().filter { it in current && it !in next }.forEach {
+                                put(it, PreferenceJudgment.NEGATIVE to source)
+                            }
+                            change?.takeIf { it.action == "coexist" }?.relatedTags.orEmpty().filter { it in next }.forEach {
+                                put(it, PreferenceJudgment.POSITIVE to source)
+                            }
+                        }
+                        if (tagRepo.setTagsAsUserEdit(id, next, decisions, sessionPendingRows[id]?.analysisId,
+                                captureDiff = false)) writtenCount++
                     }
                     val previousRemoved = removedTagsByGroup[tagName].orEmpty()
                     removedTagsByGroup[tagName] = (previousRemoved.keys + removed.keys).associateWith { old ->
@@ -617,6 +630,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                 // 若用户在撤销后取消了某些视频的勾选（纠偏排除误打标签的视频），将该标签从这些视频中删除
                 if (unselectedIds.isNotEmpty()) {
                     videoTagDao.deleteTagFromVideos(unselectedIds, tagName)
+                    unselectedIds.forEach { recordGroupSource(it, tagName, PreferenceSource.HUMAN_REMOVE) }
                 }
                 processedGroupNames.add(tagName)
                 manuallyUndoneGroupNames.remove(tagName)
@@ -637,6 +651,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                 if (tagName in autoProcessedGroupNames && groupVideoIds.isNotEmpty()) {
                     videoTagDao.deleteTagFromVideos(groupVideoIds, tagName)
                 }
+                groupVideoIds.forEach { recordGroupSource(it, tagName, PreferenceSource.SKIPPED) }
                 appliedCascadedTagsByGroup[tagName] = emptyMap()
                 removedTagsByGroup[tagName] = emptyMap()
                 processedGroupNames.add(tagName)
@@ -681,6 +696,12 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                 if (affectedVideoIds.isNotEmpty()) {
                     downloadedVideoDao.decrementTagEditCount(affectedVideoIds.toList())
                 }
+                groupVideoIds.forEach { id ->
+                    recordGroupSource(id, tagName, PreferenceSource.SKIPPED, forceRevision = true)
+                    removed.filterValues { id in it }.keys.forEach { old ->
+                        recordGroupSource(id, old, PreferenceSource.SKIPPED, forceRevision = true)
+                    }
+                }
                 processedGroupNames.remove(tagName)
                 manuallyUndoneGroupNames.add(tagName)
 
@@ -704,6 +725,18 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
      * 若某条视频的所有建议标签分组都已在 [processedGroupNames] 中，
      * 则调用 [AiTagSuggestionRepository.recordFeedback] 写入逐标签反馈，并从 `ai_tag_suggestion_pending` 删除该行。
      */
+    private suspend fun recordGroupSource(
+        id: String,
+        tagName: String,
+        source: PreferenceSource,
+        forceRevision: Boolean = false,
+    ) {
+        val judgment = if (source.isHuman) PreferenceJudgment.NEGATIVE else PreferenceJudgment.UNKNOWN
+        preferenceCases.update(
+            id, mapOf(tagName to (judgment to source)), sessionPendingRows[id]?.analysisId, forceRevision,
+        )
+    }
+
     private suspend fun checkAndRecordFeedbacks() {
         val pendingRows = pendingDao.getByAwemeIds(sessionPendingRows.keys)
         if (pendingRows.isEmpty()) return
@@ -718,7 +751,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                 // 该视频涉及的全部建议分组已处理完
                 val actualTags = videoTagDao.getTagsForVideo(row.awemeId)
                 val confirmedTagIds = actualTags.mapNotNull { tagNameToId[it] }.toSet()
-                aiRepo.recordFeedback(row.analysisId, confirmedTagIds, refreshProfile = false)
+                aiRepo.recordFeedback(row.analysisId, confirmedTagIds)
                 pendingDao.deleteByAwemeId(row.awemeId)
             }
         }
@@ -748,20 +781,21 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     val session = BatchAnalysisSessionEntity(java.util.UUID.randomUUID().toString(), System.currentTimeMillis(),
                         loadedSourceBatchIds)
-                    db.withTransaction {
-                        sessionDao.saveSession(session)
-                        sessionDao.saveItems(videos.mapIndexed { index, video ->
-                            BatchAnalysisItemEntity(session.id, video.awemeId, index, gson.toJson(video))
-                        })
-                        pendingDao.deleteByAwemeIds(videos.map { it.awemeId })
+                    val started = AiBatchAnalysisService.start(context, videos.map { it.awemeId }, session.id) {
+                        db.withTransaction {
+                            sessionDao.saveSession(session)
+                            sessionDao.saveItems(videos.mapIndexed { index, video ->
+                                BatchAnalysisItemEntity(session.id, video.awemeId, index, gson.toJson(video))
+                            })
+                            pendingDao.deleteByAwemeIds(videos.map { it.awemeId })
+                        }
                     }
-                    val started = AiBatchAnalysisService.start(context, videos.map { it.awemeId }, session.id)
                     if (!started) {
                         db.withTransaction {
-                            sessionDao.failUnfinished(session.id, "无法启动分析服务，请重试")
+                            sessionDao.failUnfinished(session.id, "AI 批量任务正在运行，或暂时无法启动分析服务")
                             sessionDao.finish(session.id)
                         }
-                        _events.emit(BatchTagReviewEvent.ActionFailed("无法启动分析服务，请重试"))
+                        _events.emit(BatchTagReviewEvent.ActionFailed("AI 批量任务正在运行，或暂时无法启动分析服务"))
                     } else {
                         db.withTransaction {
                             sessionDao.deleteOldItems(session.id)
@@ -801,7 +835,7 @@ class BatchTagReviewViewModel(app: Application) : AndroidViewModel(app) {
                     val allTagEntities = tagRepo.getAvailableTagEntities()
                     val tagNameToId = allTagEntities.associate { it.tagName to it.id }
                     val confirmedTagIds = normalizedTags.mapNotNull { tagNameToId[it] }.toSet()
-                    aiRepo.recordFeedback(pendingRow.analysisId, confirmedTagIds, refreshProfile = false)
+                    aiRepo.recordFeedback(pendingRow.analysisId, confirmedTagIds)
                     pendingDao.deleteByAwemeId(awemeId)
 
                     // 同步更新内存 sessionPendingRows，使得重算分组时自动反映该视频的最新分类归属

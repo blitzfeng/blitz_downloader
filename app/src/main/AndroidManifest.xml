@@ -35,6 +35,7 @@
     <!-- 前台下载服务：批量下载迁到后台执行，退到后台也不中断 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".BlitzApp"
@@ -96,6 +97,11 @@
         <service
             android:name=".download.DownloadService"
             android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <activity android:name=".activity.MediaRecoveryActivity" android:exported="false" />
+        <service android:name=".service.MediaRecoveryService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <activity android:name=".activity.PreferenceLearningActivity" android:exported="false" />
+        <service android:name=".service.PreferenceLearningService" android:exported="false"
             android:foregroundServiceType="dataSync" />
         <service
             android:name=".service.AiBatchAnalysisService"

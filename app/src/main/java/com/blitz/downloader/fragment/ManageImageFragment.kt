@@ -169,11 +169,13 @@ class ManageImageFragment : Fragment(R.layout.fragment_manage_image) {
         when (event) {
             is ManageTabEvent.DeleteDone ->
                 toast(getString(R.string.manage_delete_done, event.count))
+            ManageTabEvent.PermissionNeeded -> toast(getString(R.string.media_recovery_permission))
             ManageTabEvent.FileNotFound -> toast(getString(R.string.player_file_not_found))
             is ManageTabEvent.OpenImageViewer -> startActivity(
                 Intent(requireContext(), ImageViewerActivity::class.java).apply {
                     putExtra(ImageViewerActivity.EXTRA_FILE_PATH, event.filePath)
                     putExtra(ImageViewerActivity.EXTRA_TITLE, event.title)
+                    putStringArrayListExtra(ImageViewerActivity.EXTRA_MEMBERS,ArrayList(event.members))
                 },
             )
             // 以下事件只由视频 Tab 产生

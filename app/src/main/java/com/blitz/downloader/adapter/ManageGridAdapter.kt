@@ -21,6 +21,8 @@ import com.blitz.downloader.model.ManageGridItem
 import com.blitz.downloader.util.DiggBadgeStyle
 import com.blitz.downloader.util.NumberFormatUtils
 import java.io.File
+import com.blitz.downloader.model.knownUnwatched
+import com.blitz.downloader.model.hasUnknownHistory
 
 /**
  * 管理页宫格 Adapter。
@@ -133,7 +135,7 @@ class ManageGridAdapter(
             holder.bindExportedState(inSelectionMode, item.entity.exportCount)
         }
         if (PAYLOAD_EXPORTED in payloads) holder.bindExportedState(inSelectionMode, item.entity.exportCount)
-        if (PAYLOAD_WATCHED in payloads) holder.bindWatchedState(item.entity.watched)
+        if (PAYLOAD_WATCHED in payloads) holder.bindWatchedState(item.entity.knownUnwatched)
         if (PAYLOAD_TAGS in payloads) holder.bindUserTags(item.userTags)
     }
 
@@ -177,7 +179,7 @@ class ManageGridAdapter(
             // 封面
             val coverPath = entity.coverPath
             if (coverPath.isNotBlank()) {
-                cover.load(File(Environment.getExternalStorageDirectory(), coverPath)) {
+                cover.load(com.blitz.downloader.data.DownloadedMediaReadResolver(ctx).model(coverPath)) {
                     crossfade(true)
                     placeholder(R.drawable.ic_video_placeholder)
                     error(R.drawable.ic_video_placeholder)
@@ -189,6 +191,12 @@ class ManageGridAdapter(
 
             // 标签行
             tagContainer.removeAllViews()
+            if (entity.hasUnknownHistory) {
+                val date = java.text.DateFormat.getDateInstance().format(java.util.Date(entity.createdAtMillis))
+                tagContainer.addView(makeChip(ctx, "恢复于 $date · 原历史未知", colorForDownloadType(entity.downloadType)))
+                tagContainer.addView(makeChip(ctx, "恢复后导出 ${entity.exportCount} 次 · 编辑 ${entity.tagEditCount} 次",
+                    colorForDownloadType(entity.downloadType)))
+            }
             // downloadType chip（始终存在）
 //            tagContainer.addView(
 //                makeChip(ctx, labelForDownloadType(entity.downloadType), colorForDownloadType(entity.downloadType))
@@ -218,7 +226,7 @@ class ManageGridAdapter(
             bindInvalidState(item.fileExists, entity.hasLivePhoto)
             bindSelectionState(selectionMode, isSelected)
             bindExportedState(selectionMode, entity.exportCount)
-            bindWatchedState(entity.watched)
+            bindWatchedState(entity.knownUnwatched)
             bindUserTags(item.userTags)
             bindAuthorRow(entity)
             bindClickListeners(entity.awemeId)
@@ -355,9 +363,9 @@ class ManageGridAdapter(
          * 点赞数右侧的「未看过」标记：[showWatchedBadge] 开启（视频 Tab）且尚未看过时显示。
          * 置位来源见 [com.blitz.downloader.data.db.DownloadedVideoEntity.watched]。
          */
-        fun bindWatchedState(watched: Boolean) {
+        fun bindWatchedState(knownUnwatched: Boolean) {
             unwatchedBadge.visibility =
-                if (showWatchedBadge && !watched) View.VISIBLE else View.GONE
+                if (showWatchedBadge && knownUnwatched) View.VISIBLE else View.GONE
         }
 
         fun bindSelectionState(selectionMode: Boolean, isSelected: Boolean) {

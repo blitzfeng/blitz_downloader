@@ -21,14 +21,17 @@ class ManageImageViewModel(app: Application) : ManageTabViewModel(app) {
     /** 打开图片浏览页；文件不存在时只提示。 */
     fun openImageViewer(entity: DownloadedVideoEntity) {
         viewModelScope.launch {
-            val exists = entity.filePath.isNotBlank() &&
-                withContext(Dispatchers.IO) { resolveFile(entity.filePath).exists() }
-            if (!exists) {
-                emit(ManageTabEvent.FileNotFound)
+            val status = withContext(Dispatchers.IO) { readResolver.status(entity.filePath) }
+            if (status != com.blitz.downloader.data.DownloadedMediaReadResolver.Status.READABLE) {
+                emit(if (status == com.blitz.downloader.data.DownloadedMediaReadResolver.Status.MISSING)
+                    ManageTabEvent.FileNotFound else ManageTabEvent.PermissionNeeded)
                 return@launch
             }
             val title = entity.desc.trim().ifBlank { entity.userName.ifBlank { entity.awemeId } }
-            emit(ManageTabEvent.OpenImageViewer(entity.filePath, title))
+            val app = getApplication<com.blitz.downloader.BlitzApp>()
+            val record = app.database.mediaRecoveryDao().provenance(entity.awemeId)
+            val members = record?.let { app.mediaRecovery.gson.fromJson(it.inputsJson,com.blitz.downloader.model.RecoveryInputs::class.java).members }.orEmpty()
+            emit(ManageTabEvent.OpenImageViewer(entity.filePath, title, members))
         }
     }
 }

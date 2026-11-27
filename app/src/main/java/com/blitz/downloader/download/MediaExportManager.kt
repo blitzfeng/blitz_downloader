@@ -8,7 +8,6 @@ import com.blitz.downloader.model.MediaOrientation
 import com.blitz.downloader.util.DownloadedMediaFileManager
 import java.io.BufferedOutputStream
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -60,7 +59,13 @@ object MediaExportManager {
          * 宽高为 0（未探测 / 探测失败）时按 [MediaOrientation.PORTRAIT] 处理。
          */
         val orientation: MediaOrientation,
-    )
+        val documentSource: (() -> java.io.InputStream)? = null,
+        val documentSize: Long = 0,
+    ) {
+        fun length() = if (documentSource == null) file.length() else documentSize
+        fun available() = documentSource != null || file.isFile
+        fun open(): java.io.InputStream = documentSource?.invoke() ?: file.inputStream()
+    }
 
     /** ZIP 导出结果。 */
     data class ZipResult(val zipFile: File, val fileCount: Int)
@@ -79,13 +84,30 @@ object MediaExportManager {
      * [ExportFile.orientation] 直接由记录的 `mediaWidth` / `mediaHeight` 派生，**本函数不做探测 IO**。
      * 需要准确方向的调用方（局域网导出）应在调用前完成宽高回填。
      */
-    fun resolveExportFiles(entities: List<DownloadedVideoEntity>): List<ExportFile> {
+    suspend fun resolveExportFiles(entities: List<DownloadedVideoEntity>,
+        recovery: com.blitz.downloader.data.MediaRecoveryRepository = com.blitz.downloader.BlitzApp.instance.mediaRecovery,
+    ): List<ExportFile> {
         @Suppress("DEPRECATION")
         val root = Environment.getExternalStorageDirectory()
         val usedNames = HashSet<String>()
         val out = ArrayList<ExportFile>()
         for (e in entities) {
             if (e.filePath.isBlank()) continue
+            if (e.downloadType == com.blitz.downloader.data.DownloadSourceType.RECOVERED) {
+                val record = checkNotNull(recovery.dao.provenance(e.awemeId)) { "缺少已确认文件清单" }
+                val inputs = recovery.gson.fromJson(record.inputsJson,com.blitz.downloader.model.RecoveryInputs::class.java)
+                for (path in inputs.members) {
+                    val f = recovery.access.local(path)
+                    val documentSource: (() -> java.io.InputStream)? = if (f.canRead()) null else { { recovery.access.stream(path) } }
+                    val size = if (documentSource == null) {
+                        check(f.isFile && f.canRead()) { "媒体不可读，请检查目录授权" }
+                        f.length()
+                    } else recovery.access.open(path).use { it.statSize.takeIf { n -> n >= 0 } ?: recovery.access.metadata(path).first }
+                    out.add(ExportFile(f,uniqueName(f.name, usedNames),e.awemeId,
+                        MediaOrientation.of(e.mediaWidth,e.mediaHeight), documentSource,size))
+                }
+                continue
+            }
             val first = File(root, e.filePath)
             val files = if (e.mediaType.equals("image", ignoreCase = true)) findImageSet(first) else listOf(first)
             // 方向只读 entity 字段，不在这里做探测 IO——回填是调用方（ManageViewModel）的职责。
@@ -106,7 +128,7 @@ object MediaExportManager {
      * @throws IllegalStateException 选中项在磁盘上均已不存在时抛出。
      */
     @Throws(Exception::class)
-    fun exportToZip(
+    suspend fun exportToZip(
         context: Context,
         entities: List<DownloadedVideoEntity>,
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
@@ -117,17 +139,31 @@ object MediaExportManager {
         }
 
         val dir = exportRootDir()
-        if (!dir.exists() && !dir.mkdirs()) {
-            throw java.io.IOException("无法创建导出目录: ${dir.absolutePath}")
+        val timestamp = synchronized(ZIP_NAME_TIME_FORMAT) { ZIP_NAME_TIME_FORMAT.format(Date()) }
+        val zipFile = File(dir, "bDouyin_export_${timestamp}_${java.util.UUID.randomUUID().toString().take(8)}.zip")
+        val access = com.blitz.downloader.data.RecoveryMediaAccess(context)
+        val output = if (!access.canUseFile() && access.tree != null) {
+            val root = com.blitz.downloader.model.RecoveryNames.root
+            val docs = context.contentResolver
+            val parent = access.uri(root + "/export")
+            if (access.list(root).none { it.name == "export" && it.directory }) {
+                val created = android.provider.DocumentsContract.createDocument(docs,access.uri(root),
+                    android.provider.DocumentsContract.Document.MIME_TYPE_DIR,"export")
+                check(created == parent) { "无法创建授权导出目录" }
+            }
+            val uri = checkNotNull(android.provider.DocumentsContract.createDocument(docs,parent,"application/zip",zipFile.name))
+            checkNotNull(docs.openOutputStream(uri,"w")) { "导出目录不可写" }
+        } else {
+            if (!dir.isDirectory && !dir.mkdirs()) throw java.io.IOException("无法创建导出目录")
+            check(zipFile.createNewFile()) { "导出文件已存在" }
+            FileOutputStream(zipFile)
         }
-
-        val zipFile = File(dir, "bDouyin_export_${ZIP_NAME_TIME_FORMAT.format(Date(System.currentTimeMillis()))}.zip")
-        ZipOutputStream(BufferedOutputStream(FileOutputStream(zipFile))).use { zos ->
+        ZipOutputStream(BufferedOutputStream(output)).use { zos ->
             zos.setLevel(Deflater.NO_COMPRESSION)
             files.forEachIndexed { index, ef ->
                 onProgress(index, files.size)
                 zos.putNextEntry(ZipEntry(ef.entryName))
-                FileInputStream(ef.file).use { input -> input.copyTo(zos, COPY_BUFFER) }
+                ef.open().use { input -> input.copyTo(zos, COPY_BUFFER) }
                 zos.closeEntry()
             }
         }

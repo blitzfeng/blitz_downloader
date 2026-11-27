@@ -58,6 +58,14 @@ class VideoPlayerActivity : AppCompatActivity() {
     // ── MediaPlayer 状态 ──────────────────────────────────────────────────────
     private var mediaPlayer: MediaPlayer? = null
     private var videoFile: File? = null
+    private var document: Uri? = null
+    private val mediaReads by lazy { com.blitz.downloader.data.DownloadedMediaReadResolver(this) }
+
+    private fun selectLocal(path: String) {
+        val model = mediaReads.model(path)
+        document = model as? Uri
+        videoFile = model as? File
+    }
     private var networkUrl: String? = null
     private var savedPosition: Int = 0
     private var playWhenReady = true
@@ -192,13 +200,11 @@ class VideoPlayerActivity : AppCompatActivity() {
                         Toast.makeText(this, R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
                         finish(); return
                     }
-                    @Suppress("DEPRECATION")
-                    val file = File(Environment.getExternalStorageDirectory(), filePath)
-                    if (!file.exists()) {
+                    selectLocal(filePath)
+                    if (document == null && videoFile?.isFile != true) {
                         Toast.makeText(this, R.string.player_file_not_found, Toast.LENGTH_SHORT).show()
                         finish(); return
                     }
-                    videoFile = file
                 }
             }
         }
@@ -450,8 +456,7 @@ class VideoPlayerActivity : AppCompatActivity() {
             videoFile = null
         } else {
             networkUrl = null
-            @Suppress("DEPRECATION")
-            videoFile = File(Environment.getExternalStorageDirectory(), source)
+            selectLocal(source)
         }
 
         videoDuration = 0
@@ -501,7 +506,7 @@ class VideoPlayerActivity : AppCompatActivity() {
     private fun initPlayer(surface: Surface) {
         val url = networkUrl
         val file = videoFile
-        if (url == null && file == null) return
+        if (url == null && file == null && document == null) return
 
         mediaPlayer?.release()
         isPlayerPrepared = false
@@ -523,7 +528,15 @@ class VideoPlayerActivity : AppCompatActivity() {
                     )
                 )
             } else {
-                setDataSource(file!!.absolutePath)
+                try {
+                    val uri = document
+                    if (uri != null) setDataSource(this@VideoPlayerActivity,uri) else setDataSource(file!!.absolutePath)
+                } catch (_: Exception) {
+                    release()
+                    Toast.makeText(this@VideoPlayerActivity,R.string.media_recovery_permission,Toast.LENGTH_SHORT).show()
+                    finish()
+                    return
+                }
             }
             isLooping = true
             setOnVideoSizeChangedListener { _, w, h ->

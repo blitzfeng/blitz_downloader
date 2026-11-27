@@ -1,6 +1,9 @@
 package com.blitz.downloader.data
 
 import android.content.Context
+import androidx.room.withTransaction
+import com.blitz.downloader.model.PreferenceJudgment
+import com.blitz.downloader.model.PreferenceSource
 import com.blitz.downloader.data.db.AppDatabase
 import com.blitz.downloader.data.db.DownloadedVideoEntity
 import com.blitz.downloader.data.db.TagEntity
@@ -25,9 +28,13 @@ import com.blitz.downloader.model.TagHierarchy
  *   `downloaded_videos.tagEditCount` 累加。UI 层的标签编辑一律走这两个，
  *   否则「用户改过几次标签」的统计会漏计；反过来下载流程走它们则会虚增。
  */
-class VideoTagRepository(context: Context) {
+class VideoTagRepository(context: Context, private val db: AppDatabase = AppDatabase.getInstance(context)) {
+    private val preferenceCases = AiPreferenceCases(db)
+    private val sourceInvalidation = PreferenceSourceInvalidation(db)
 
-    private val db = AppDatabase.getInstance(context)
+    private suspend fun invalidateTagSemantics() {
+        sourceInvalidation.tagsChanged(AiPreferenceCases.tagFingerprints(tagDao.getAllEntities()))
+    }
     private val videoTagDao = db.videoTagDao()
     private val tagDao = db.tagDao()
     private val authorTagFrequencyDao = db.authorTagFrequencyDao()
@@ -74,9 +81,9 @@ class VideoTagRepository(context: Context) {
      *   若 [folderName] 已在 `tags` 表中：仅为该视频写入 `video_tags` 关联；
      *   若不存在：先 [createTag] 再 [addTag]（两者均为幂等）。
      */
-    suspend fun ensureCollectFolderTagLinked(awemeId: String, folderName: String) {
+    suspend fun ensureCollectFolderTagLinked(awemeId: String, folderName: String) = db.withTransaction {
         val name = folderName.trim()
-        if (name.isEmpty()) return
+        if (name.isEmpty()) return@withTransaction
 
         // 1. 查找是否存在映射到当前收藏夹名称的本地标签
         val mappings = tagDao.getAllCollectFolderMappings()
@@ -84,27 +91,26 @@ class VideoTagRepository(context: Context) {
             parseFolderNames(mapping.collectFolderNames).any { it.equals(name, ignoreCase = true) }
         }.map { it.tagName }
 
-        if (matchedTags.isNotEmpty()) {
-            // 命中映射：自动打上对应的本地标签，不使用收藏夹名称做标签
-            matchedTags.forEach { mappedTag ->
-                addTag(awemeId, mappedTag)
-            }
-            return
+        val assigned = matchedTags.ifEmpty {
+            createTag(name)
+            listOf(name)
         }
-
-        // 2. 未命中映射：兜底原有逻辑（以收藏夹名称建签并打签）
-        createTag(name)
-        addTag(awemeId, name)
+        val before = videoTagDao.getTagsForVideo(awemeId).toSet()
+        addTags(awemeId, assigned)
+        preferenceCases.update(awemeId, (assigned.toSet() - before).associateWith {
+            PreferenceJudgment.UNKNOWN to PreferenceSource.AUTO_EXISTING
+        })
     }
 
     /**
      * 删除标签：同步从 `tags` 名册和 `video_tags` 所有视频关联中移除。
      * 若有其他标签把它设为上级，那些标签的上级引用被清空（回到顶层），**不级联删除**它们本身。
      */
-    suspend fun deleteTag(tagName: String) {
+    suspend fun deleteTag(tagName: String) = db.withTransaction {
         tagDao.delete(tagName)
         videoTagDao.deleteTagFromAllVideos(tagName)
         tagDao.reassignChildren(oldParent = tagName, newParent = "")
+        invalidateTagSemantics()
     }
 
     /**
@@ -114,7 +120,7 @@ class VideoTagRepository(context: Context) {
      * 注意：若同一视频已同时持有旧名和新名两个标签，`video_tags` 的批量
      * UPDATE 会触发主键冲突；UI 层应提前提示用户避免此情况。
      */
-    suspend fun renameTag(oldName: String, newName: String) {
+    suspend fun renameTag(oldName: String, newName: String) = db.withTransaction<Unit> {
         val trimmed = newName.trim()
         tagDao.rename(oldName, trimmed)
         videoTagDao.renameTag(oldName, trimmed)
@@ -179,20 +185,22 @@ class VideoTagRepository(context: Context) {
      *
      * @return true 表示设置成功；false 表示会成环而被拒绝。
      */
-    suspend fun setParentTag(tagName: String, parentTagName: String): Boolean {
+    suspend fun setParentTag(tagName: String, parentTagName: String): Boolean = db.withTransaction {
         val parent = parentTagName.trim()
         if (parent.isEmpty()) {
             clearParentTag(tagName)
-            return true
+            return@withTransaction true
         }
-        if (parent == tagName || parent in getDescendants(tagName)) return false
+        if (parent == tagName || parent in getDescendants(tagName)) return@withTransaction false
         tagDao.updateParentTagName(tagName, parent)
-        return true
+        invalidateTagSemantics()
+        true
     }
 
     /** 清除 [tagName] 的上级，使其回到顶层标签。 */
-    suspend fun clearParentTag(tagName: String) {
+    suspend fun clearParentTag(tagName: String) = db.withTransaction {
         tagDao.updateParentTagName(tagName, "")
+        invalidateTagSemantics()
     }
 
     // ──────────────────── 标签描述（description 字段） ────────────────────
@@ -214,8 +222,9 @@ class VideoTagRepository(context: Context) {
      * 这是标签名册本身的元数据编辑，**不计入** `downloaded_videos.tagEditCount`——
      * 那个字段统计的是"打标签"操作被编辑的次数，与标签描述完全是两个维度。
      */
-    suspend fun setTagDescription(tagName: String, description: String) {
+    suspend fun setTagDescription(tagName: String, description: String) = db.withTransaction {
         tagDao.updateDescription(tagName, description.trim())
+        invalidateTagSemantics()
     }
 
     // ──────────────────── 标签与抖音收藏夹映射（collectFolderNames 字段） ────────────────────
@@ -241,13 +250,15 @@ class VideoTagRepository(context: Context) {
     }
 
     /** 设置单个标签的 AI 分析参与状态。 */
-    suspend fun setTagEnableAi(tagName: String, enableAi: Boolean) {
+    suspend fun setTagEnableAi(tagName: String, enableAi: Boolean) = db.withTransaction {
         tagDao.updateEnableAi(tagName, enableAi)
+        invalidateTagSemantics()
     }
 
     /** 设置单个标签的互斥单选状态（仅对父标签有效）。 */
-    suspend fun setTagIsExclusive(tagName: String, isExclusive: Boolean) {
+    suspend fun setTagIsExclusive(tagName: String, isExclusive: Boolean) = db.withTransaction {
         tagDao.updateIsExclusive(tagName, isExclusive)
+        invalidateTagSemantics()
     }
 
     // ──────────────────── 视频打标签（video_tags 表） ────────────────────
@@ -282,13 +293,26 @@ class VideoTagRepository(context: Context) {
      *
      * @return true 表示标签集合发生了变化（已计数），false 表示原样确认（未计数）。
      */
-    suspend fun setTagsAsUserEdit(awemeId: String, tagNames: Collection<String>): Boolean {
+    suspend fun setTagsAsUserEdit(
+        awemeId: String,
+        tagNames: Collection<String>,
+        decisions: Map<String, Pair<PreferenceJudgment, PreferenceSource>> = emptyMap(),
+        analysisId: Long? = null,
+        captureDiff: Boolean = true,
+    ): Boolean = db.withTransaction {
         val normalized = tagNames.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
         val before = videoTagDao.getTagsForVideo(awemeId).toSet()
         setTags(awemeId, normalized)
         val changed = before != normalized
         if (changed) incrementTagEditCount(listOf(awemeId))
-        return changed
+        val additions = (normalized - before).associateWith { PreferenceJudgment.POSITIVE to PreferenceSource.HUMAN_ADD }
+        val removals = (before - normalized).associateWith { PreferenceJudgment.NEGATIVE to PreferenceSource.HUMAN_REMOVE }
+        val diff = if (captureDiff) additions + removals else emptyMap()
+        if (diff.isNotEmpty() || decisions.isNotEmpty()) {
+            backfillTagIds()
+            preferenceCases.update(awemeId, diff + decisions, analysisId)
+        }
+        changed
     }
 
     /**
@@ -299,18 +323,22 @@ class VideoTagRepository(context: Context) {
      *
      * @return 实际被计数（标签有变化）的视频条数。
      */
-    suspend fun addTagsAsUserEdit(awemeIds: Collection<String>, tagNames: Collection<String>): Int {
+    suspend fun addTagsAsUserEdit(awemeIds: Collection<String>, tagNames: Collection<String>): Int = db.withTransaction {
         val normalized = tagNames.map { it.trim() }.filter { it.isNotEmpty() }
-        if (normalized.isEmpty()) return 0
+        if (normalized.isEmpty()) return@withTransaction 0
+        backfillTagIds()
         val changedIds = mutableListOf<String>()
         awemeIds.distinct().forEach { awemeId ->
             // 逐条比对而非一次 IN 查询：批量选择可能上千条，避开 SQLite 变量上限。
             val before = videoTagDao.getTagsForVideo(awemeId).toSet()
             if (normalized.any { it !in before }) changedIds += awemeId
             addTags(awemeId, normalized)
+            preferenceCases.update(awemeId, (normalized.toSet() - before).associateWith {
+                PreferenceJudgment.POSITIVE to PreferenceSource.HUMAN_ADD
+            })
         }
         if (changedIds.isNotEmpty()) incrementTagEditCount(changedIds)
-        return changedIds.size
+        changedIds.size
     }
 
     /**

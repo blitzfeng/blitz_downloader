@@ -103,7 +103,8 @@ class DouyinParser {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "获取视频详情失败", e)
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.e(TAG, "获取视频详情失败：${e.javaClass.simpleName}")
         }
         null
     }
